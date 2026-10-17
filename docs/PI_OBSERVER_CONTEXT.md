@@ -11,12 +11,11 @@ cloud-service verification or detection bridge.
   every two seconds. It has no flight controls or gimbal commands.
 - `bridge/anafi_bridge.py` is the separate, pre-existing team implementation
   with detection and flight features. Do not confuse these two entry points.
-- On the currently configured Pi, the observer was deployed before this
-  repository integration under `/home/pet/emberwatch/bridge/anafi_bridge.py`.
-  Its service wrapper refers to that deployed filename. When updating this
-  service, use the repository's **anafi_observer.py** source, or deliberately
-  update the wrapper to a new observer filename. Copying the team's other
-  bridge over that deployment changes its behavior and dependencies.
+- The current Pi service uses
+  `/home/pet/emberwatch/bridge/anafi_observer.py`. Its wrapper now refers to
+  this distinct filename. An earlier prototype deployment used
+  `anafi_bridge.py`; that file is retained separately. Do not substitute the
+  team's detection/flight bridge for the observation-only receiver.
 - The Pi SDK lives at `/home/pet/emberwatch/sdk/olympe-8.5.0`. Use its setenv
   wrapper and isolated Python 3.11.16; the system Python is 3.13.
 
@@ -61,6 +60,17 @@ Gemini/TigerData round-trip record in `VERIFIED.md`. The newly added relay
 compatibility is tested against this repository's backend using isolated
 fixtures; this integrated version has not been redeployed to the aircraft.
 All 42 Node tests and both mocked observer tests pass after integration.
+
+**Later actual-team-dashboard test, 15:43 UTC:** the Pi now sends raw JPEGs
+with `--camera-transport frame` to the existing team backend's
+`/api/ingest/frame`. The encrypted tunnel maps Pi loopback 8788 to laptop
+loopback 8787. Fresh camera frames (approximately 0.5 fps) and telemetry were
+read back from that backend, and the BOSCO camera panel visibly displayed
+the actual image. Storage reported PostgreSQL and Gemini reported configured;
+no new Gemini request was made during this camera test. This raw-frame mode
+also works with the existing running backend before a snapshot-relay update
+is restarted. The default `snapshot` transport remains available for the
+earlier prototype. See `PI_CAMERA_TEST.md` for current start/test steps.
 
 ## Operating context
 

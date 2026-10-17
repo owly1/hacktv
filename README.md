@@ -54,8 +54,13 @@ local ingest token loaded:
 set -a; . "$HOME/emberwatch/bridge.env"; set +a
 bash "$HOME/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv" \
   python bridge/anafi_observer.py --camera --controller direct \
-  --ip 192.168.42.1 --drone-id ANAFI-H084882 --backend http://127.0.0.1:8787
+  --ip 192.168.42.1 --drone-id ANAFI-H084882 --backend http://127.0.0.1:8788 \
+  --camera-transport frame
 ```
+
+The Pi loopback port above is the current tunnel to laptop port 8787.
+See [test the actual dashboard camera](docs/PI_CAMERA_TEST.md) for the current
+working setup and a simple grounded test.
 
 Run `python3 tests/observer_test.py` for the two mocked receiver tests.
 The actual grounded reception check used ANAFI Extended firmware 1.8.2 / HW_03;

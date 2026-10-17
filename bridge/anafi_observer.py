@@ -29,6 +29,14 @@ def post_json(base, token, path, value):
         return response.status
 
 
+def post_jpeg(base, token, jpeg, captured_at):
+    req = urllib.request.Request(base + "/api/ingest/frame", data=jpeg,
+        headers={"Content-Type": "image/jpeg", "Authorization": "Bearer " + token,
+                 "X-Captured-At": captured_at}, method="POST")
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return response.status
+
+
 def numeric(value, lower, upper):
     if isinstance(value, (int, float)) and math.isfinite(value) and lower <= value <= upper:
         return value
@@ -42,6 +50,8 @@ def main():
     parser.add_argument("--backend", default="http://127.0.0.1:8787")
     parser.add_argument("--drone-id", default="ANAFI-01")
     parser.add_argument("--camera", action="store_true", help="Send low-rate JPEG snapshots; requires OpenCV, not WebRTC video")
+    parser.add_argument("--camera-transport", choices=["snapshot", "frame"], default="snapshot",
+                        help="frame sends raw JPEGs to the team's existing camera relay")
     args = parser.parse_args()
     token = os.environ.get("INGEST_TOKEN")
     if not token:
@@ -111,9 +121,12 @@ def main():
                 image = cv2.resize(image, (640, max(1, round(height * 640 / width))))
                 ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 if ok:
-                    post_json(args.backend.rstrip("/"), token, "/api/ingest/snapshot", {
-                        "provenance": "live", "mime_type": "image/jpeg", "captured_at": captured_at,
-                        "data": base64.b64encode(encoded).decode("ascii")})
+                    if args.camera_transport == "frame":
+                        post_jpeg(args.backend.rstrip("/"), token, bytes(encoded), captured_at)
+                    else:
+                        post_json(args.backend.rstrip("/"), token, "/api/ingest/snapshot", {
+                            "provenance": "live", "mime_type": "image/jpeg", "captured_at": captured_at,
+                            "data": base64.b64encode(encoded).decode("ascii")})
                     last_sent = time.monotonic()
             except Exception:
                 print("Snapshot not delivered; check camera format, network and server configuration.")
