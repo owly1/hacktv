@@ -66,7 +66,7 @@ class TriggerTests(unittest.TestCase):
     def test_landed_low_battery_stale_sensors_or_tilt_rejected(self):
         for v in (vehicle(11, state="landed"), vehicle(11, battery_pct=30), vehicle(8),
                   vehicle(11, altitude_m=2), vehicle(11, connected=False), vehicle(11, tilt_deg=10),
-                  vehicle(11, battery_pct=None)):
+                  vehicle(11, battery_pct=None), vehicle(11, controller_source_ok=False)):
             t = Trigger(TEXT, LIMITS)
             t.arm(10)
             self.assertFalse(t.observe(marker(11), v, 11))
@@ -119,6 +119,8 @@ class FlightTests(unittest.TestCase):
                 return vehicle(now[0]), None
             if fail == "drift" and moves:
                 return vehicle(now[0]), marker(now[0], forward_m=2)
+            if fail == "source" and moves:
+                return vehicle(now[0], controller_source_ok=False), marker(now[0])
             return vehicle(now[0]), marker(now[0])
         fly_once(Driver(), LIMITS, TEXT, sample, abort, lambda *x: reports.append(x),
                  clock=lambda: now[0], sleep=lambda n: now.__setitem__(0, now[0]+n), one_segment=one_segment)
@@ -130,7 +132,7 @@ class FlightTests(unittest.TestCase):
         self.assertEqual(reports[-1][0], "landed")
 
     def test_abort_lost_marker_stale_sensors_and_sdk_failure_land(self):
-        for failure in ("abort", "lost", "stale", "sdk", "drift"):
+        for failure in ("abort", "lost", "stale", "sdk", "drift", "source"):
             moves, reports = self.fly(failure)
             self.assertEqual(len(moves), 1)
             self.assertTrue(any(r[0] == "aborted" for r in reports))

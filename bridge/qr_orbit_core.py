@@ -32,6 +32,7 @@ class Vehicle:
     altitude_m: float
     speed_mps: float
     tilt_deg: float
+    controller_source_ok: bool = True
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,8 @@ class Marker:
 def vehicle_reason(v, limits, now, starting=False):
     if v is None or not v.connected or not 0 <= now - v.at <= 1.0:
         return "aircraft link or received sensor samples are stale"
+    if v.controller_source_ok is not True:
+        return "physical controller piloting source is unverified or has changed"
     values = (v.battery_pct, v.altitude_m, v.speed_mps, v.tilt_deg)
     if any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in values):
         return "required aircraft state is unknown"

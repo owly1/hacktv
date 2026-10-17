@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Grounded camera calibration. Reads local BOSCO snapshots; no aircraft SDK.
 
-Capture from the read-only observer with --camera-width 0. Never change zoom,
+Capture using Start-HoverCheckout.ps1 -NativeVideo, or observer --camera-width 0. Never change zoom,
 crop or video mode between capture, pose validation and the intended flight.
 """
 import argparse

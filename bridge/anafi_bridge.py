@@ -319,7 +319,8 @@ class FireDetector:
 class AnafiBridge:
     def __init__(self, args, publisher, detector):
         self.args = args
-        self.ip = args.ip
+        self.controller_kind = getattr(args, "controller", "direct")
+        self.ip = args.ip or ("192.168.53.1" if self.controller_kind == "skycontroller3" else DEFAULT_DRONE_IP)
         self.publisher = publisher
         self.detector = detector
         self.drone = None
@@ -600,8 +601,9 @@ class AnafiBridge:
             if frame is not None and frame[1] != last_sent and self.connected:
                 last_sent = frame[1]
                 img = frame[0]
-                if img.shape[1] > VIDEO_WIDTH:
-                    img = cv2.resize(img, (VIDEO_WIDTH, int(img.shape[0] * VIDEO_WIDTH / img.shape[1])),
+                width = getattr(self.args, "video_width", VIDEO_WIDTH)
+                if width and img.shape[1] > width:
+                    img = cv2.resize(img, (width, int(img.shape[0] * width / img.shape[1])),
                                      interpolation=cv2.INTER_AREA)
                 ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, VIDEO_JPEG_QUALITY])
                 if ok:
@@ -747,21 +749,35 @@ class AnafiBridge:
         self.status = (text, hint)
 
     def _connect(self):
-        print(f"[*] Connecting to drone at {self.ip} ...")
-        self._set_status(f"Connecting to drone at {self.ip} ...",
-                         "Make sure this PC is on the drone's Wi-Fi (ANAFI-xxxxxxx)")
-        drone = olympe.Drone(self.ip)
+        target = "Skycontroller 3" if self.controller_kind == "skycontroller3" else "drone"
+        hint = ("Check the controller USB data link and aircraft pairing" if self.controller_kind == "skycontroller3"
+                else "Make sure this PC is on the drone's Wi-Fi (ANAFI-xxxxxxx)")
+        print(f"[*] Connecting to {target} at {self.ip} ...")
+        self._set_status(f"Connecting to {target} at {self.ip} ...", hint)
+        factory = olympe.SkyController3 if self.controller_kind == "skycontroller3" else olympe.Anafi
+        drone = factory(self.ip)
         # Olympe enforces a 45 s minimum timeout per attempt; the outer loop does the retrying
         if not drone.connect(retry=1):
             print("[!] Connection failed, retrying...")
-            self._set_status(f"Can't reach drone at {self.ip} - retrying",
-                             "Make sure this PC is on the drone's Wi-Fi (ANAFI-xxxxxxx)")
+            self._set_status(f"Can't reach {target} at {self.ip} - retrying", hint)
             try:
                 drone.disconnect()
                 drone.destroy()
             except Exception:
                 pass
             return False
+
+        if self.controller_kind == "skycontroller3":
+            # A USB controller connection alone is not proof of an aircraft link.
+            deadline = time.monotonic() + 8
+            while self.running and drone.connected and not drone.drone_connection_state() and time.monotonic() < deadline:
+                time.sleep(.1)
+            if not self.running or not drone.connected or not drone.drone_connection_state():
+                print("[!] Controller connected, but aircraft pairing is unavailable.")
+                self._set_status("Controller has no aircraft connection", hint)
+                drone.disconnect()
+                drone.destroy()
+                return False
 
         self._set_status("Connected - starting video stream ...")
         if not self._start_video(drone):
@@ -779,6 +795,13 @@ class AnafiBridge:
         self._set_status("Connected - waiting for first video frame ...")
         if self.args.gimbal_pitch is not None:
             self._aim_gimbal(self.args.gimbal_pitch)
+        return True
+
+    def _aircraft_link(self):
+        if self.drone is None or not self.drone.connected:
+            return False
+        if self.controller_kind == "skycontroller3":
+            return bool(self.drone.drone_connection_state())
         return True
 
     def _start_video(self, drone):
@@ -832,7 +855,7 @@ class AnafiBridge:
                 time.sleep(2)
             return
         # Watchdog: reconnect if the link drops or frames stop arriving
-        link_ok = self.drone is not None and self.drone.connected
+        link_ok = self._aircraft_link()
         stalled = time.time() - self.last_frame_time > FRAME_TIMEOUT
         if not link_ok or stalled:
             reason = "lost connection" if not link_ok else "no video frames"
@@ -932,11 +955,19 @@ class AnafiBridge:
                 cv2.destroyAllWindows()
 
 
+def video_width_arg(value):
+    width = int(value)
+    if width != 0 and not 320 <= width <= 3840:
+        raise argparse.ArgumentTypeError("Video width must be 0 (native) or 320-3840 pixels")
+    return width
+
+
 def argument_parser():
     parser = argparse.ArgumentParser(description="Emberwatch ANAFI bridge: video, telemetry, fire detection")
-    parser.add_argument("--ip", default=DEFAULT_DRONE_IP,
-                        help=f"drone IP (default {DEFAULT_DRONE_IP}; "
-                             "use 192.168.53.1 if going through a Skycontroller)")
+    parser.add_argument("--controller", choices=("direct", "skycontroller3"), default="direct",
+                        help="SDK connection class; skycontroller3 requires a controller USB network link")
+    parser.add_argument("--ip", default=None,
+                        help="target IP (default: 192.168.42.1 direct, 192.168.53.1 skycontroller3)")
     parser.add_argument("--stream", default=None,
                         help="video stream name to request (default: the drone's default "
                              "stream, 'DefaultVideo' on the classic ANAFI)")
@@ -960,6 +991,8 @@ def argument_parser():
                         help="aim the camera to this pitch (degrees, negative = down) on connect")
     parser.add_argument("--no-auto-gimbal", action="store_true", help="don't re-aim the camera at detections")
     parser.add_argument("--video-fps", type=float, default=15.0, help="frames/s sent to the dashboard")
+    parser.add_argument("--video-width", type=video_width_arg, default=VIDEO_WIDTH,
+                        help="dashboard JPEG width cap; 0 preserves native pixels for camera calibration")
     parser.add_argument("--no-window", action="store_true", help="run without the local video window")
     parser.add_argument("--demo-flight", action="store_true",
                         help="take off, climb, fly a small circle, return and land (asks to confirm)")

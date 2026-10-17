@@ -2,6 +2,8 @@
   "cleared_area": false,
   "pilot_present": false,
   "landing_control_tested_with_pi": false,
+  "terminal_landing_tested_with_pi": false,
+  "controller_powered_off": false,
   "marker_on_launch_floor": false,
   "calibration_checked_at_known_positions": false,
   "checked_at_unix": 0

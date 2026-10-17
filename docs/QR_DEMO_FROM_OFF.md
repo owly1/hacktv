@@ -1,22 +1,46 @@
 # QR demo preparation from everything powered off
 
-Recorded 17 October 2026. The normal camera path is hardware-tested. QR flight
-is experimental and has not flown. Complete the grounded stages first; live
-execution requires a verified pilot control path and measured camera geometry.
+Updated 17 October 2026. The selected flight-checkout route is direct Pi Wi-Fi
+with the Skycontroller **off** and a terminal landing command. Start with
+[the terminal takeoff/landing checkout](TERMINAL_FLIGHT_TEST.md). Grounded
+direct reception supplies real video and fresh sensors; no real flight has
+been tested in an orbit. The short hover/automatic landing has now passed;
+X-key landing and measured geometry remain. The integrated takeoff/QR program
+is described in [the new QR flight guide](QR_FLIGHT_CHECKOUT.md).
+
+The controller USB camera route below remains an alternative for grounded
+recognition and calibration. Its 10 FPS feed, concurrent camera-tilt control
+and printed-QR simulated orbit were confirmed. Run only one route at a time:
+Pi direct reception conflicts with controller commands.
 
 ## 1. Start the known camera path
 
-1. Connect the laptop to Internet Wi-Fi. Connect its USB Ethernet adapter to
-   the Pi with Ethernet. Power the Pi separately.
-2. Power the ANAFI, keep it grounded, and allow about one minute for Pi boot.
-3. Double-click `C:\Users\anshi\Desktop\Start BOSCO.cmd`.
-4. Keep the backend and Pi connection windows open. This already starts the
-   backend; a separate `npm start` is unnecessary.
-5. Open <http://127.0.0.1:8787/>. Leave Replay off. Move a hand/object in view
-   and confirm the image changes and telemetry remains fresh.
+1. Connect the laptop to Internet Wi-Fi. Keep the ANAFI grounded. Power the
+   controller and connect its USB-C port to the laptop with the tested data
+   cable; leave the controller's USB-A port empty. Wait for aircraft pairing.
+2. Keep the Pi's direct observer stopped. Do not use the full `Start BOSCO.cmd`
+   startup: that shortcut restarts the conflicting direct observer.
+3. In a Windows PowerShell window, start the existing backend if it is off:
 
-The Pi window ends at a `pet@...` Linux prompt and also owns the tunnel.
-Keep it open throughout the following process.
+   ```powershell
+   cd "C:\Users\anshi\Desktop\drone"
+   npm start
+   ```
+
+4. In another Windows PowerShell window, start camera reception:
+
+   ```powershell
+   cd "C:\Users\anshi\Desktop\drone"
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Start-ControllerCamera.ps1
+   ```
+
+5. Keep both windows open. Open <http://127.0.0.1:8787/> with Replay off. Move
+   a hand/object in view and confirm fresh footage. Check the camera-tilt wheel
+   with motors stopped. This route supplies video only: old telemetry is stale.
+
+The Pi is bypassed for this camera route. It may remain powered and connected
+by Ethernet for source preparation. Full details and the Windows driver setup
+are recorded in [the controller camera guide](SKYCONTROLLER_USB_CAMERA.md).
 
 ## 2. Test the printed QR on the actual camera
 
@@ -36,35 +60,41 @@ python bridge/qr_orbit_rehearsal.py
 5. Click **Arm rehearsal** and hold it steady until **selected QR recognized**
    and the simulated orbit appear. If arming expires, Reset and try again.
 6. Close only this rehearsal's Python process with Ctrl+C in its Windows
-   terminal when finished. Leave the backend and Pi tunnel open.
+   terminal when finished. Leave the backend and controller camera receiver open.
 
 This proves physical printed-code recognition. It sends no motor commands.
 
 ## 3. Establish the pilot's control path
 
-First test connections with the aircraft grounded and motors stopped:
+The grounded USB camera + camera-tilt check passed. This is not evidence of
+manual landing authority or an ability to interrupt SDK-controlled flight.
 
-1. Use the supplied controller's normal supported connection to the aircraft,
-   with its normal FreeFlight setup if available. Do not re-pair/reset devices
-   or change the drone password as part of this check.
-2. Leave Pi camera reception running. Check whether the controller remains
-   connected and whether the laptop still receives fresh footage.
-3. Use a non-flight control such as the camera-tilt wheel and verify the
-   camera responds. This is only a preliminary connection check.
-4. If either connection drops, or either device reports another controller
-   has taken over, stop this flight preparation. A controller-mediated Pi
-   connection must be implemented and tested first. Changing an IP address
-   alone does not establish that connection.
-5. After the grounded connection check, an experienced pilot must perform a
-   short **manual** hover and normal landing in the prepared flight area,
-   while a second teammate checks that the Pi feed stays live. The pilot uses
-   the controller's documented controls; the QR program remains off.
-6. Confirm the pilot can command the landing with the Pi connected. A working
-   camera-tilt command alone does not verify landing authority.
+For the selected controller-off arrangement, perform the separate
+[terminal hover/landing checkout](TERMINAL_FLIGHT_TEST.md). Esc or X requests
+landing without Enter. The direct QR runtime requires explicit
+`--terminal-control` and its own actual landing-test record. Its takeoff/hover
+handoff is now implemented in the separate `qr_takeoff_demo.py`. The standalone
+checkout still lands and exits; it is not an airborne handoff to another process.
 
-The current project has not established that direct Pi and supplied-controller
-connections coexist. No automatic orbit should be attempted if this checkpoint
-fails. The calibration stage below can still be done with motors stopped.
+The optional controller-mediated route uses `--controller skycontroller3`;
+the Pi USB link and manual override have not been physically tested. The
+working C-to-C cable serves Windows and needs an adapter to connect to Pi
+USB-A. This adapter is not needed for the selected direct Pi route. The
+controller-specific flight commands later in this document describe the
+optional route, not the current terminal checkout.
+
+### Reported flight area and requested geometry
+
+The operator now reports a 10 × 10 × 10 m clear indoor area and an experienced
+operator. This accommodates the requested 2 m centreline
+diameter geometrically; an on-site clearance and landing-area check is still
+required. The requested path is 1 m above the floor with a 1 m orbit radius.
+The reported initial distance of 0.5 m is not supported by the present trigger:
+the pilot must first establish the measured 1 m-radius starting hover. The
+program rejects a marker only 0.5 m ahead; it has no automatic outward
+repositioning or takeoff. The first planned flight is one chord followed by
+landing, after the physical acceptance checks. The former 2 m-wide area was
+rejected because the orbit left no aircraft/propeller clearance.
 
 ## 4. Collect native-resolution calibration images
 
@@ -84,20 +114,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Install-QrDemo.ps1
 2. Measure its 100 mm ruler after printing. Mount it flat on a rigid surface.
 3. The installer copies preparation source to the separate Pi directory
    `/home/pet/emberwatch/qr-demo`. It does not launch or arm anything.
-4. In the **Pi Linux window**, stop only the normal receiver, then start its
-   separate native-resolution copy:
+4. In the **Windows camera receiver window**, Ctrl+C stops reception. Restart
+   that receiver at native resolution for calibration; keep the Pi observer off.
+   This command can run from either checkout containing the camera launcher:
 
-```bash
-systemctl --user stop emberwatch-bridge.service
-set -a
-. /home/pet/emberwatch/bridge.env
-set +a
-PYOPENGL_PLATFORM=glx /bin/bash /home/pet/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv python /home/pet/emberwatch/qr-demo/anafi_observer.py --controller direct --ip 192.168.42.1 --drone-id ANAFI-H084882 --backend http://127.0.0.1:8788 --camera --camera-transport frame --camera-fps 2 --camera-width 0
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Start-ControllerCamera.ps1 -Fps 2 -Width 0
 ```
 
-5. Keep this Pi command running. `--camera-width 0` preserves the decoded size;
-   calibrating the normal downscaled 640-pixel feed and then using unscaled
-   orbit frames would not match this runtime's strict resolution checks.
+5. Keep this Windows command running. `-Width 0` preserves the decoded size;
+   calibrating a downscaled feed and then using unscaled orbit frames would
+   not match the experimental runtime's strict resolution checks.
 6. Keep camera zoom/video mode unchanged from here through pose validation
    and the eventual flight experiment.
 7. In **Windows PowerShell**, run:
@@ -129,8 +156,9 @@ both capture and fit; the helper avoids overwriting or mixing an existing set.
 
 ## 5. Measure the camera offset and independently check marker positions
 
-1. In the Pi window, Ctrl+C stops the temporary native-resolution receiver.
-   Leave the SSH window itself open so the backend tunnel stays available.
+1. In the Windows camera receiver window, Ctrl+C stops the temporary
+   native-resolution receiver. Leave the backend running. The Pi's direct
+   observer remains stopped.
 2. In Windows, open the generated calibration:
 
 ```powershell
@@ -159,7 +187,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Install-QrDemo.ps1
 set -a
 . /home/pet/emberwatch/bridge.env
 set +a
-PYOPENGL_PLATFORM=glx /bin/bash /home/pet/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv python /home/pet/emberwatch/qr-demo/qr_orbit_bridge.py --no-window --backend http://127.0.0.1:8788 --drone-id ANAFI-H084882 --camera-calibration /home/pet/emberwatch/qr-demo/camera.local.json
+PYOPENGL_PLATFORM=glx /bin/bash /home/pet/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv python /home/pet/emberwatch/qr-demo/qr_orbit_bridge.py --controller skycontroller3 --ip 192.168.53.1 --no-window --backend http://127.0.0.1:8788 --drone-id ANAFI-H084882 --camera-calibration /home/pet/emberwatch/qr-demo/camera.local.json
 ```
 
 There is no `--execute`: no flight driver is constructed. Do not type any arming
@@ -220,7 +248,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Install-QrDemo.ps1
 set -a
 . /home/pet/emberwatch/bridge.env
 set +a
-PYOPENGL_PLATFORM=glx /bin/bash /home/pet/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv python /home/pet/emberwatch/qr-demo/qr_orbit_bridge.py --no-window --backend http://127.0.0.1:8788 --drone-id ANAFI-H084882 --execute --checkout-one-segment --radius 1 --height 1 --camera-calibration /home/pet/emberwatch/qr-demo/camera.local.json --preflight-file /home/pet/emberwatch/qr-demo/current-preflight.local.json
+PYOPENGL_PLATFORM=glx /bin/bash /home/pet/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv python /home/pet/emberwatch/qr-demo/qr_orbit_bridge.py --controller skycontroller3 --ip 192.168.53.1 --no-window --backend http://127.0.0.1:8788 --drone-id ANAFI-H084882 --execute --checkout-one-segment --radius 1 --height 1 --camera-calibration /home/pet/emberwatch/qr-demo/camera.local.json --preflight-file /home/pet/emberwatch/qr-demo/current-preflight.local.json
 ```
 
 7. It starts disarmed. The pilot establishes the verified hover at the planned
@@ -233,7 +261,7 @@ PYOPENGL_PLATFORM=glx /bin/bash /home/pet/emberwatch/sdk/olympe-8.5.0/products/o
    mostly leftward relative to the starting aircraft heading, with a small
    forward component; the landing position is displaced from takeoff. Keep
    the entire path and landing area clear.
-9. `LAND` or `X` + Enter requests landing; the pilot's verified control path
+9. Esc or `X` requests landing without Enter; `LAND` + Enter also works. The verified control path
    remains necessary. A broken link or process failure can prevent software
    delivery. Confirm actual touchdown and the aircraft's reported landed state.
 
@@ -255,21 +283,27 @@ and controls differ.
 
 Once the experiment/pose/native receiver is stopped and the aircraft is landed:
 
-```bash
-systemctl --user reset-failed emberwatch-bridge.service
-systemctl --user start emberwatch-bridge.service
+Reconnect the controller USB-C cable to the laptop and leave its USB-A port
+empty. Keep the Pi direct observation service stopped. In Windows, run:
+
+```powershell
+cd "$env:USERPROFILE\Desktop\drone"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Start-ControllerCamera.ps1
 ```
 
-For shutdown, stop it and use the existing bounded Pi poweroff helper. Stop
-the backend separately. Do not remove Pi power before shutdown completes.
+For shutdown, stop the Windows camera receiver and use the existing bounded Pi
+poweroff helper. Stop the backend separately. Do not remove Pi power before
+shutdown completes.
 
 ## Verification boundary
 
-The calibration helper is tested with generated checkerboard data and known
-synthetic camera parameters. Actual photos, measured camera offsets, controller
-routing, native-image transfer and flight still need the physical stages above.
-The installer syntax has been checked; a cold deployment while the user's hardware
-is off cannot be verified by these software checks.
+All 51 Python checks passed on the Pi's installed SDK with fake aircraft and
+real controller constructors guarded against use. The calibration helper is
+tested with generated checkerboards and known synthetic camera parameters.
+Actual photos, measured camera offsets, Pi controller routing, pilot override
+and flight still need the physical stages above. Native-resolution camera
+calibration transfer has not been physically verified. A source-only Pi
+deployment does not establish a live controller connection.
 
 Primary references: [Parrot physical connection options](https://developer.parrot.com/docs/olympe/userguide/advanced/physical_drone.html)
 and [OpenCV camera calibration](https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html).

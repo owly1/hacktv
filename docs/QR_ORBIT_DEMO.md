@@ -1,10 +1,16 @@
 # QR recognition and one observation orbit
 
-Status, 17 October 2026: software experiment, **no autonomous flight tested**.
-The team's current Pi service remains the observation-only receiver. The user
-confirmed an indoor cleared/netted demonstration area; the pilot landing/stop
-control has **not** been tested with the Pi connected. Do not switch to flight
-execution until that test and camera geometry checks have been completed.
+Status, 17 October 2026: **no real QR orbit tested**. The short takeoff, hover
+and automatic landing test passed; X-key landing still needs a physical test.
+The selected next step is a direct Pi terminal hover/landing checkout with the
+Skycontroller off. Follow [the terminal flight test](TERMINAL_FLIGHT_TEST.md).
+Windows USB camera reception and physical camera-tilt control are verified;
+printed QR recognition triggered the simulated orbit. The user reports an
+indoor 10 × 10 × 10 m area and an experienced operator. The terminal landing
+path has **not** been physically tested in flight. QR execution still requires
+that test and measured geometry. The new integrated runtime keeps one
+connection for takeoff, QR waiting, movement and landing; see
+[the integrated QR flight guide](QR_FLIGHT_CHECKOUT.md).
 
 For the full cold-start, printed-board capture, measured calibration and staged
 checkout procedure, see [QR demo from everything off](QR_DEMO_FROM_OFF.md).
@@ -20,7 +26,7 @@ On the laptop, from the repository, run:
 python bridge/qr_orbit_rehearsal.py
 ```
 
-Open <http://127.0.0.1:8789/>. Keep BOSCO and its existing Pi camera receiver
+Open <http://127.0.0.1:8789/>. Keep BOSCO and its Windows controller camera receiver
 running. This companion page reads `/api/session` and `/api/snapshot` from
 the local backend. The token remains in memory. It makes no ingest requests,
 imports no drone SDK, and cannot send flight commands. It leaves the actual
@@ -58,7 +64,7 @@ approximation of a circle; movement and turning are not a smooth continuous arc.
 
 There is **no automatic takeoff**, boot-time arming, repeated circling, or QR
 search flight. Losing the marker, sensor updates, link health, expected height,
-or a successful movement acknowledgment requests landing. `LAND`, `X` + Enter,
+or a successful movement acknowledgment requests landing. Esc or `X` (without Enter), `LAND` + Enter,
 the local video window's `l` key, terminal closure, or Ctrl+C requests landing.
 Keyboard input requires the terminal to remain connected and responsive.
 A broken radio link can prevent delivery: a software request cannot guarantee
@@ -75,12 +81,13 @@ surface throughout it. These limits do not provide obstacle avoidance.
 
 ## What must be verified before opting into flight
 
-1. Verify the pilot's independent landing/control path while the Pi is connected.
-   The supplied controller working by itself is insufficient. Do not assume
-   simultaneous controller/direct-Pi connections work. First verify command
-   routing with the aircraft grounded, then conduct a supervised short hover
-   and landing exercise in the prepared flight area. This repository does not
-   automate that physical acceptance test.
+1. Test the selected operator landing path using the
+   [terminal hover/landing checkout](TERMINAL_FLIGHT_TEST.md) with the controller
+   off. The supplied controller working by itself does not establish SDK
+   override. The standalone checkout performs one short hover and lands;
+   it cannot hand an airborne aircraft to the separate QR runtime. The direct
+   QR runtime below still needs a pre-existing hover. Use the new integrated
+   `qr_takeoff_demo.py` for operator-started takeoff and QR waiting on one link.
 2. Calibrate the exact decoded camera resolution at fixed zoom. Use OpenCV's
    normal camera calibration workflow with multiple checkerboard views, save
    intrinsics and distortion coefficients, and check reprojection accuracy.
@@ -119,6 +126,7 @@ For an integration engineer, after the above checks, the explicit runtime is:
 # The existing observation service must be stopped before this connection;
 # do not run two aircraft receivers/controllers together.
 python bridge/qr_orbit_bridge.py --no-window \
+  --controller skycontroller3 --ip 192.168.53.1 \
   --backend http://127.0.0.1:8788 --drone-id ANAFI-H084882 \
   --execute --radius 1 --height 1 \
   --camera-calibration /absolute/path/to/measured-camera.json \
@@ -128,8 +136,17 @@ python bridge/qr_orbit_bridge.py --no-window \
 The ingest token is read from the existing environment; never paste keys into
 arguments or QR codes. The normal `Start BOSCO.cmd` never selects this runtime.
 Pilot takeoff/hover and camera aiming must be arranged through the **verified**
-control path before arming. If that path cannot coexist with the Pi, execution
-remains blocked until a controller-mediated connection is implemented and tested.
+control path before arming. The optional controller route selects `olympe.SkyController3`
+and requires aircraft pairing and a reported
+`SkyController` piloting source; it never sets `Controller` or grabs RC axes.
+No live Pi-to-controller connection has been verified. The selected USB-to-Pi
+route needs an A-to-C data cable or a C-female/A-male data adapter that the
+operator does not yet have. The working C-to-C cable currently serves the
+Windows camera route. The selected direct route instead uses
+`--controller direct --terminal-control` with the controller off and preflight
+records containing `terminal_landing_tested_with_pi` and
+`controller_powered_off`. It does not need that USB adapter. Neither route
+has completed the physical landing or camera calibration checks.
 
 ## Integration and verification
 
