@@ -297,7 +297,8 @@ class FireDetector:
             return {"source": "qr-test", "label": "fire", "confidence": 1.0,
                     "bbox": [round(float(v), 4) for v in (max(0.0, x1 / w), max(0.0, y1 / h),
                                                           min(1.0, x2 / w), min(1.0, y2 / h))],
-                    "details": details, "marker_side_px": side_px, "frame_w": w}
+                    "details": details, "marker_side_px": side_px, "frame_w": w,
+                    "qr_text": text, "qr_corners": pts.tolist()}
         if self.model is None:
             return None
         result = self.model(bgr, imgsz=640, conf=self.conf, verbose=False)[0]
@@ -931,7 +932,7 @@ class AnafiBridge:
                 cv2.destroyAllWindows()
 
 
-def main():
+def argument_parser():
     parser = argparse.ArgumentParser(description="Emberwatch ANAFI bridge: video, telemetry, fire detection")
     parser.add_argument("--ip", default=DEFAULT_DRONE_IP,
                         help=f"drone IP (default {DEFAULT_DRONE_IP}; "
@@ -964,7 +965,11 @@ def main():
                         help="take off, climb, fly a small circle, return and land (asks to confirm)")
     parser.add_argument("--climb", type=float, default=1.0, help=f"demo climb in metres (max {MAX_CLIMB_M})")
     parser.add_argument("--radius", type=float, default=1.0, help=f"demo circle radius in metres (max {MAX_RADIUS_M})")
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = argument_parser().parse_args()
 
     token = os.environ.get("INGEST_TOKEN")
     if args.backend and not token:

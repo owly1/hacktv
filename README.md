@@ -80,6 +80,12 @@ drone reads it from up to ~2 m.
 
 ## Demo
 
+For the new QR recognition rehearsal, run `python bridge/qr_orbit_rehearsal.py`
+on the laptop and open <http://127.0.0.1:8789/>. It reads the existing camera
+and animates a simulated orbit; it cannot command the aircraft.
+The separate opt-in flight experiment is **not flight-tested or installed as
+the Pi service**. See [QR orbit setup and physical checks](docs/QR_ORBIT_DEMO.md).
+
 The **Demo** button replays recorded historical fires from
 `examples/historical-fires.mjs` and the drone's flight pattern. It is only
 shown when requested.
@@ -88,3 +94,5 @@ shown when requested.
 
 `npm test` — 42 backend contract tests (Gemini, TigerData and the drone are faked).
 `python3 tests/observer_test.py` — two observation-receiver tests with a fake SDK.
+`python -m unittest discover -s tests -p '*_test.py'` — observer, QR trigger,
+geometry and orbit watchdog checks; SDK adapter checks also run in Olympe.
