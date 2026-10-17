@@ -32,6 +32,35 @@ The drone's Wi-Fi has no internet: Gemini needs a second connection (phone
 USB tether). Open the dashboard once while online so the UTSC map tiles are
 cached.
 
+### Pi 4B observation receiver (grounded hardware path)
+
+The Pi 4B + USB Ethernet setup tested in this chat is included as
+[`bridge/anafi_observer.py`](bridge/anafi_observer.py). It receives telemetry
+and a 640 × 360 JPEG approximately every two seconds. It implements no
+flight controls, gimbal movement or fire detection. The existing
+`bridge/anafi_bridge.py` remains the team's separate detection/flight bridge.
+
+See [Pi setup and launch paths](docs/PI_RUNTIME_HANDOFF.md),
+[SDK build notes](docs/PI4_SDK_BUILD_NOTES.md) and
+[AI handoff](docs/PI_OBSERVER_CONTEXT.md). The Pi Wi-Fi joins the aircraft;
+Ethernet carries the encrypted backend tunnel to the laptop, whose Wi-Fi
+stays online. The backend now relays these snapshots into the existing
+dashboard camera viewer as well as retaining `/api/snapshot` compatibility.
+
+On the Pi, from the repository root with its tested SDK environment and
+local ingest token loaded:
+
+```sh
+set -a; . "$HOME/emberwatch/bridge.env"; set +a
+bash "$HOME/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv" \
+  python bridge/anafi_observer.py --camera --controller direct \
+  --ip 192.168.42.1 --drone-id ANAFI-H084882 --backend http://127.0.0.1:8787
+```
+
+Run `python3 tests/observer_test.py` for the two mocked receiver tests.
+The actual grounded reception check used ANAFI Extended firmware 1.8.2 / HW_03;
+flight, controller coexistence and fire detection were not part of that test.
+
 ## 3. Test without a real fire
 
 Print `http://127.0.0.1:8787/test-marker.html` at 100% (the code must measure
@@ -46,4 +75,5 @@ shown when requested.
 
 ## Tests
 
-`npm test` — 41 backend contract tests (Gemini, TigerData and the drone are faked).
+`npm test` — 42 backend contract tests (Gemini, TigerData and the drone are faked).
+`python3 tests/observer_test.py` — two observation-receiver tests with a fake SDK.

@@ -101,6 +101,50 @@ test('video frames are relayed to /api/video viewers with capture time and overl
   } finally { await t.close(); }
 });
 
+test('Pi observer snapshots also reach existing camera viewers and retain capture metadata', async () => {
+  const t = await startApp({ noGemini: true });
+  const controller = new AbortController();
+  try {
+    const synthetic = await t.req('POST', '/api/ingest/snapshot', {
+      token: INGEST, body: {
+        provenance: 'simulation', mime_type: 'image/jpeg', captured_at: now(),
+        data: JPEG.toString('base64'),
+      },
+    });
+    assert.equal(synthetic.status, 400);
+    const missing = await t.req('GET', '/api/snapshot', { token: DASH });
+    assert.equal(missing.status, 404);
+    const viewer = await fetch(`${t.base}/api/video`, {
+      headers: { authorization: `Bearer ${DASH}` },
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]),
+    });
+    const captured = now();
+    const post = await t.req('POST', '/api/ingest/snapshot', {
+      token: INGEST, body: {
+        provenance: 'live', mime_type: 'image/jpeg', captured_at: captured,
+        data: JPEG.toString('base64'),
+      },
+    });
+    assert.equal(post.status, 200);
+    const reader = viewer.body.getReader();
+    let payload = '';
+    while (!payload.includes('\xff\xd9')) {
+      const chunk = await reader.read();
+      assert.equal(chunk.done, false);
+      payload += Buffer.from(chunk.value).toString('latin1');
+    }
+    assert.ok(payload.includes(`X-Captured-At: ${captured}`));
+    assert.ok(payload.includes('X-Detections: []'));
+    controller.abort();
+    const status = await (await t.req('GET', '/api/status', { token: DASH })).json();
+    assert.equal(status.video.available, true);
+    assert.equal(status.camera.available, true);
+    const snapshot = await t.req('GET', '/api/snapshot', { token: DASH });
+    assert.equal(snapshot.headers.get('x-captured-at'), captured);
+    assert.deepEqual(Buffer.from(await snapshot.arrayBuffer()), JPEG);
+  } finally { controller.abort(); await t.close(); }
+});
+
 test('frames must be JPEG with a fresh capture time', async () => {
   const t = await startApp({ noGemini: true });
   try {

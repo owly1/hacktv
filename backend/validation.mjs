@@ -178,6 +178,8 @@ export function validateTelemetry(body, nowMs) {
 
 // Validates a snapshot ingest envelope:
 //   { captured_at: ISO8601, jpeg_base64: base64 JPEG bytes }
+// Or the grounded Pi observer's earlier envelope:
+//   { captured_at, provenance: 'live', mime_type: 'image/jpeg', data: base64 }
 // Returns { capturedAtMs, jpeg } where jpeg is a Buffer.
 export function validateSnapshotEnvelope(body, nowMs) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
@@ -186,12 +188,17 @@ export function validateSnapshotEnvelope(body, nowMs) {
   const capturedAtMs = parseIsoTimestamp(body.captured_at, 'captured_at');
   assertWithinClockWindow(capturedAtMs, nowMs, 'captured_at');
 
-  if (typeof body.jpeg_base64 !== 'string' || body.jpeg_base64.length === 0) {
+  const observerEnvelope = body.jpeg_base64 === undefined;
+  if (observerEnvelope && (body.provenance !== 'live' || body.mime_type !== 'image/jpeg')) {
+    throw new ApiError(400, 'observer snapshots require live provenance and image/jpeg');
+  }
+  const encodedJpeg = observerEnvelope ? body.data : body.jpeg_base64;
+  if (typeof encodedJpeg !== 'string' || encodedJpeg.length === 0) {
     throw new ApiError(400, 'jpeg_base64 must be a non-empty base64 string');
   }
   let jpeg;
   try {
-    jpeg = Buffer.from(body.jpeg_base64, 'base64');
+    jpeg = Buffer.from(encodedJpeg, 'base64');
   } catch {
     throw new ApiError(400, 'jpeg_base64 is not valid base64');
   }
