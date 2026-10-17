@@ -13,8 +13,9 @@ the separate fire-detection bridge.
    the camera panel, or open the drone-feed icon in the left navigation.
 4. Move a hand or an object in front of the camera. The view should change
    within a few seconds, and the capture timestamp should keep advancing.
-5. Expect one 640 × 360 RGB image approximately every two seconds. This is
-   low-rate camera reception, not full-motion video or thermal imagery.
+5. The current Pi targets 10 FPS for 640 × 360 RGB frames and measured
+   about 8–9 FPS after the frame-rate update. The original setup was capped
+   at one image every two seconds. This JPEG relay is not thermal imagery.
 
 Press Escape to leave the enlarged panel. The laptop must stay awake and
 its backend and SSH tunnel must remain running.
@@ -48,7 +49,7 @@ systemctl --user stop emberwatch-bridge.service
 ```
 
 The service wrapper runs the SDK environment and
-`/home/pet/emberwatch/bridge/anafi_observer.py --camera --camera-transport frame`
+`/home/pet/emberwatch/bridge/anafi_observer.py --camera --camera-transport frame --camera-fps 10`
 with the Pi loopback backend URL above. Its SSID guard requires the configured
 aircraft network. It remains disabled at boot. Owner-only backups preserve
 the previous prototype token configuration and wrapper for rollback.
@@ -62,3 +63,25 @@ AGL/location labels. This observer reports altitude **above takeoff** and
 leaves missing GPS null; it provides no indoor position estimate. Current
 repository source corrects the altitude label. No flight, gimbal movement or
 simultaneous controller test was performed.
+
+## Frame-rate update
+
+At 16:20 UTC on 17 October 2026, the deployed observation receiver was
+updated with `--camera-fps 10`. Three consecutive backend checks reported
+8.5 FPS with fresh camera/telemetry. The browser displayed 9 FPS. During
+the check the Pi was approximately 50°C, reported no throttling, and the
+receiver used roughly one CPU core. These are short integration checks,
+not sustained performance or flight tests. The saved service wrapper keeps
+this setting for the next launcher start.
+
+The source accepts 0.5–15 FPS, defaults to the previous 0.5 FPS for
+compatibility, caps encoding attempts even on network failure and keeps a
+single-frame queue so excess input is dropped instead of accumulating lag.
+Frame rate is a maximum target; actual throughput depends on the hardware
+and connection.
+
+QR processing is not enabled in the current receiver. A QR marker is
+intended to trigger a simulated incident after a decoder is enabled; it is
+not a takeoff trigger. The separate experimental demo-flight code requires
+its own startup option and typed confirmation, is not active here, and has
+not been flight-tested. Camera viewing and QR scanning do not arm it.

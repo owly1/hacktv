@@ -41,7 +41,8 @@ cached.
 
 The Pi 4B + USB Ethernet setup tested in this chat is included as
 [`bridge/anafi_observer.py`](bridge/anafi_observer.py). It receives telemetry
-and a 640 × 360 JPEG approximately every two seconds. It implements no
+and 640 × 360 JPEG frames at a configurable rate. The current Pi targets
+10 FPS and measured about 8–9 FPS. It implements no
 flight controls, gimbal movement or fire detection. The existing
 `bridge/anafi_bridge.py` remains the team's separate detection/flight bridge.
 
@@ -60,7 +61,7 @@ set -a; . "$HOME/emberwatch/bridge.env"; set +a
 bash "$HOME/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv" \
   python bridge/anafi_observer.py --camera --controller direct \
   --ip 192.168.42.1 --drone-id ANAFI-H084882 --backend http://127.0.0.1:8788 \
-  --camera-transport frame
+  --camera-transport frame --camera-fps 10
 ```
 
 The Pi loopback port above is the current tunnel to laptop port 8787.

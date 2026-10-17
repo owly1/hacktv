@@ -16,8 +16,8 @@ The desktop launcher is named **Start BOSCO.cmd**.
    the observation service. Keep the
    backend and Pi connection windows open.
 4. Open <http://127.0.0.1:8787/> and leave Replay off. Look for the ANAFI-01
-   image, an advancing capture time and fresh telemetry. Expect about one
-   camera image every two seconds.
+   image, an advancing capture time and fresh telemetry. The Pi now targets
+   10 FPS and measured about 8–9 FPS in the current setup.
 5. Gemini's key/model and TigerData configuration load from the existing
    `C:\Users\anshi\Desktop\drone\.env`. Keep laptop Internet Wi-Fi connected.
    **Analyze current view** sends the current camera evidence to Gemini.

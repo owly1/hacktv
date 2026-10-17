@@ -43,15 +43,24 @@ def numeric(value, lower, upper):
     return None
 
 
+def camera_fps(value):
+    rate = float(value)
+    if not math.isfinite(rate) or not .5 <= rate <= 15:
+        raise argparse.ArgumentTypeError("camera FPS must be between 0.5 and 15")
+    return rate
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ip", default="192.168.42.1")
     parser.add_argument("--controller", choices=["direct", "skycontroller3"], default="direct")
     parser.add_argument("--backend", default="http://127.0.0.1:8787")
     parser.add_argument("--drone-id", default="ANAFI-01")
-    parser.add_argument("--camera", action="store_true", help="Send low-rate JPEG snapshots; requires OpenCV, not WebRTC video")
+    parser.add_argument("--camera", action="store_true", help="Send JPEG camera frames; requires OpenCV, not WebRTC video")
     parser.add_argument("--camera-transport", choices=["snapshot", "frame"], default="snapshot",
                         help="frame sends raw JPEGs to the team's existing camera relay")
+    parser.add_argument("--camera-fps", type=camera_fps, default=.5,
+                        help="Maximum camera send rate, 0.5-15 FPS (default 0.5)")
     args = parser.parse_args()
     token = os.environ.get("INGEST_TOKEN")
     if not token:
@@ -99,15 +108,20 @@ def main():
             frame.unref()
 
     def snapshots():
-        last_sent = 0
+        last_attempt = 0
+        interval = 1 / args.camera_fps
         while not stop.is_set():
             try:
                 frame, captured_at = frames.get(timeout=.5)
             except queue.Empty:
                 continue
             try:
-                if time.monotonic() - last_sent < 2:
+                attempted_at = time.monotonic()
+                if attempted_at - last_attempt < interval:
                     continue
+                # Bound encoding/network attempts even if a backend request fails.
+                # The single-frame queue drops excess input instead of building lag.
+                last_attempt = attempted_at
                 image = frame.as_ndarray()
                 fmt = frame.format()
                 if fmt == olympe.VDEF_I420:
@@ -127,7 +141,6 @@ def main():
                         post_json(args.backend.rstrip("/"), token, "/api/ingest/snapshot", {
                             "provenance": "live", "mime_type": "image/jpeg", "captured_at": captured_at,
                             "data": base64.b64encode(encoded).decode("ascii")})
-                    last_sent = time.monotonic()
             except Exception:
                 print("Snapshot not delivered; check camera format, network and server configuration.")
             finally:

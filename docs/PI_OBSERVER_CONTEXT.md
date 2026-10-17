@@ -7,8 +7,9 @@ cloud-service verification or detection bridge.
 ## Source and deployment
 
 - `bridge/anafi_observer.py` is the tested observation-only receiver. It polls
-  telemetry at approximately 1 Hz and sends at most one 640-pixel-wide JPEG
-  every two seconds. It has no flight controls or gimbal commands.
+  telemetry at approximately 1 Hz and sends 640-pixel-wide JPEGs at a
+  configurable 0.5–15 FPS. The current service targets 10 FPS and measured
+  about 8–9 FPS. It has no flight controls or gimbal commands.
 - `bridge/anafi_bridge.py` is the separate, pre-existing team implementation
   with detection and flight features. Do not confuse these two entry points.
 - The current Pi service uses
@@ -71,6 +72,11 @@ no new Gemini request was made during this camera test. This raw-frame mode
 also works with the existing running backend before a snapshot-relay update
 is restarted. The default `snapshot` transport remains available for the
 earlier prototype. See `PI_CAMERA_TEST.md` for current start/test steps.
+
+At 16:20 UTC the Pi wrapper was updated to include `--camera-fps 10`.
+Backend checks measured 8.5 FPS and the browser displayed 9 FPS. The default
+source rate remains 0.5 FPS for compatibility. QR decoding and flight were
+not enabled by this update.
 
 ## Operating context
 
