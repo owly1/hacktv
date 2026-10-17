@@ -291,9 +291,9 @@ function renderAnalysis() {
   $('analysis-severity').hidden = !a.severity; $('analysis-severity').textContent = a.severity || ''; $('analysis-severity').className = 'severity ' + (a.severity || '');
   $('analysis-summary').textContent = a.summary;
   $('analysis-title').textContent = 'Spread outlook';
-  $('analysis-detail').textContent = a.spread_outlook || a.unknowns.join(' ');
+  $('analysis-detail').textContent = a.spread_outlook || (a.unknowns || []).join(' ');
   $('analysis-observations').innerHTML = (a.observations || []).slice(0, 4).map(o => `<li>${escapeHTML(o)}</li>`).join('');
-  $('analysis-limit').textContent = [a.unknowns[0], a.limitations].filter(Boolean).join(' · ');
+  $('analysis-limit').textContent = [(a.unknowns || [])[0], a.limitations].filter(Boolean).join(' · ');
 }
 
 // ------------------------------------------------------------------ plan
@@ -433,7 +433,8 @@ async function pollTelemetry() {
 }
 async function pollIncident() { state.incident = (await getJson('/api/incident')).incident; renderIncident(); }
 async function pollFlight() { state.flight = await getJson('/api/flight'); renderFlight(); renderDrone(); }
-async function pollAnalysis() { const m = await getJson('/api/analysis/latest'); state.analysisMeta = m; if (m.analysis) state.analysis = m.analysis; renderAnalysis(); }
+// A stored row without a summary (e.g. a database round-trip check) is not an analysis: ignore it.
+async function pollAnalysis() { const m = await getJson('/api/analysis/latest'); state.analysisMeta = m; if (typeof m.analysis?.summary === 'string') state.analysis = m.analysis; renderAnalysis(); }
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
   const s = state.status; state.site = s.site || state.site; $('map-location').textContent = state.site.name;
@@ -500,7 +501,7 @@ function exportBrief() {
     '## Fire', inc ? [`Detected ${inc.first_detected_at} by ANAFI-01 (${inc.latest.source}, ${inc.latest.label}, max confidence ${Math.round(inc.max_confidence * 100)}%), ${inc.sightings} sightings.`, `Position: ${inc.latest.fire.latitude}, ${inc.latest.fire.longitude} — ${inc.latest.fire.distance_m} m from the drone, bearing ${inc.latest.fire.bearing_deg}° (${inc.latest.fire.position_source}).`, `Details: ${JSON.stringify(inc.latest.details)}`].join('\n') : 'No active fire.', '',
     '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
     '## Drone telemetry', state.telemetry ? '```json\n' + JSON.stringify(state.telemetry, null, 2) + '\n```' : 'No telemetry.', '',
-    '## Gemini analysis', a ? `${a.summary}\n\nSeverity: ${a.severity ?? '—'}\nSpread outlook: ${a.spread_outlook ?? '—'}\nUnknowns: ${a.unknowns.join('; ')}\nLimitations: ${a.limitations}\n(${a.model}, ${a.created_at})` : 'None yet.', '',
+    '## Gemini analysis', a ? `${a.summary}\n\nSeverity: ${a.severity ?? '—'}\nSpread outlook: ${a.spread_outlook ?? '—'}\nUnknowns: ${(a.unknowns || []).join('; ') || '—'}\nLimitations: ${a.limitations ?? '—'}\n(${a.model}, ${a.created_at})` : 'None yet.', '',
     '## Operational plan', p ? `${p.title}\n\n${p.situation}\n\nAdvantage: ${p.advantage}\n\n${p.actions.map(x => `${x.priority}. ${x.action} — ${x.owner || ''} (${x.timing || ''})`).join('\n')}\n\n${p.approvedBy ? `Approved by ${p.approvedBy} at ${p.approvedAt}` : 'Not yet approved.'}${state.planDirty ? '\n(Conditions changed after this plan was generated.)' : ''}` : 'None yet.'];
   download('bosco-incident-brief.md', lines.join('\n'), 'text/markdown'); toast('Incident brief exported.');
 }

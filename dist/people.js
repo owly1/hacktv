@@ -73,8 +73,13 @@ function renderPeople(snap) {
   const multi = open.filter(l => l.views >= 2).length;
   $('people-open').textContent = open.length; $('people-multi').textContent = multi; $('people-unack').textContent = snap.counts?.unacknowledged ?? 0;
   const sec = snap.coverage?.sector;
-  $('people-coverage').textContent = sec ? `${Math.round(sec.well_pct + sec.partial_pct)}%` : snap.coverage?.cells?.length ? `${snap.coverage.cells.length} cells` : '—';
-  $('people-coverage').title = sec ? `${sec.well_pct}% from 2+ directions, ${sec.partial_pct}% from one, ${sec.hidden_pct}% not yet observed` : '';
+  // With an assigned sector: the share of it observed. Without one: the ground area observed so far.
+  const cov = snap.coverage, cellHa = (cov?.cell_m ?? 5) ** 2 / 10000;
+  const haText = (n) => { const ha = n * cellHa; return ha >= 10 ? `${Math.round(ha)} ha` : `${ha.toFixed(ha >= 1 ? 1 : 2)} ha`; };
+  $('people-coverage-label').textContent = sec ? 'Sector observed' : 'Ground observed';
+  $('people-coverage').textContent = sec ? `${Math.round(sec.well_pct + sec.partial_pct)}%` : cov?.cells?.length ? haText(cov.cells.length) : '—';
+  $('people-coverage').title = sec ? `${sec.well_pct}% from 2+ directions, ${sec.partial_pct}% from one, ${sec.hidden_pct}% not yet observed`
+    : cov?.cells?.length ? `${haText(cov.well_cells)} from 2+ directions, ${haText(cov.partial_cells)} from one direction. Set SEARCH_SECTOR to track an assigned area.` : '';
   $('people-value').textContent = open.length; $('people-unit').textContent = open.length === 1 ? 'lead' : 'leads';
   $('people-context').textContent = open.length ? `${multi} seen from 2+ angles · ${snap.counts?.unacknowledged ?? 0} need acknowledging` : 'no one reported yet';
   const badge = $('rail-people-badge'), unack = snap.counts?.unacknowledged ?? 0;
