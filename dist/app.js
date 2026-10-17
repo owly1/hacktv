@@ -19,8 +19,9 @@ const state = {
   analysis: null, analysisMeta: null, plan: null, planDirty: false,
   scenario: {...M.BASE}, detectedScenario: null, minute: 0, playing: false, speed: 1,
   video: {lastAt: 0, decoding: false, times: []},
-  demo: {fires: [], selected: null, started: 0},
-  map: null, layers: {}, droneMarker: null, tilesOk: false, tileErrors: 0, centredOnDrone: false,
+  demo: {fires: [], selected: null, started: 0, videos: null},
+  map: null, layers: {}, tiles: {}, basemap: 'osm', follow: false, droneMarker: null, tilesOk: false, tileErrors: 0, centredOnDrone: false,
+  camera: null,
 };
 let toastTimer;
 
@@ -75,15 +76,54 @@ function renderHeading() {
 
 function initMap() {
   const map = state.map = L.map('map', {zoomControl: false, attributionControl: false, maxZoom: 22}).setView([state.site.latitude, state.site.longitude], 17);
-  const tiles = L.tileLayer('/tiles/osm/{z}/{x}/{y}.png', {maxNativeZoom: 19, maxZoom: 22});
-  tiles.on('tileload', () => { state.tilesOk = true; $('map-viewport').classList.remove('tiles-offline'); renderMapChip(); });
-  tiles.on('tileerror', () => { state.tileErrors++; if (!state.tilesOk && state.tileErrors >= 4) { $('map-viewport').classList.add('tiles-offline'); renderMapChip(); } });
-  tiles.addTo(map);
+  state.tiles = {osm: L.tileLayer('/tiles/osm/{z}/{x}/{y}.png', {maxNativeZoom: 19, maxZoom: 22}), sat: L.tileLayer('/tiles/sat/{z}/{x}/{y}.png', {maxNativeZoom: 18, maxZoom: 22})};
+  for (const tiles of Object.values(state.tiles)) {
+    tiles.on('tileload', () => { state.tilesOk = true; $('map-viewport').classList.remove('tiles-offline'); renderMapChip(); });
+    tiles.on('tileerror', () => { state.tileErrors++; if (!state.tilesOk && state.tileErrors >= 4) { $('map-viewport').classList.add('tiles-offline'); renderMapChip(); } });
+  }
+  state.tiles.osm.addTo(map);
   for (const name of ['spread', 'wind', 'fire', 'drone', 'demo']) state.layers[name] = L.layerGroup().addTo(map);
   state.layers.path = L.polyline([], {color: '#267980', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
-  state.droneMarker = L.marker([state.site.latitude, state.site.longitude], {icon: L.divIcon({className: 'drone-icon-wrap', html: '<div class="drone-icon"><span>▲</span></div>', iconSize: [30, 30], iconAnchor: [15, 15]}), keyboard: false, opacity: 0}).addTo(state.layers.drone).bindTooltip('ANAFI-01');
+  state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
+  map.on('dragstart', () => setFollow(false));
   window.addEventListener('resize', () => map.invalidateSize());
+}
+
+function setBasemap(kind) {
+  state.map.removeLayer(state.tiles[kind === 'sat' ? 'osm' : 'sat']);
+  state.tiles[kind].addTo(state.map).bringToBack();
+  state.basemap = kind; $('layer-sat').checked = kind === 'sat';
+  $('map-disclaimer').textContent = kind === 'sat' ? 'Imagery © Esri, Maxar, Earthstar Geographics' : '© OpenStreetMap contributors';
+}
+
+/* Top-down ANAFI with spinning rotors, an altitude tag and the camera's
+   69° field of view. Pixel-sized, so it reads at any zoom. */
+const ROTORS = [[-14, -12, ''], [14, -12, ' ccw'], [-14, 13, ' ccw'], [14, 13, '']];
+const DRONE_HTML = `<div class="drone-icon"><svg class="drone-svg" viewBox="-60 -60 120 120"><g class="drone-rot">
+<path class="drone-cone" d="M0 -4 L-37.4 -54.4 A66 66 0 0 1 37.4 -54.4 Z"/>
+<circle class="halo" r="25"/>
+${ROTORS.map(([x, y]) => `<line class="arm${y < 0 ? ' front' : ''}" x1="0" y1="0" x2="${x}" y2="${y}"/>`).join('')}
+${ROTORS.map(([x, y, d]) => `<circle class="disc" cx="${x}" cy="${y}" r="9"/><line class="blade${d}" x1="${x - 8}" y1="${y}" x2="${x + 8}" y2="${y}"/>`).join('')}
+<rect class="body" x="-5.5" y="-10" width="11" height="22" rx="4"/><circle class="gimbal" cx="0" cy="-10" r="3"/><circle class="led rear" cx="-3" cy="10" r="1.2"/><circle class="led rear" cx="3" cy="10" r="1.2"/>
+</g></svg><span class="drone-alt"></span></div>`;
+const droneMarker = ll => L.marker(ll, {icon: L.divIcon({className: 'drone-icon-wrap', html: DRONE_HTML, iconSize: [120, 120], iconAnchor: [60, 60]}), keyboard: false, interactive: false});
+function setDronePose(marker, heading, alt, landed = false) {
+  const el = marker.getElement()?.querySelector('.drone-icon'); if (!el) return;
+  el.querySelector('.drone-rot').setAttribute('transform', `rotate(${heading || 0})`);
+  el.querySelector('.drone-alt').textContent = alt == null ? 'ANAFI-01' : `ANAFI-01 · ${alt < 10 ? alt.toFixed(1) : Math.round(alt)} m`;
+  const lift = Math.min(12, 2 + (alt ?? 0) / 10); // higher -> the shadow falls further away
+  el.style.setProperty('--shadow-x', (lift * .6).toFixed(1) + 'px'); el.style.setProperty('--shadow-y', lift.toFixed(1) + 'px');
+  el.classList.toggle('landed', landed);
+}
+
+function dronePosition() {
+  if (state.mode === 'demo') return state.demo.pos ?? null;
+  const t = state.telemetry; return t?.latitude != null ? [t.latitude, t.longitude] : null;
+}
+function setFollow(on) {
+  state.follow = on; $('zoom-drone').classList.toggle('active', on);
+  const p = on && dronePosition(); if (p) state.map.setView(p, Math.max(state.map.getZoom(), demoCase() ? 15 : 19));
 }
 
 function renderMapChip() {
@@ -98,9 +138,9 @@ function renderDrone() {
   if (!t || t.latitude == null || state.mode === 'demo') { state.droneMarker.setOpacity(0); return; }
   const ll = [t.latitude, t.longitude];
   state.droneMarker.setLatLng(ll).setOpacity(1);
-  const el = state.droneMarker.getElement()?.querySelector('.drone-icon');
-  if (el) el.style.transform = `rotate(${t.extra?.heading_deg ?? 0}deg)`;
+  setDronePose(state.droneMarker, t.extra?.heading_deg, t.altitude_m, t.state === 'landed');
   state.layers.path.setLatLngs(state.flight.path.map(p => [p.latitude, p.longitude]));
+  if (state.follow) state.map.panTo(ll);
   if (!state.centredOnDrone) { state.centredOnDrone = true; if (!activeFire()) state.map.setView(ll, 19); }
 }
 
@@ -348,21 +388,94 @@ function showDemoResults() {
   renderAnalysis(); if (state.plan) renderPlan();
 }
 
-/* Simulated ANAFI-01 for the selected case: telemetry, detection and camera panels. */
-function renderDemoDrone(f) {
-  const t = f.drone.telemetry, d = f.drone.detection;
-  $('altitude').innerHTML = `${t.altitude_m} <small>m</small>`; $('ground-speed').innerHTML = `${t.ground_speed_mps} <small>m/s</small>`;
-  $('power').innerHTML = `${t.battery_pct} <small>%</small>`; $('flight-state').textContent = FLIGHT_STATES[t.state];
-  $('battery-value').innerHTML = `${t.battery_pct}<span class="small-unit">%</span>`; $('battery-context').textContent = 'simulated ANAFI-01 (demo)';
-  $('telemetry-tag').textContent = 'DEMO'; $('drone-source').textContent = 'Simulated (demo)';
-  $('telemetry-note').textContent = `DEMO · simulated ANAFI-01 · ${t.latitude.toFixed(5)}, ${t.longitude.toFixed(5)} · heading ${t.extra.heading_deg}° · camera ${t.extra.gimbal_pitch_deg}°`;
-  $('telemetry-note').classList.remove('error-text');
-  $('detect-value').textContent = Math.round(d.confidence * 100); $('detect-unit').textContent = '%';
-  $('detect-context').textContent = `simulated · fire model · ${d.fire.distance_m} m ahead`;
-  drawWaiting(`Simulated view · ${f.name}`, 'Historical case — no camera footage exists; detection is simulated');
-  $('camera-label').innerHTML = '<i class="hot"></i> DEMO · SIMULATED'; $('camera-clock').textContent = f.startDate;
-  $('video-fps').textContent = '—'; $('video-status').textContent = 'Demo case — no live video';
-  $('flight-progress').hidden = true;
+/* Simulated ANAFI-01 for a demo case, t seconds after the case was selected:
+   it detected the fire from its recorded range (1.5 km upwind), flies in at
+   up to 15 m/s (ANAFI max ≈16) and settles into a 500 m orbit at 8 m/s with
+   the camera locked on the fire's head. */
+const SIM = {cruise: 15, accel: 4, orbitR: 500, orbitV: 8};
+function simFire(f, t) {
+  const wind = f.drivers.windKmh ?? 20, a = Math.min(320, 110 + t * 1.1);
+  return {a, b: Math.max(40, a / Math.min(4, 1 + wind / 35)), shift: a * .55};
+}
+function simPose(f, t) {
+  const tel = f.drone.telemetry, det = f.drone.detection, d0 = det.fire.distance_m, R = Math.min(SIM.orbitR, d0 * .6), dist = d0 - R;
+  let ramp = SIM.cruise / SIM.accel, vmax = SIM.cruise;
+  if (dist < vmax * ramp) { ramp = Math.sqrt(dist / SIM.accel); vmax = SIM.accel * ramp; }
+  const cruiseT = (dist - vmax * ramp) / vmax, approachT = 2 * ramp + cruiseT, from = (det.fire.bearing_deg + 180) % 360;
+  let d, speed, bearing = from, phase = 'Approach';
+  if (t < ramp) { speed = SIM.accel * t; d = d0 - SIM.accel * t * t / 2; }
+  else if (t < ramp + cruiseT) { speed = vmax; d = d0 - vmax * ramp / 2 - vmax * (t - ramp); }
+  else if (t < approachT) { const u = approachT - t; speed = SIM.accel * u; d = R + SIM.accel * u * u / 2; }
+  else { phase = 'Orbit'; d = R; speed = SIM.orbitV; bearing = from + (t - approachT) * SIM.orbitV / R * 180 / Math.PI; }
+  const b = bearing * Math.PI / 180, e = d * Math.sin(b), n = d * Math.cos(b), alt = tel.altitude_m + .4 * Math.sin(t * .7);
+  const fire = simFire(f, t), wd = f.directionDeg * Math.PI / 180, te = fire.shift * .6 * Math.sin(wd) - e, tn = fire.shift * .6 * Math.cos(wd) - n;
+  const [lat, lon] = M.destPoint(f.lat, f.lon, bearing, d);
+  return {e, n, alt, lat, lon, speed, phase, fire, range: d, battery: tel.battery_pct - t / 40,
+    heading: (Math.atan2(te, tn) * 180 / Math.PI + 360) % 360, pitch: Math.atan2(alt, Math.hypot(te, tn)) * 180 / Math.PI};
+}
+/* The detector locks on over the first seconds, then firms up as the drone closes. */
+function simConfidence(f, t, p) {
+  const k = Math.min(1, t / 6), c = f.drone.detection.confidence * (.62 + .38 * k * k * (3 - 2 * k)) + .04 * (1 - p.range / f.drone.detection.fire.distance_m);
+  return Math.max(.3, Math.min(.99, c + .012 * Math.sin(t * 5.3) + .008 * Math.sin(t * 11.1)));
+}
+/* The case as Gemini should see it: the simulated drone where it is now. */
+function simCase(f) {
+  const t = (performance.now() - state.demo.started) / 1000, p = simPose(f, t), tel = f.drone.telemetry, det = f.drone.detection;
+  return {...f, drone: {
+    telemetry: {...tel, latitude: +p.lat.toFixed(6), longitude: +p.lon.toFixed(6), altitude_m: +p.alt.toFixed(1), ground_speed_mps: +p.speed.toFixed(1), battery_pct: Math.round(p.battery), state: 'flying', extra: {...tel.extra, heading_deg: Math.round(p.heading), gimbal_pitch_deg: -Math.round(p.pitch), flight_phase: p.phase.toLowerCase()}},
+    detection: {...det, confidence: +simConfidence(f, t, p).toFixed(2), fire: {...det.fire, distance_m: Math.round(p.range), bearing_deg: Math.round(p.heading)}},
+  }};
+}
+
+function camera() {
+  if (!state.camera && window.EmberCamera) { const c = $('camera'); state.camera = EmberCamera.create(c.width, c.height); }
+  return state.camera;
+}
+
+/* Optional reference clips for demo cases, listed in dist/demo-video/videos.json
+   as {"<case id>": {"file": "clip.mp4", "credit": "…"}}. Labeled on screen as
+   not recorded by ANAFI-01. */
+async function loadDemoVideos() {
+  if (state.demo.videos) return;
+  state.demo.videos = {};
+  try { const r = await fetch('demo-video/videos.json'); if (r.ok) state.demo.videos = await r.json(); } catch {}
+}
+function setDemoVideo(f) {
+  const cam = camera(), entry = f && state.demo.videos?.[f.id];
+  state.demo.video?.pause(); state.demo.video = null; state.demo.videoCredit = null;
+  if (entry?.file) {
+    const v = document.createElement('video'); v.muted = true; v.loop = true; v.playsInline = true; v.src = 'demo-video/' + entry.file; v.play().catch(() => {});
+    state.demo.video = v; state.demo.videoCredit = entry.credit || 'credit not listed';
+  }
+  if (cam) EmberCamera.setVideo(cam, state.demo.video);
+}
+
+let lastPanel = 0;
+function animateDemoCase(now) {
+  const f = demoCase(); if (!f || !state.demo.marker) return;
+  const t = (now - state.demo.started) / 1000, p = simPose(f, t), conf = simConfidence(f, t, p);
+  state.demo.pos = [p.lat, p.lon];
+  state.demo.marker.setLatLng(state.demo.pos); setDronePose(state.demo.marker, p.heading, p.alt);
+  state.demo.sight.setLatLngs([state.demo.pos, [f.lat, f.lon]]);
+  if (t - (state.demo.lastTrail ?? -9) >= 1) { state.demo.lastTrail = t; state.demo.trail.addLatLng(state.demo.pos); }
+  if (state.follow && now - (state.demo.lastPan ?? 0) > 250) { state.demo.lastPan = now; state.map.panTo(state.demo.pos, {animate: false}); }
+  const cam = camera(), video = !!state.demo.video && state.demo.video.readyState >= 2;
+  if (cam && now - (state.demo.lastCam ?? 0) > 33) {
+    state.demo.lastCam = now;
+    const seen = EmberCamera.render($('camera').getContext('2d'), cam, p, {t, fire: p.fire, confidence: conf, speed: p.speed, battery: p.battery, range: p.range, footer: video ? 'REFERENCE FOOTAGE · NOT RECORDED BY ANAFI-01' : `SIMULATED · ${p.phase.toUpperCase()} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`});
+    state.demo.inView = !!seen;
+  }
+  if (now - lastPanel < 250) return; lastPanel = now;
+  $('altitude').innerHTML = `${p.alt.toFixed(1)} <small>m</small>`; $('ground-speed').innerHTML = `${p.speed.toFixed(1)} <small>m/s</small>`;
+  $('power').innerHTML = `${Math.round(p.battery)} <small>%</small>`; $('flight-state').textContent = `Flying · ${p.phase.toLowerCase()}`;
+  $('battery-value').innerHTML = `${Math.round(p.battery)}<span class="small-unit">%</span>`; $('battery-context').textContent = 'simulated ANAFI-01 (demo)';
+  $('telemetry-note').textContent = `DEMO · simulated ANAFI-01 · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${Math.round(p.range)} m from ignition`;
+  $('detect-value').textContent = Math.round(conf * 100); $('detect-unit').textContent = '%';
+  $('detect-context').textContent = `simulated · fire model · ${Math.round(p.range)} m · ${Math.floor(t * 4) + 1} sightings`;
+  $('camera-label').innerHTML = video ? '<i class="hot"></i> REFERENCE FOOTAGE · NOT ANAFI-01' : state.demo.inView ? '<i class="hot"></i> FIRE IN VIEW · SIMULATED' : '<i></i> DEMO · SIMULATED';
+  $('camera-clock').textContent = `${f.startDate} · T+${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  $('video-fps').textContent = cam?.ok ? '30 fps · sim' : '—';
+  $('video-status').textContent = video ? `Reference clip · ${state.demo.videoCredit}` : cam?.ok ? 'Simulated camera · satellite imagery + modelled fire' : 'Simulated camera needs WebGL';
 }
 
 function demoProjection() {
@@ -374,7 +487,7 @@ function demoProjection() {
 async function demoGemini(kind) {
   const f = demoCase(); if (!f) { toast('Select a fire case first.'); return null; }
   const a = state.analysis;
-  return getJson(`/api/demo/${kind}`, {method: 'POST', timeout: 60000, body: {case: f, scenario: state.scenario, ...(kind === 'plan' ? {objective: $('objective').value, notes: $('notes').value, projection: demoProjection(), analysis: a && {summary: a.summary, severity: a.severity, spread_outlook: a.spread_outlook}} : {})}});
+  return getJson(`/api/demo/${kind}`, {method: 'POST', timeout: 60000, body: {case: simCase(f), scenario: state.scenario, ...(kind === 'plan' ? {objective: $('objective').value, notes: $('notes').value, projection: demoProjection(), analysis: a && {summary: a.summary, severity: a.severity, spread_outlook: a.spread_outlook}} : {})}});
 }
 
 async function toggleDemo() {
@@ -384,6 +497,7 @@ async function toggleDemo() {
   state.demo.results ??= {};
   state.live = {analysis: state.analysis, analysisMeta: state.analysisMeta, plan: state.plan, planDirty: state.planDirty};
   state.mode = 'demo'; state.playing = false; setPlayButton();
+  state.basemapBeforeDemo = state.basemap; setBasemap('sat'); await loadDemoVideos();
   $('demo-toggle').innerHTML = 'Exit demo <svg><use href="#i-close"/></svg>';
   setModePill('demo', 'Demo'); setBanner('demo', '<strong>Demo mode.</strong> Recorded historical fires with a simulated ANAFI-01 — no drone needed. Gemini analysis and planning run live on the selected case and are not stored. Live data resumes when you exit.');
   $('map-pill').textContent = 'Demo'; $('map-subtitle').textContent = 'Recorded fires replayed from ignition, plus the drone flight pattern';
@@ -403,17 +517,25 @@ function selectDemo(id) {
     state.demo.selected = 'flight'; state.demo.started = performance.now();
     const s = [state.site.latitude, state.site.longitude], side = 2 * Math.sin(Math.PI / 8);
     // Same 8-segment polygon the bridge flies: start heading north, turn 45° after each 1 m-radius side.
-    const pts = [s]; let p = s;
-    for (let i = 0; i < 8; i++) { p = M.destPoint(p[0], p[1], i * 45, side); pts.push(p); }
-    state.demo.flightPts = pts;
+    const pts = [s], local = [[0, 0]]; let p = s;
+    for (let i = 0; i < 8; i++) {
+      p = M.destPoint(p[0], p[1], i * 45, side); pts.push(p);
+      const [e, n] = local.at(-1); local.push([e + side * Math.sin(i * Math.PI / 4), n + side * Math.cos(i * Math.PI / 4)]);
+    }
+    state.demo.flightPts = pts; state.demo.flightLocal = local;
     L.polyline(pts, {color: '#267980', weight: 2, dashArray: '4 5'}).addTo(state.demo.layer);
-    state.demo.marker = L.marker(s, {icon: L.divIcon({className: 'drone-icon-wrap', html: '<div class="drone-icon"><span>▲</span></div>', iconSize: [30, 30], iconAnchor: [15, 15]})}).addTo(state.demo.layer);
+    state.demo.marker = droneMarker(s).addTo(state.demo.layer);
+    // The printed test marker 2 m ahead of take-off, where the -45° camera centres it at the 2 m hover.
+    const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'pad', lat: s[0], lon: s[1], windDeg: 0, marker: {e: 0, n: 2, size: .18, src: 'test-marker.png'}});
+    setDemoVideo(null);
     state.map.setView(M.destPoint(s[0], s[1], 112.5, 1.2), 21);
     state.scenario = {...M.BASE}; $('map-location').textContent = state.site.name; $('incident-sub').textContent = `Take off · climb 1 m · 1 m-radius circle · return · land — ${state.site.name}`;
     $('incident-eyebrow').textContent = 'DEMO · FLIGHT PATTERN'; $('incident-title').textContent = 'ANAFI-01 demo flight'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
     $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'flight-pattern replay — no fire';
     $('telemetry-tag').textContent = 'DEMO'; $('drone-source').textContent = 'Replay (demo)'; $('telemetry-note').textContent = 'DEMO · replay of the bridge\'s --demo-flight pattern';
     $('flight-progress').hidden = false;
+    $('battery-value').innerHTML = '76<span class="small-unit">%</span>'; $('battery-context').textContent = 'simulated ANAFI-01 (demo)';
+    setBanner('demo', '<strong>Demo: ANAFI-01 flight pattern.</strong> Replay of the bridge\'s <code>--demo-flight</code> at UTSC with a simulated camera: the printed test marker sits 2 m ahead of take-off, where the drone sees it at the 2 m hover.');
   } else {
     const f = state.demo.selected = state.demo.fires.find(x => x.id === id);
     state.scenario = {wind: f.drivers.windKmh ?? M.BASE.wind, direction: f.directionDeg, dryness: f.drivers.rhPct != null ? 100 - f.drivers.rhPct : M.BASE.dryness, temp: f.drivers.tempC ?? M.BASE.temp, rh: f.drivers.rhPct ?? M.BASE.rh};
@@ -422,13 +544,18 @@ function selectDemo(id) {
     const t = f.drone.telemetry, d = f.drone.detection, i = f.impacts, n = v => v == null ? '—' : '≈' + v.toLocaleString();
     L.marker([f.lat, f.lon], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(state.demo.layer)
       .bindPopup(`<b>${escapeHTML(f.name)}</b><br>${escapeHTML(f.region)} · ${escapeHTML(f.startDate)}<br>Cause: ${escapeHTML(f.cause)}<br>≈${f.areaHa.toLocaleString()} ha · structures ${n(i.structures)} · evacuated ${n(i.evacuated)} · deaths ${i.deaths ?? '—'}<br><small>${escapeHTML(f.notes)}</small><br><small>Source: ${escapeHTML(f.source)}</small>`);
-    L.polyline([[t.latitude, t.longitude], [f.lat, f.lon]], {color: '#e66c43', weight: 1.5, dashArray: '3 4'}).addTo(state.demo.layer);
-    const drone = L.marker([t.latitude, t.longitude], {icon: L.divIcon({className: 'drone-icon-wrap', html: '<div class="drone-icon"><span>▲</span></div>', iconSize: [30, 30], iconAnchor: [15, 15]})}).addTo(state.demo.layer).bindTooltip('ANAFI-01 (simulated)');
-    const el = drone.getElement()?.querySelector('.drone-icon'); if (el) el.style.transform = `rotate(${t.extra.heading_deg}deg)`;
+    state.demo.started = performance.now(); state.demo.lastTrail = null; state.demo.inView = false;
+    state.demo.pos = [t.latitude, t.longitude];
+    state.demo.trail = L.polyline([], {color: '#4fd1c5', weight: 2.5, opacity: .85}).addTo(state.demo.layer);
+    state.demo.sight = L.polyline([state.demo.pos, [f.lat, f.lon]], {color: '#e66c43', weight: 1.5, dashArray: '3 4'}).addTo(state.demo.layer);
+    state.demo.marker = droneMarker(state.demo.pos).addTo(state.demo.layer);
+    const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'fire', lat: f.lat, lon: f.lon, windDeg: f.directionDeg, windKmh: f.drivers.windKmh});
+    setDemoVideo(f);
     $('incident-eyebrow').textContent = 'DEMO CASE · SIMULATED ANAFI-01'; $('incident-title').textContent = f.name; $('incident-tag').hidden = false; $('incident-dot').classList.add('alert');
     $('incident-sub').textContent = `${f.region} · ignited ${f.startDate} · ${f.cause} · recorded ≈${f.areaHa.toLocaleString()} ha · ${f.drivers.fuel}`;
-    setBanner('demo', `<strong>Demo case: ${escapeHTML(f.name)}.</strong> Simulated ANAFI-01 detection (fire model, ${Math.round(d.confidence * 100)}%) ${d.fire.distance_m} m ahead, bearing ${d.fire.bearing_deg}°. Recorded conditions: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%. Press <b>Analyze</b> or <b>Generate plan</b> for live Gemini.`);
-    renderDemoDrone(f); $('map-location').textContent = `${f.name} · ${f.region}`;
+    setBanner('demo', `<strong>Demo case: ${escapeHTML(f.name)}.</strong> Simulated ANAFI-01 detection (fire model, ${Math.round(d.confidence * 100)}%) ${d.fire.distance_m} m ahead, bearing ${d.fire.bearing_deg}°; it closes to a 500 m orbit with the camera locked on the fire. Recorded conditions: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%. Press <b>Analyze</b> or <b>Generate plan</b> for live Gemini.`);
+    $('telemetry-tag').textContent = 'DEMO'; $('drone-source').textContent = 'Simulated (demo)'; $('telemetry-note').classList.remove('error-text'); $('flight-progress').hidden = true;
+    $('map-location').textContent = `${f.name} · ${f.region}`;
     state.minute = 60;
     fitToFire();
   }
@@ -437,7 +564,8 @@ function selectDemo(id) {
 }
 
 function exitDemo() {
-  state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.layers.demo.clearLayers(); state.map.closePopup();
+  state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.map.closePopup();
+  setDemoVideo(null); setBasemap(state.basemapBeforeDemo ?? 'osm'); setFollow(false);
   $('demo-toggle').innerHTML = 'Demo <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
   $('map-pill').textContent = 'Live'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
   $('map-location').textContent = state.site.name; state.detectedScenario = null; state.scenario = {...M.BASE}; state.minute = 0; state.episodeSeen = null; state.centredOnDrone = false;
@@ -449,7 +577,7 @@ function exitDemo() {
 
 function animateDemoFlight(now) {
   if (state.mode !== 'demo' || state.demo.selected !== 'flight') return;
-  const pts = state.demo.flightPts, t = ((now - state.demo.started) / 1000) % DEMO_FLIGHT_S;
+  const pts = state.demo.flightPts, t = ((now - state.demo.started) / 1000) % DEMO_FLIGHT_S, side = 2 * Math.sin(Math.PI / 8);
   // 0-3 s take-off, 3-5 s climb, 5-21 s circle, 21-23 s return, 23-26 s landing
   let phase, pos = pts[0], alt = 0, heading = 0;
   if (t < 3) { phase = 'take-off'; alt = t / 3; }
@@ -457,12 +585,22 @@ function animateDemoFlight(now) {
   else if (t < 21) { const k = (t - 5) / 16 * 8, i = Math.min(7, Math.floor(k)), f = k - i; phase = `circle ${i + 1}/8`; alt = 2; heading = i * 45; pos = [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * f, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * f]; }
   else if (t < 23) { phase = 'return'; alt = 2; heading = 360; }
   else { phase = 'landing'; alt = 2 * (1 - (t - 23) / 3); }
-  state.demo.marker.setLatLng(pos);
-  const el = state.demo.marker.getElement()?.querySelector('.drone-icon'); if (el) el.style.transform = `rotate(${heading}deg)`;
+  state.demo.marker.setLatLng(pos); state.demo.pos = pos; setDronePose(state.demo.marker, heading, alt, t >= 25.5);
+  if (state.follow) state.map.panTo(pos, {animate: false});
   $('flight-phase').textContent = `Demo replay · ${phase}`; $('flight-bar').style.width = Math.round(t / DEMO_FLIGHT_S * 100) + '%';
   $('altitude').innerHTML = `${alt.toFixed(1)} <small>m</small>`; $('flight-state').textContent = phase.split(' ')[0];
-  drawWaiting('Demo replay — flight pattern', `${phase} · altitude ${alt.toFixed(1)} m`);
-  $('camera-label').innerHTML = '<i></i> DEMO REPLAY';
+  const cam = camera();
+  if (!cam?.ok) { drawWaiting('Demo replay — flight pattern', `${phase} · altitude ${alt.toFixed(1)} m`); $('camera-label').innerHTML = '<i></i> DEMO REPLAY'; return; }
+  if (now - (state.demo.lastCam ?? 0) < 33) return; state.demo.lastCam = now;
+  // The same pose in metres from take-off, for the simulated camera.
+  const local = state.demo.flightLocal, circling = t >= 5 && t < 21, k = circling ? (t - 5) / 16 * 8 : 0, i = Math.min(7, Math.floor(k)), fr = k - i;
+  const [e, n] = circling ? [local[i][0] + (local[i + 1][0] - local[i][0]) * fr, local[i][1] + (local[i + 1][1] - local[i][1]) * fr] : [0, 0];
+  const pose = {e, n, alt: alt + .02 * Math.sin(t * 2.1), heading: heading % 360, pitch: 45};
+  const seen = EmberCamera.render($('camera').getContext('2d'), cam, pose, {t, confidence: .97, speed: circling ? side / 2 : 0, battery: 76 - t / 30, range: Math.hypot(e, n - 2), shake: alt > .2 ? .6 : 0, zoom: `MARKER ${Math.hypot(e, n - 2).toFixed(1)} m`, footer: `SIMULATED · DEMO FLIGHT · ${phase.toUpperCase()}`});
+  $('camera-label').innerHTML = seen ? '<i class="hot"></i> TEST MARKER IN VIEW · SIMULATED' : '<i></i> DEMO REPLAY · SIMULATED';
+  $('ground-speed').innerHTML = `${(circling ? side / 2 : 0).toFixed(1)} <small>m/s</small>`; $('power').innerHTML = `${Math.round(76 - t / 30)} <small>%</small>`;
+  $('camera-clock').textContent = `T+0:${String(Math.floor(t)).padStart(2, '0')}`;
+  $('video-fps').textContent = '30 fps · sim'; $('video-status').textContent = 'Simulated camera · printed test marker 2 m ahead of take-off';
 }
 
 // --------------------------------------------------------------- polling
@@ -519,7 +657,8 @@ function bindUi() {
   for (const b of document.querySelectorAll('[data-minute]')) b.onclick = () => { state.playing = false; setPlayButton(); state.minute = +b.dataset.minute; renderSpread(); };
   $('layers-open').onclick = () => { $('layer-menu').hidden = !$('layer-menu').hidden; $('layers-open').setAttribute('aria-expanded', String(!$('layer-menu').hidden)); };
   for (const [box, layer] of [['layer-spread', 'spread'], ['layer-fire', 'fire'], ['layer-drone', 'drone'], ['layer-wind', 'wind']]) $(box).onchange = () => $(box).checked ? state.map.addLayer(state.layers[layer]) : state.map.removeLayer(state.layers[layer]);
-  $('zoom-in').onclick = () => state.map.zoomIn(); $('zoom-out').onclick = () => state.map.zoomOut(); $('zoom-reset').onclick = fitToFire;
+  $('zoom-in').onclick = () => state.map.zoomIn(); $('zoom-out').onclick = () => state.map.zoomOut(); $('zoom-reset').onclick = () => { setFollow(false); fitToFire(); };
+  $('zoom-drone').onclick = () => setFollow(!state.follow); $('layer-sat').onchange = () => setBasemap($('layer-sat').checked ? 'sat' : 'osm');
   $('dismiss-fire').onclick = async () => { const inc = state.incident; if (!inc) return; try { await api('/api/incident/dismiss', {method: 'POST', body: {episode_id: inc.episode_id}}); toast('Marked as a false alarm.'); await pollIncident(); } catch (e) { toast(e.message); } };
   $('analyze').onclick = async () => {
     $('analyze').disabled = true; $('analysis-source').textContent = 'ANALYZING…';
@@ -571,7 +710,7 @@ let lastFrame = 0, lastSpread = 0;
 function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
   if (state.playing) { state.minute = (state.minute + delta * .002 * state.speed) % 60; if (now - lastSpread > 66) { lastSpread = now; renderSpread(); } }
-  animateDemoFlight(now);
+  animateDemoFlight(now); animateDemoCase(now);
   requestAnimationFrame(animate);
 }
 

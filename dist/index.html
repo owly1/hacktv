@@ -7,7 +7,7 @@
   <title>Emberwatch · Live incident workspace</title>
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="styles.css">
-  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="demo-cases.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script>
+  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="demo-cases.js"></script><script defer src="sim-camera.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script>
 </head>
 <body>
 <svg class="sprite" aria-hidden="true"><defs>
@@ -57,8 +57,8 @@
     <div class="map-viewport" id="map-viewport">
      <div id="map" role="application" aria-label="Map of the drone, the detected fire and its projected spread"></div>
      <div class="map-top"><span class="map-location"><span class="dot"></span> <span id="map-location">UTSC</span></span><div class="map-top-right"><select id="demo-fire" class="demo-select" aria-label="Demo case" hidden></select><button class="map-tool" id="layers-open" aria-label="Map layers" aria-expanded="false"><svg><use href="#i-layers"/></svg></button></div></div>
-     <div class="layer-menu" id="layer-menu" hidden><strong>Map layers</strong><label><input type="checkbox" id="layer-spread" checked> Projected spread</label><label><input type="checkbox" id="layer-fire" checked> Fire position</label><label><input type="checkbox" id="layer-drone" checked> Drone + flight path</label><label><input type="checkbox" id="layer-wind" checked> Wind direction</label></div>
-     <div class="map-zoom"><button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Centre on the drone and fire">⌾</button></div>
+     <div class="layer-menu" id="layer-menu" hidden><strong>Map layers</strong><label><input type="checkbox" id="layer-spread" checked> Projected spread</label><label><input type="checkbox" id="layer-fire" checked> Fire position</label><label><input type="checkbox" id="layer-drone" checked> Drone + flight path</label><label><input type="checkbox" id="layer-wind" checked> Wind direction</label><label><input type="checkbox" id="layer-sat"> Satellite imagery</label></div>
+     <div class="map-zoom"><button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Centre on the drone and fire">⌾</button><button id="zoom-drone" aria-label="Follow the drone" title="Follow the drone"><svg><use href="#i-drone"/></svg></button></div>
      <div class="map-bottom"><div class="legend"><span>Spread intensity</span><i></i><div><span>Low</span><span>High</span></div></div><div class="map-disclaimer" id="map-disclaimer">© OpenStreetMap contributors</div></div>
      <div id="map-empty" class="map-chip" hidden><svg><use href="#i-info"/></svg><span><strong id="map-empty-title"></strong> <span id="map-empty-text"></span></span></div>
     </div>

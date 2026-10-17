@@ -304,6 +304,17 @@ test('map tiles are fetched once, then served from the disk cache', async () => 
   } finally { await t.close(); }
 });
 
+test('satellite tiles use the imagery service z/y/x order', async () => {
+  const urls = [];
+  const t = await startApp({ noGemini: true, tileFetch: async (url) => { urls.push(url); return new Response(Buffer.from([0xff, 0xd8, 0xff])); } });
+  try {
+    const res = await t.req('GET', '/tiles/sat/16/18000/21000.png');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/jpeg');
+    assert.match(urls[0], /World_Imagery\/MapServer\/tile\/16\/21000\/18000$/);
+  } finally { await t.close(); }
+});
+
 test('Gemini transport retries an overloaded model, then falls back', async () => {
   const seen = [];
   const fetchImpl = async (url) => {

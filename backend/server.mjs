@@ -51,8 +51,11 @@ export const DEFAULT_SITE = Object.freeze({
 // once while online keeps working on the drone's internet-less Wi-Fi. Only
 // tiles a viewer actually requests are fetched (no bulk prefetching), per
 // the OpenStreetMap tile usage policy.
+// sat (Esri World Imagery) backs Demo mode's satellite map and the simulated
+// drone camera; note its {y}/{x} order.
 const TILE_SOURCES = {
   osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  sat: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 };
 
 const MIME_TYPES = {
@@ -66,6 +69,8 @@ const MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.md': 'text/markdown; charset=utf-8',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
 };
 
 // ---------------------------------------------------------------- storage
@@ -1412,7 +1417,7 @@ export function createApp({
         await handleApi(req, res, url);
         return;
       }
-      const tile = /^\/tiles\/(osm)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(pathname);
+      const tile = /^\/tiles\/(osm|sat)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(pathname);
       if (req.method === 'GET' && tile) {
         await handleTile(res, tile[1], tile[2], tile[3], tile[4]);
         return;

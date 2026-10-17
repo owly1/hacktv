@@ -29,7 +29,21 @@ historical fires from `examples/` are hardcoded in `dist/demo-cases.js`, each
 with a simulated ANAFI-01 (telemetry + detection, labeled DEMO). **Analyze** and
 **Generate plan** call Gemini live on the selected case through
 `/api/demo/analyze` and `/api/demo/plan`. Demo results are never written to
-TigerData. If scripts are blocked, run
+TigerData.
+
+The simulated drone flies in from its detection point 1.5 km upwind and
+settles into a 500 m orbit. The camera panel shows a rendered view
+(`dist/sim-camera.js`, WebGL): satellite imagery of the real location, a
+modelled fire front and smoke, a HUD and the detection box. All of it is labeled
+SIMULATED. Demo mode switches the map to satellite imagery (Esri, proxied and
+cached by the backend like the street tiles); the drone button under the map zoom
+controls follows the drone.
+To show a real reference clip for a case instead, put it in `dist/demo-video/`
+and list it in `dist/demo-video/videos.json` as
+`{"<case id>": {"file": "clip.mp4", "credit": "source and licence"}}`. It is
+labeled as not recorded by ANAFI-01.
+
+If scripts are blocked, run
 `powershell -ExecutionPolicy Bypass -File .\demo.ps1`.
 
 ## 2. Bridge (WSL Ubuntu, on the drone's Wi-Fi)
