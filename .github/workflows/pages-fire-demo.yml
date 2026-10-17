@@ -1,0 +1,41 @@
+name: Publish historical-fire map demo
+
+# Emits the static test-case site (examples/historical-fires.mjs --emit)
+# and deploys it to GitHub Pages: https://owly1.github.io/hacktv/
+# Requires: repo Settings → Pages → Source = "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'examples/historical-fires.mjs'
+      - '.github/workflows/pages-fire-demo.yml'
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Emit static site
+        run: node examples/historical-fires.mjs --emit site-dist
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site-dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

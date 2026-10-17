@@ -17,15 +17,19 @@
  *
  * Zero dependencies (Node >=18 built-in http only). Run:
  *
- *   node examples/historical-fires.mjs          # then open http://127.0.0.1:8790
+ *   node examples/historical-fires.mjs              # then open http://127.0.0.1:8790
  *   PORT=9000 node examples/historical-fires.mjs
+ *   node examples/historical-fires.mjs --emit DIR   # write a static site (index.html + fires.json)
+ *                                                   # for GitHub Pages / any static host
  *
  * Endpoints: GET / (dashboard), GET /fires.json (dataset), GET /healthz.
- * Map tiles need internet (Leaflet + CARTO Voyager, key-free per docs/KEYS.md);
+ * Map tiles need internet (Leaflet + Esri light-gray, key-free — see docs/KEYS.md);
  * without it the page falls back to a data-table view automatically.
  */
 
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const PORT = Number(process.env.PORT) || 8790;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -594,6 +598,23 @@ else { renderFallback(); selectFire(FIRES[0].id, false); }
 </body>
 </html>`;
 
+function renderPage(){
+  return PAGE
+    .replace('__FIRES_JSON__', JSON.stringify(FIRES))
+    .replace('__CONTEXT_JSON__', JSON.stringify(CONTEXT_NOTE));
+}
+
+/* --emit <dir>: write a fully static copy (no Node needed to view). */
+if (process.argv.includes('--emit')) {
+  const dir = process.argv[process.argv.indexOf('--emit') + 1] || 'site-dist';
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'index.html'), renderPage());
+  fs.writeFileSync(path.join(dir, 'fires.json'),
+    JSON.stringify({ contract: 'emberwatch-testcase.v1', note: 'recorded events; illustrative zones; not a prediction', fires: FIRES }, null, 2));
+  console.log(`Static site written to ${dir}/ (index.html + fires.json)`);
+  process.exit(0);
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   if (url.pathname === '/healthz') {
@@ -605,11 +626,8 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ contract: 'emberwatch-testcase.v1', note: 'recorded events; illustrative zones; not a prediction', fires: FIRES }));
   }
   if (url.pathname === '/' || url.pathname === '/index.html') {
-    const html = PAGE
-      .replace('__FIRES_JSON__', JSON.stringify(FIRES))
-      .replace('__CONTEXT_JSON__', JSON.stringify(CONTEXT_NOTE));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    return res.end(html);
+    return res.end(renderPage());
   }
   res.writeHead(404, { 'content-type': 'application/json' });
   res.end('{"error":"not found"}');
