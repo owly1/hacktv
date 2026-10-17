@@ -321,7 +321,7 @@ function renderPlan(offline) {
 async function generatePlan() {
   $('generate-plan').disabled = true; $('generate-plan').innerHTML = '<svg><use href="#i-spark"/></svg>Gemini is planning…';
   try {
-    state.plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 60000});
+    state.plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 100000});
     state.planDirty = false; renderPlan(); toast('Operational plan ready.');
   } catch (e) {
     if (e.status === 429) toast(e.message);

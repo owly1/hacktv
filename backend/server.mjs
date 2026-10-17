@@ -37,7 +37,8 @@ const DEFAULT_HOST = '127.0.0.1';
 const MAX_JSON_BODY = 8 * 1024 * 1024; // fits a 5 MB base64 snapshot envelope
 const GEMINI_MIN_INTERVAL_MS = 30_000;  // one started analysis per 30 s
 const PLAN_MIN_INTERVAL_MS = 10_000;
-const GEMINI_UPSTREAM_TIMEOUT_MS = 20_000;
+// A full plan takes Flash models ~20 s (most of it reasoning), so allow well over that per model.
+const GEMINI_UPSTREAM_TIMEOUT_MS = 45_000;
 const INCIDENT_ACTIVE_MS = 30 * 60_000;  // a fire stays on the map 30 min after its last sighting
 const VIDEO_BOUNDARY = 'emberframe';
 
@@ -576,6 +577,7 @@ export function validatePlanContent(parsed) {
 // retried once, then the next model in `fallbackModels` is tried, so a busy
 // model does not take analysis down mid-demo.
 const RETRYABLE_UPSTREAM = new Set([429, 500, 503]);
+const SILENT_MODEL_COOLDOWN_MS = 5 * 60_000; // a model that stopped answering is skipped this long
 
 function upstreamMessage(status, detail) {
   let message = detail.slice(0, 200);
@@ -585,12 +587,13 @@ function upstreamMessage(status, detail) {
   return `Gemini upstream returned HTTP ${status}${message ? `: ${message}` : ''}`;
 }
 
-export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500 }) {
+export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500, timeoutMs = GEMINI_UPSTREAM_TIMEOUT_MS, now = () => Date.now() }) {
+  const silentUntil = new Map(); // model -> ms; models that timed out or were unreachable
   async function callModel(name, requestBody) {
     const url =
       `https://generativelanguage.googleapis.com/v1beta/models/${name}:generateContent`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GEMINI_UPSTREAM_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetchImpl(url, {
         method: 'POST',
@@ -610,29 +613,43 @@ export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchI
       return res.json();
     } catch (err) {
       if (err instanceof ApiError) throw err;
-      if (err.name === 'AbortError') {
-        throw new ApiError(502, `Gemini upstream exceeded ${GEMINI_UPSTREAM_TIMEOUT_MS / 1000}s timeout`);
-      }
-      throw new ApiError(502, `Gemini request failed (no internet connection?): ${err.message}`);
+      // No answer at all: move straight on to the next model instead of retrying this one.
+      const silent = err.name === 'AbortError'
+        ? new ApiError(502, `Gemini ${name} gave no answer within ${timeoutMs / 1000}s`)
+        : new ApiError(502, `Gemini request failed (no internet connection?): ${err.message}`);
+      silent.silent = true;
+      throw silent;
     } finally {
       clearTimeout(timer);
     }
   }
-  return async function geminiTransport(requestBody) {
+  async function geminiTransport(requestBody) {
+    const chain = [model, ...fallbackModels];
+    // Skip models that recently went silent, unless every model has.
+    const awake = chain.filter((m) => !(silentUntil.get(m) > now()));
     let lastError;
-    for (const name of [model, ...fallbackModels]) {
+    for (const name of awake.length ? awake : chain) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          return await callModel(name, requestBody);
+          const reply = await callModel(name, requestBody);
+          silentUntil.delete(name);
+          geminiTransport.lastModel = (typeof reply?.modelVersion === 'string' && reply.modelVersion) || name;
+          return reply;
         } catch (err) {
           lastError = err;
+          if (err.silent) { silentUntil.set(name, now() + SILENT_MODEL_COOLDOWN_MS); break; }
           if (!err.retryable) throw err;
           if (attempt === 0) await new Promise((r) => setTimeout(r, retryDelayMs));
         }
       }
     }
+    if (lastError?.silent && chain.length > 1) {
+      throw new ApiError(502, `No Gemini model answered (${chain.join(', ')}). ${lastError.message}`);
+    }
     throw lastError;
-  };
+  }
+  geminiTransport.lastModel = null;
+  return geminiTransport;
 }
 
 // -------------------------------------------------------------------- http
@@ -929,7 +946,7 @@ export function createApp({
     const record = {
       id: crypto.randomUUID(),
       created_at: new Date(now()).toISOString(),
-      model: geminiModel,
+      model: geminiTransport.lastModel ?? geminiModel,
       evidence_at: new Date(evidence.at).toISOString(),
       evidence_kind: evidence.kind,
       trigger,
@@ -1358,7 +1375,7 @@ export function createApp({
       const record = {
         id: crypto.randomUUID(),
         created_at: new Date(nowMs).toISOString(),
-        model: geminiModel,
+        model: geminiTransport.lastModel ?? geminiModel,
         objective,
         notes,
         scenario,
@@ -1514,7 +1531,7 @@ async function main() {
   const pgCaFile = process.env.PG_CA_FILE || null;
   const geminiApiKey = process.env.GEMINI_API_KEY || null;
   const geminiModel = process.env.GEMINI_MODEL || null;
-  const fallbackModels = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.7-flash,gemini-3.5-flash')
+  const fallbackModels = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.6-flash,gemini-3-flash-preview,gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.7-flash')
     .split(',').map((m) => m.trim()).filter((m) => m && m !== geminiModel);
   const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
   const port = Number(process.env.PORT || DEFAULT_PORT);

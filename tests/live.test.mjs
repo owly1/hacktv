@@ -340,6 +340,29 @@ test('Gemini transport retries an overloaded model, then falls back', async () =
   await assert.rejects(failing({}), /HTTP 400: bad key/);
 });
 
+test('Gemini transport moves past a silent model and skips it while it cools down', async () => {
+  const seen = [];
+  let clock = 0;
+  const fetchImpl = (url, { signal }) => {
+    const name = url.match(/models\/([^:]+)/)[1];
+    seen.push(name);
+    if (name === 'backup') return Promise.resolve(new Response(JSON.stringify(analysisReply)));
+    // 'main' never answers; only the transport's own timeout ends the request
+    return new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+  };
+  const transport = makeGeminiTransport({ apiKey: 'k', model: 'main', fallbackModels: ['backup'], fetchImpl, retryDelayMs: 1, timeoutMs: 20, now: () => clock });
+  assert.ok((await transport({})).candidates);
+  assert.deepEqual(seen, ['main', 'backup'], 'no second wait on the silent model');
+  assert.equal(transport.lastModel, 'backup');
+  await transport({});
+  assert.deepEqual(seen, ['main', 'backup', 'backup'], 'silent model skipped during cooldown');
+  clock += 6 * 60_000;
+  await transport({});
+  assert.deepEqual(seen.slice(-2), ['main', 'backup'], 'tried again after cooldown');
+  const allSilent = makeGeminiTransport({ apiKey: 'k', model: 'main', fallbackModels: ['other'], fetchImpl, retryDelayMs: 1, timeoutMs: 20 });
+  await assert.rejects(allSilent({}), /No Gemini model answered \(main, other\)/);
+});
+
 test('analysis prompt carries the detection context', () => {
   const parts = buildAnalysisParts({ kind: 'telemetry-only', telemetry: { battery_pct: 50 }, detection: detection() });
   const text = parts.map((p) => p.text).join(' ');
