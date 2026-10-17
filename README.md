@@ -18,6 +18,20 @@ TigerData: put the service URL in `DATABASE_URL`, then `npm run db:init` once
 (creates the hypertables, continuous aggregate and compression policy, then
 proves an insert and read-back).
 
+### Demo cases (no drone)
+
+```powershell
+.\demo.ps1               # or: npm run demo   (add -Port 9000 to run beside another backend)
+```
+
+Starts the backend and opens the dashboard in Demo mode (`/?demo`). The
+historical fires from `examples/` are hardcoded in `dist/demo-cases.js`, each
+with a simulated ANAFI-01 (telemetry + detection, labeled DEMO). **Analyze** and
+**Generate plan** call Gemini live on the selected case through
+`/api/demo/analyze` and `/api/demo/plan`. Demo results are never written to
+TigerData. If scripts are blocked, run
+`powershell -ExecutionPolicy Bypass -File .\demo.ps1`.
+
 ## 2. Bridge (WSL Ubuntu, on the drone's Wi-Fi)
 
 ```bash

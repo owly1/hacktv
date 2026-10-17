@@ -265,6 +265,30 @@ test('demo fires are served from the examples dataset', async () => {
   } finally { await t.close(); }
 });
 
+test('demo cases get live Gemini analysis and plans that are never stored', async () => {
+  const t = await startApp({ replies: [analysisReply, planReply] });
+  const demoCase = { id: 'jasper-2024', name: 'Jasper townsite complex', drone: { telemetry: { provenance: 'demo-simulated' } } };
+  try {
+    const analysis = await (await t.req('POST', '/api/demo/analyze', { token: DASH, body: { case: demoCase, scenario: { wind: 50 } } })).json();
+    assert.equal(analysis.severity, 'extreme');
+    assert.equal(analysis.provenance, 'gemini-demo');
+    assert.equal(analysis.case_id, 'jasper-2024');
+    const prompt = t.calls[0].contents[0].parts.map((p) => p.text ?? '').join(' ');
+    assert.match(prompt, /DEMO REPLAY/);
+    assert.match(prompt, /Jasper townsite complex/);
+    assert.equal(t.calls[0].tools, undefined, 'demo analysis must not call tools that read live drone data');
+
+    // Rate limit: one demo Gemini request per 10 s.
+    assert.equal((await t.req('POST', '/api/demo/plan', { token: DASH, body: { case: demoCase } })).status, 429);
+
+    const nothingStored = await (await t.req('GET', '/api/analysis/latest', { token: DASH })).json();
+    assert.equal(nothingStored.analysis, null);
+    assert.equal((await t.req('GET', '/api/plan/latest', { token: DASH }).then((r) => r.json())).plan, null);
+    assert.equal((await t.req('POST', '/api/demo/analyze', { token: DASH, body: {} })).status, 400);
+    assert.equal((await t.req('POST', '/api/demo/analyze', { body: { case: demoCase } })).status, 401);
+  } finally { await t.close(); }
+});
+
 test('map tiles are fetched once, then served from the disk cache', async () => {
   let fetches = 0;
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);

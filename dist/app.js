@@ -285,7 +285,7 @@ function renderAnalysis() {
   $('analysis-offline').hidden = !offline; $('analysis-offline-text').textContent = offline || '';
   if (meta?.pending) $('analysis-source').textContent = 'ANALYZING…';
   if (!a) { if (!meta?.pending) $('analysis-source').textContent = offline ? 'UNAVAILABLE' : 'WAITING'; return; }
-  if (!meta?.pending) $('analysis-source').textContent = `GEMINI · ${a.trigger === 'auto-detection' ? 'AUTO' : 'MANUAL'} · ${fmtTime(a.created_at)}`;
+  if (!meta?.pending) $('analysis-source').textContent = `GEMINI · ${a.trigger === 'auto-detection' ? 'AUTO' : a.trigger === 'demo' ? 'DEMO' : 'MANUAL'} · ${fmtTime(a.created_at)}`;
   $('analysis-severity').hidden = !a.severity; $('analysis-severity').textContent = a.severity || ''; $('analysis-severity').className = 'severity ' + (a.severity || '');
   $('analysis-summary').textContent = a.summary;
   $('analysis-title').textContent = 'Spread outlook';
@@ -301,7 +301,7 @@ function projection() {
   const details = activeFire().latest.details;
   return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(M.footprint(o, state.minute, state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(state.minute, state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1]}};
 }
-function markPlanDirty() { if (state.plan && !state.planDirty) { state.planDirty = true; renderPlan(); } }
+function markPlanDirty() { if (state.plan && !state.planDirty) { state.planDirty = true; const r = demoResults(); if (r) r.planDirty = true; renderPlan(); } }
 
 function renderPlan(offline) {
   const p = state.plan;
@@ -309,7 +309,7 @@ function renderPlan(offline) {
   if (!p) { if (offline) $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}</div>`; return; }
   const list = (title, items) => items?.length ? `<h4>${title}</h4><ul>${items.map(i => `<li>${escapeHTML(i)}</li>`).join('')}</ul>` : '';
   const approved = p.approvedBy && !state.planDirty;
-  $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}<div class="draft-heading"><h3>${escapeHTML(p.title)}</h3><span class="pill ${approved ? 'live-badge' : 'soft-orange'}">${approved ? 'Approved' : 'Draft'}</span></div><p class="draft-meta">GEMINI · ${escapeHTML(p.objective)} · ${escapeHTML(new Date(p.created_at).toLocaleTimeString())}${p.projection ? ` · spread at +${p.projection.minutes_ahead} min` : ''}</p>${state.planDirty ? '<div class="notice plan-dirty">Conditions changed since this plan. Regenerate to use the latest picture.</div>' : ''}<div class="advantage"><strong>Operational advantage</strong><p>${escapeHTML(p.advantage)}</p></div><h4>Situation</h4><p class="plan-text">${escapeHTML(p.situation)}</p>${list('Objectives', p.objectives)}<h4>Actions</h4><table class="plan-actions"><thead><tr><th>#</th><th>Action</th><th>Owner</th><th>Timing</th></tr></thead><tbody>${p.actions.map(a => `<tr><td>${a.priority}</td><td>${escapeHTML(a.action)}${a.rationale ? `<small>${escapeHTML(a.rationale)}</small>` : ''}</td><td>${escapeHTML(a.owner || '—')}</td><td>${escapeHTML(a.timing || '—')}</td></tr>`).join('')}</tbody></table>${list('Resources & staging', p.resources)}${list('Re-planning triggers', p.triggers)}${list('Risks', p.risks)}${p.next_update ? `<h4>Next update</h4><p class="plan-text">${escapeHTML(p.next_update)}</p>` : ''}<div class="reviewer-row"><input id="reviewer-name" aria-label="Approver name" maxlength="80" placeholder="Incident commander" value="${escapeHTML(p.approvedBy || '')}" ${approved ? 'disabled' : ''}><button class="button primary" id="approve-plan" ${approved || state.planDirty ? 'disabled' : ''}>Approve plan</button></div>${approved ? `<p class="microcopy">Approved by ${escapeHTML(p.approvedBy)} at ${escapeHTML(new Date(p.approvedAt).toLocaleString())}.</p>` : ''}<div class="draft-buttons"><span class="microcopy">Stored in TigerData with the detection it was built on.</span><button class="button" id="export-plan">Export plan ↓</button></div></div>`;
+  $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}<div class="draft-heading"><h3>${escapeHTML(p.title)}</h3><span class="pill ${approved ? 'live-badge' : 'soft-orange'}">${approved ? 'Approved' : 'Draft'}</span></div><p class="draft-meta">GEMINI · ${escapeHTML(p.objective)} · ${escapeHTML(new Date(p.created_at).toLocaleTimeString())}${p.projection ? ` · spread at +${p.projection.minutes_ahead} min` : ''}</p>${state.planDirty ? '<div class="notice plan-dirty">Conditions changed since this plan. Regenerate to use the latest picture.</div>' : ''}<div class="advantage"><strong>Operational advantage</strong><p>${escapeHTML(p.advantage)}</p></div><h4>Situation</h4><p class="plan-text">${escapeHTML(p.situation)}</p>${list('Objectives', p.objectives)}<h4>Actions</h4><table class="plan-actions"><thead><tr><th>#</th><th>Action</th><th>Owner</th><th>Timing</th></tr></thead><tbody>${p.actions.map(a => `<tr><td>${a.priority}</td><td>${escapeHTML(a.action)}${a.rationale ? `<small>${escapeHTML(a.rationale)}</small>` : ''}</td><td>${escapeHTML(a.owner || '—')}</td><td>${escapeHTML(a.timing || '—')}</td></tr>`).join('')}</tbody></table>${list('Resources & staging', p.resources)}${list('Re-planning triggers', p.triggers)}${list('Risks', p.risks)}${p.next_update ? `<h4>Next update</h4><p class="plan-text">${escapeHTML(p.next_update)}</p>` : ''}<div class="reviewer-row"><input id="reviewer-name" aria-label="Approver name" maxlength="80" placeholder="Incident commander" value="${escapeHTML(p.approvedBy || '')}" ${approved ? 'disabled' : ''}><button class="button primary" id="approve-plan" ${approved || state.planDirty ? 'disabled' : ''}>Approve plan</button></div>${approved ? `<p class="microcopy">Approved by ${escapeHTML(p.approvedBy)} at ${escapeHTML(new Date(p.approvedAt).toLocaleString())}.</p>` : ''}<div class="draft-buttons"><span class="microcopy">${p.provenance === 'gemini-demo' ? 'Demo case — not stored.' : 'Stored in TigerData with the detection it was built on.'}</span><button class="button" id="export-plan">Export plan ↓</button></div></div>`;
   $('approve-plan').onclick = () => { const name = $('reviewer-name').value.trim(); if (!name) { toast('Enter the approving incident commander.'); return; } p.approvedBy = name; p.approvedAt = new Date().toISOString(); renderPlan(); toast('Plan approved.'); };
   $('export-plan').onclick = () => download(`emberwatch-plan-${p.id.slice(0, 8)}.json`, JSON.stringify(p, null, 2), 'application/json');
 }
@@ -317,7 +317,9 @@ function renderPlan(offline) {
 async function generatePlan() {
   $('generate-plan').disabled = true; $('generate-plan').innerHTML = '<svg><use href="#i-spark"/></svg>Gemini is planning…';
   try {
-    state.plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 60000});
+    const r = demoResults();
+    if (state.mode === 'demo') { const plan = await demoGemini('plan'); if (!plan) return; r.plan = plan; r.planDirty = false; if (demoResults() !== r) return; state.plan = plan; }
+    else state.plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 60000});
     state.planDirty = false; renderPlan(); toast('Operational plan ready.');
   } catch (e) {
     if (e.status === 429) toast(e.message);
@@ -328,12 +330,62 @@ async function generatePlan() {
 // ------------------------------------------------------------------ demo
 
 const DEMO_FLIGHT_S = 26;
+const PANEL_DEFAULTS = {};
+function savePanelDefaults() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit', 'draft-area']) PANEL_DEFAULTS[id] = $(id).innerHTML; }
+function resetAnalysisPanel() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit']) $(id).innerHTML = PANEL_DEFAULTS[id]; $('analysis-severity').hidden = true; $('analysis-offline').hidden = true; }
+function resetPlanPanel() { $('draft-area').innerHTML = PANEL_DEFAULTS['draft-area']; }
+const demoCase = () => state.mode === 'demo' && state.demo.selected && state.demo.selected !== 'flight' ? state.demo.selected : null;
+const demoResults = () => { const f = demoCase(); return f ? (state.demo.results[f.id] ??= {analysis: null, plan: null, planDirty: false}) : null; };
+
+/* Show the selected case's own Gemini results, or empty panels until Gemini is asked. */
+function showDemoResults() {
+  const r = demoResults();
+  state.analysis = r?.analysis ?? null; state.plan = r?.plan ?? null; state.planDirty = r?.planDirty ?? false;
+  state.analysisMeta = {configured: state.status?.gemini?.configured ?? true, pending: false, error: null};
+  resetAnalysisPanel(); resetPlanPanel();
+  if (!r) { $('analysis-summary').textContent = 'Select a fire case, then press Analyze to have Gemini assess it.'; $('analysis-source').textContent = 'DEMO'; return; }
+  if (!state.analysis) { $('analysis-summary').textContent = `Press "Analyze current view" to have Gemini assess ${r && demoCase().name}.`; $('analysis-detail').textContent = 'Gemini receives the recorded conditions and the simulated drone position.'; }
+  renderAnalysis(); if (state.plan) renderPlan();
+}
+
+/* Simulated ANAFI-01 for the selected case: telemetry, detection and camera panels. */
+function renderDemoDrone(f) {
+  const t = f.drone.telemetry, d = f.drone.detection;
+  $('altitude').innerHTML = `${t.altitude_m} <small>m</small>`; $('ground-speed').innerHTML = `${t.ground_speed_mps} <small>m/s</small>`;
+  $('power').innerHTML = `${t.battery_pct} <small>%</small>`; $('flight-state').textContent = FLIGHT_STATES[t.state];
+  $('battery-value').innerHTML = `${t.battery_pct}<span class="small-unit">%</span>`; $('battery-context').textContent = 'simulated ANAFI-01 (demo)';
+  $('telemetry-tag').textContent = 'DEMO'; $('drone-source').textContent = 'Simulated (demo)';
+  $('telemetry-note').textContent = `DEMO · simulated ANAFI-01 · ${t.latitude.toFixed(5)}, ${t.longitude.toFixed(5)} · heading ${t.extra.heading_deg}° · camera ${t.extra.gimbal_pitch_deg}°`;
+  $('telemetry-note').classList.remove('error-text');
+  $('detect-value').textContent = Math.round(d.confidence * 100); $('detect-unit').textContent = '%';
+  $('detect-context').textContent = `simulated · fire model · ${d.fire.distance_m} m ahead`;
+  drawWaiting(`Simulated view · ${f.name}`, 'Historical case — no camera footage exists; detection is simulated');
+  $('camera-label').innerHTML = '<i class="hot"></i> DEMO · SIMULATED'; $('camera-clock').textContent = f.startDate;
+  $('video-fps').textContent = '—'; $('video-status').textContent = 'Demo case — no live video';
+  $('flight-progress').hidden = true;
+}
+
+function demoProjection() {
+  const f = demoCase(); if (!f) return null;
+  const k2 = .03 + .97 * state.minute / 60;
+  return {minutes_ahead: Math.round(state.minute), area_ha: Math.round(M.areaHa(M.recordedPerimeter(f)) * k2), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: f.lat, longitude: f.lon}, basis: 'recorded final burn area scaled over a 60-minute replay'};
+}
+
+async function demoGemini(kind) {
+  const f = demoCase(); if (!f) { toast('Select a fire case first.'); return null; }
+  const a = state.analysis;
+  return getJson(`/api/demo/${kind}`, {method: 'POST', timeout: 60000, body: {case: f, scenario: state.scenario, ...(kind === 'plan' ? {objective: $('objective').value, notes: $('notes').value, projection: demoProjection(), analysis: a && {summary: a.summary, severity: a.severity, spread_outlook: a.spread_outlook}} : {})}});
+}
+
 async function toggleDemo() {
   if (state.mode === 'demo') { exitDemo(); return; }
-  try { state.demo.fires = (await getJson('/api/demo/fires')).fires; } catch (e) { toast('Demo data unavailable: ' + e.message); return; }
+  state.demo.fires = window.EMBER_DEMO?.cases ?? [];
+  if (!state.demo.fires.length) { toast('Demo cases failed to load (demo-cases.js).'); return; }
+  state.demo.results ??= {};
+  state.live = {analysis: state.analysis, analysisMeta: state.analysisMeta, plan: state.plan, planDirty: state.planDirty};
   state.mode = 'demo'; state.playing = false; setPlayButton();
   $('demo-toggle').innerHTML = 'Exit demo <svg><use href="#i-close"/></svg>';
-  setModePill('demo', 'Demo'); setBanner('demo', '<strong>Demo mode.</strong> Recorded historical fires from <code>examples/</code> and a replay of the ANAFI demo flight pattern. Live data resumes when you exit.');
+  setModePill('demo', 'Demo'); setBanner('demo', '<strong>Demo mode.</strong> Recorded historical fires with a simulated ANAFI-01 — no drone needed. Gemini analysis and planning run live on the selected case and are not stored. Live data resumes when you exit.');
   $('map-pill').textContent = 'Demo'; $('map-subtitle').textContent = 'Recorded fires replayed from ignition, plus the drone flight pattern';
   $('incident-eyebrow').textContent = 'DEMO · HISTORICAL CASES'; $('incident-title').textContent = 'Demo replay'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
   $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'demo — live detection paused';
@@ -357,18 +409,30 @@ function selectDemo(id) {
     L.polyline(pts, {color: '#267980', weight: 2, dashArray: '4 5'}).addTo(state.demo.layer);
     state.demo.marker = L.marker(s, {icon: L.divIcon({className: 'drone-icon-wrap', html: '<div class="drone-icon"><span>▲</span></div>', iconSize: [30, 30], iconAnchor: [15, 15]})}).addTo(state.demo.layer);
     state.map.setView(M.destPoint(s[0], s[1], 112.5, 1.2), 21);
-    state.scenario = {...M.BASE}; $('incident-sub').textContent = `Take off · climb 1 m · 1 m-radius circle · return · land — ${state.site.name}`;
+    state.scenario = {...M.BASE}; $('map-location').textContent = state.site.name; $('incident-sub').textContent = `Take off · climb 1 m · 1 m-radius circle · return · land — ${state.site.name}`;
+    $('incident-eyebrow').textContent = 'DEMO · FLIGHT PATTERN'; $('incident-title').textContent = 'ANAFI-01 demo flight'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
+    $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'flight-pattern replay — no fire';
+    $('telemetry-tag').textContent = 'DEMO'; $('drone-source').textContent = 'Replay (demo)'; $('telemetry-note').textContent = 'DEMO · replay of the bridge\'s --demo-flight pattern';
     $('flight-progress').hidden = false;
   } else {
     const f = state.demo.selected = state.demo.fires.find(x => x.id === id);
     state.scenario = {wind: f.drivers.windKmh ?? M.BASE.wind, direction: f.directionDeg, dryness: f.drivers.rhPct != null ? 100 - f.drivers.rhPct : M.BASE.dryness, temp: f.drivers.tempC ?? M.BASE.temp, rh: f.drivers.rhPct ?? M.BASE.rh};
+    state.detectedScenario = {...state.scenario};
     L.polygon(M.recordedPerimeter(f), {color: '#c2410c', weight: 1.2, fill: false, dashArray: '2 4'}).addTo(state.demo.layer).bindTooltip('Recorded final burn area (approx.)');
-    const i = f.impacts, n = v => v == null ? '—' : '≈' + v.toLocaleString();
-    L.popup({closeButton: false, autoPan: false}).setLatLng([f.lat, f.lon]).setContent(`<b>${escapeHTML(f.name)}</b><br>${escapeHTML(f.region)} · ${escapeHTML(f.startDate)}<br>≈${f.areaHa.toLocaleString()} ha · structures ${n(i.structures)} · evacuated ${n(i.evacuated)}<br><small>${escapeHTML(f.notes)}</small>`).openOn(state.map);
-    $('incident-sub').textContent = `${f.name} · ${f.region} · ${f.startDate} · ${f.cause}`;
-    $('flight-progress').hidden = true; state.minute = 60;
+    const t = f.drone.telemetry, d = f.drone.detection, i = f.impacts, n = v => v == null ? '—' : '≈' + v.toLocaleString();
+    L.marker([f.lat, f.lon], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(state.demo.layer)
+      .bindPopup(`<b>${escapeHTML(f.name)}</b><br>${escapeHTML(f.region)} · ${escapeHTML(f.startDate)}<br>Cause: ${escapeHTML(f.cause)}<br>≈${f.areaHa.toLocaleString()} ha · structures ${n(i.structures)} · evacuated ${n(i.evacuated)} · deaths ${i.deaths ?? '—'}<br><small>${escapeHTML(f.notes)}</small><br><small>Source: ${escapeHTML(f.source)}</small>`);
+    L.polyline([[t.latitude, t.longitude], [f.lat, f.lon]], {color: '#e66c43', weight: 1.5, dashArray: '3 4'}).addTo(state.demo.layer);
+    const drone = L.marker([t.latitude, t.longitude], {icon: L.divIcon({className: 'drone-icon-wrap', html: '<div class="drone-icon"><span>▲</span></div>', iconSize: [30, 30], iconAnchor: [15, 15]})}).addTo(state.demo.layer).bindTooltip('ANAFI-01 (simulated)');
+    const el = drone.getElement()?.querySelector('.drone-icon'); if (el) el.style.transform = `rotate(${t.extra.heading_deg}deg)`;
+    $('incident-eyebrow').textContent = 'DEMO CASE · SIMULATED ANAFI-01'; $('incident-title').textContent = f.name; $('incident-tag').hidden = false; $('incident-dot').classList.add('alert');
+    $('incident-sub').textContent = `${f.region} · ignited ${f.startDate} · ${f.cause} · recorded ≈${f.areaHa.toLocaleString()} ha · ${f.drivers.fuel}`;
+    setBanner('demo', `<strong>Demo case: ${escapeHTML(f.name)}.</strong> Simulated ANAFI-01 detection (fire model, ${Math.round(d.confidence * 100)}%) ${d.fire.distance_m} m ahead, bearing ${d.fire.bearing_deg}°. Recorded conditions: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%. Press <b>Analyze</b> or <b>Generate plan</b> for live Gemini.`);
+    renderDemoDrone(f); $('map-location').textContent = `${f.name} · ${f.region}`;
+    state.minute = 60;
     fitToFire();
   }
+  showDemoResults();
   renderSpread();
 }
 
@@ -376,7 +440,10 @@ function exitDemo() {
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.layers.demo.clearLayers(); state.map.closePopup();
   $('demo-toggle').innerHTML = 'Demo <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
   $('map-pill').textContent = 'Live'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
-  state.scenario = state.detectedScenario ? {...state.detectedScenario} : {...M.BASE}; state.minute = 0; state.episodeSeen = null; state.centredOnDrone = false;
+  $('map-location').textContent = state.site.name; state.detectedScenario = null; state.scenario = {...M.BASE}; state.minute = 0; state.episodeSeen = null; state.centredOnDrone = false;
+  $('telemetry-tag').textContent = 'LIVE'; $('telemetry-note').textContent = 'Waiting for live telemetry'; $('camera-clock').textContent = '—'; $('video-status').textContent = 'Waiting for the bridge'; state.video.lastAt = 0;
+  $('battery-value').innerHTML = '—<span class="small-unit">%</span>'; $('battery-context').textContent = 'no telemetry yet'; $('drone-source').textContent = 'Waiting for drone';
+  Object.assign(state, state.live ?? {}); resetAnalysisPanel(); resetPlanPanel(); renderAnalysis(); if (state.plan) renderPlan();
   renderIncident(); renderDrone(); renderSpread(); renderTelemetry(); renderFlight(); fitToFire();
 }
 
@@ -410,10 +477,10 @@ async function pollTelemetry() {
 }
 async function pollIncident() { state.incident = (await getJson('/api/incident')).incident; renderIncident(); }
 async function pollFlight() { state.flight = await getJson('/api/flight'); renderFlight(); renderDrone(); }
-async function pollAnalysis() { const m = await getJson('/api/analysis/latest'); state.analysisMeta = m; if (m.analysis) state.analysis = m.analysis; renderAnalysis(); }
+async function pollAnalysis() { if (state.mode === 'demo') return; const m = await getJson('/api/analysis/latest'); if (state.mode === 'demo') return; state.analysisMeta = m; if (m.analysis) state.analysis = m.analysis; renderAnalysis(); }
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
-  const s = state.status; state.site = s.site || state.site; $('map-location').textContent = state.site.name;
+  const s = state.status; state.site = s.site || state.site; if (state.mode !== 'demo') $('map-location').textContent = state.site.name;
   $('parrot-status').textContent = s.video?.available && s.video.age_ms < 3000 ? `Live · ${Math.round(s.video.fps)} fps` : s.telemetry?.available ? 'Telemetry only' : 'Waiting';
   $('tiger-status').textContent = s.storage?.status === 'postgres' ? 'Connected' : s.storage?.status === 'postgres-unavailable' ? 'Unavailable' : 'Memory only';
   $('gemini-status').textContent = !s.gemini?.configured ? 'Not configured' : s.gemini.last_error && (!s.gemini.last_ok_at || s.gemini.last_error_at > s.gemini.last_ok_at) ? 'Cannot connect' : s.gemini.last_ok_at ? 'Connected' : `Ready · ${s.gemini.model}`;
@@ -456,7 +523,11 @@ function bindUi() {
   $('dismiss-fire').onclick = async () => { const inc = state.incident; if (!inc) return; try { await api('/api/incident/dismiss', {method: 'POST', body: {episode_id: inc.episode_id}}); toast('Marked as a false alarm.'); await pollIncident(); } catch (e) { toast(e.message); } };
   $('analyze').onclick = async () => {
     $('analyze').disabled = true; $('analysis-source').textContent = 'ANALYZING…';
-    try { state.analysis = await getJson('/api/analyze', {method: 'POST', body: {}, timeout: 90000}); state.analysisMeta = {...state.analysisMeta, error: null, pending: false}; toast('Gemini analysis updated.'); }
+    try {
+      if (state.mode === 'demo') { const r = demoResults(), a = await demoGemini('analyze'); if (!a) return; r.analysis = a; if (demoResults() !== r) return; state.analysis = a; }
+      else state.analysis = await getJson('/api/analyze', {method: 'POST', body: {}, timeout: 90000});
+      state.analysisMeta = {...state.analysisMeta, error: null, pending: false}; toast('Gemini analysis updated.');
+    }
     catch (e) { if (e.status === 409 || e.status === 429) toast(e.message); else state.analysisMeta = {...state.analysisMeta, configured: e.status !== 503, error: {message: e.message, at: new Date().toISOString()}}; }
     finally { $('analyze').disabled = false; renderAnalysis(); }
   };
@@ -505,10 +576,11 @@ function animate(now) {
 }
 
 async function boot() {
-  initMap(); bindUi(); drawWaiting('Waiting for live video', 'The bridge relays the ANAFI camera through the backend'); renderSpread(); renderMapChip();
+  savePanelDefaults(); initMap(); bindUi(); drawWaiting('Waiting for live video', 'The bridge relays the ANAFI camera through the backend'); renderSpread(); renderMapChip();
   try { const s = await (await fetch('/api/session')).json(); state.token = s.token || ''; } catch {}
   if (!state.token) { setBanner('warn', '<strong>Enter the dashboard token.</strong> Open Integrations — the token is only provided automatically on this computer.'); setModePill('demo', 'Not connected'); openDialog('integrations-dialog'); }
   else await connect();
+  if (new URLSearchParams(location.search).has('demo')) toggleDemo();
   requestAnimationFrame(animate);
 }
 boot();

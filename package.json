@@ -6,6 +6,7 @@
   "description": "Emberwatch — Parrot ANAFI wildfire-monitoring hackathon dashboard (Hack the Valley 11)",
   "scripts": {
     "start": "node --env-file=.env backend/server.mjs",
+    "demo": "powershell -NoProfile -ExecutionPolicy Bypass -File demo.ps1",
     "db:init": "node --env-file=.env backend/db-init.mjs",
     "test": "node --test"
   },
