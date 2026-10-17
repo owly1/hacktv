@@ -3,7 +3,7 @@
 param(
     [string]$PiAddress,
     [switch]$Execute,
-    [ValidateSet('Hover','QrCheckout','QrOrbit')][string]$Mode = 'Hover',
+    [ValidateSet('Hover','QrCheckout','QrOrbit','QrPreset')][string]$Mode = 'Hover',
     [switch]$NativeVideo
 )
 $ErrorActionPreference = 'Stop'
@@ -54,15 +54,15 @@ switch (($tunnelState | Out-String).Trim()) {
 }
 $epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
 $liveOption = if ($Execute) { '--execute' } else { '' }
-$program = if ($Mode -eq 'Hover') { 'hover_checkout.py' } else { 'qr_takeoff_demo.py' }
-$extraOptions = if ($NativeVideo -or $Mode -ne 'Hover') { '--video-width 0' } else { '' }
-if ($Mode -ne 'Hover') {
+$program = if ($Mode -eq 'Hover') { 'hover_checkout.py' } elseif ($Mode -eq 'QrPreset') { 'qr_preset_demo.py' } else { 'qr_takeoff_demo.py' }
+$extraOptions = if ($NativeVideo -or ($Mode -in @('QrCheckout','QrOrbit'))) { '--video-width 0' } else { '' }
+if ($Mode -in @('QrCheckout','QrOrbit')) {
     $extraOptions += ' --camera-calibration /home/pet/emberwatch/qr-demo/camera.local.json --preflight-file /home/pet/emberwatch/qr-demo/current-preflight.local.json'
     if ($Mode -eq 'QrOrbit') { $extraOptions += ' --full-orbit' }
 }
 $remote = @'
 test -f /home/pet/emberwatch/qr-demo/__PROGRAM__ || exit 1
-if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo)\.py'; then
+if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo)\.py'; then
   printf 'A flight checkout is already running. Use its terminal; do not open another.\n' >&2
   exit 1
 fi
@@ -82,6 +82,11 @@ $remote = $remote.Replace("`r", '').Replace('__EPOCH__', $epoch).Replace('__LIVE
 Write-Host 'Keep the Skycontroller off. This terminal owns the direct Pi flight connection.'
 Write-Host 'Esc or X requests landing without Enter; LAND + Enter and Ctrl+C also request landing.'
 if ($Execute -and $Mode -eq 'Hover') { Write-Host 'Starts DISARMED. TAKEOFF TEST + Enter requests a real, short takeoff/hover/landing checkout.' }
+elseif ($Execute -and $Mode -eq 'QrPreset') {
+    Write-Host 'Starts DISARMED. ARM QR PRESET + Enter, then selected-QR recognition, requests takeoff.'
+    Write-Host 'No calibration or object tracking: align the intended circle center 1 m ahead of the launch point.'
+    Write-Host 'One circle, then nearby hover until X or the 30-second timeout. Flight cap: 90 seconds.'
+}
 elseif ($Execute) {
     $startPhrase = if ($Mode -eq 'QrOrbit') { 'START QR ORBIT' } else { 'START QR CHECKOUT' }
     Write-Host ('Starts DISARMED. '+$startPhrase+' + Enter requests takeoff, then calibrated QR waiting.')

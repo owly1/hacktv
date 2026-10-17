@@ -1,5 +1,9 @@
 # QR recognition and one observation orbit
 
+For the current demo without camera calibration, use the separate
+[preset circle and nearby hover](QR_PRESET_DEMO.md). The calibrated experiment
+described below remains optional; its pose checks have not been removed.
+
 Status, 17 October 2026: **no real QR orbit tested**. The short takeoff, hover
 and automatic landing test passed; X-key landing still needs a physical test.
 The selected next step is a direct Pi terminal hover/landing checkout with the

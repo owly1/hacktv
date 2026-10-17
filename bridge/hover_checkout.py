@@ -50,6 +50,9 @@ class HoverCheckout(QROrbitBridge):
         """Default checkout ends here. An explicitly selected QR runtime may continue."""
         pass
 
+    def _hover_observed_message(self):
+        return "hover observed; landing after the short checkout"
+
     def checkout_reason(self, starting=False):
         if not self.connected or not self._aircraft_link() or self.input_closed.is_set():
             return "aircraft or operator terminal is disconnected"
@@ -119,7 +122,7 @@ class HoverCheckout(QROrbitBridge):
                 if (self.telemetry or {}).get("state") == "hovering":
                     if hover_started is None:
                         hover_started = time.monotonic()
-                        self.report("climb", "hover observed; landing after the short checkout")
+                        self.report("climb", self._hover_observed_message())
                     if time.monotonic()-hover_started >= self.args.hover_seconds:
                         break
                 elif hover_started is not None:

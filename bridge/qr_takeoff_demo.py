@@ -31,6 +31,9 @@ class QRTakeoffDemo(HoverCheckout):
         return (f"READY: {self.start_phrase} + Enter requests takeoff and QR waiting" if self.args.execute else
                 "READY: read-only QR reception; no takeoff or movement commands enabled")
 
+    def _hover_observed_message(self):
+        return "hover established; checking the calibrated QR session before movement"
+
     def _print_instructions(self):
         print("QR FLIGHT: DISARMED" if self.args.execute else "QR RECEPTION ONLY: no motor commands", flush=True)
         print("One full orbit, then landing" if self.args.full_orbit else "One short arc, then landing", flush=True)

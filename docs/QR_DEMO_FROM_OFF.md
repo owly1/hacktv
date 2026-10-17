@@ -1,5 +1,9 @@
 # QR demo preparation from everything powered off
 
+The current requested demo is the calibration-free
+[QR preset circle and nearby hover](QR_PRESET_DEMO.md). Use that guide and
+`-Mode QrPreset`. The calibration workflow below is an optional alternative.
+
 Updated 17 October 2026. The selected flight-checkout route is direct Pi Wi-Fi
 with the Skycontroller **off** and a terminal landing command. Start with
 [the terminal takeoff/landing checkout](TERMINAL_FLIGHT_TEST.md). Grounded
@@ -297,7 +301,7 @@ shutdown completes.
 
 ## Verification boundary
 
-All 51 Python checks passed on the Pi's installed SDK with fake aircraft and
+All 67 Python checks passed on the Pi's installed SDK with fake aircraft and
 real controller constructors guarded against use. The calibration helper is
 tested with generated checkerboards and known synthetic camera parameters.
 Actual photos, measured camera offsets, Pi controller routing, pilot override

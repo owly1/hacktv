@@ -1,5 +1,9 @@
 # From the passed hover to a measured QR orbit
 
+The current requested demo uses the separate calibration-free
+[QR preset circle and nearby hover](QR_PRESET_DEMO.md). Use `-Mode QrPreset` for
+that behavior. This document describes the optional calibrated alternative.
+
 17 October 2026: the operator reports successful takeoff, hover and automatic
 landing. Recorded telemetry shows a hover at 0.96 m followed by descent. The
 operator did not press X, so the terminal interrupt remains untested. No real
@@ -162,7 +166,7 @@ and physical preflight before constructing the flight runtime, and checks the
 record again before takeoff and before QR arming. Unverified geometry cannot
 enable flight. The installer copies source only; it never starts the aircraft.
 
-All 51 Python checks passed inside the Pi's Olympe SDK with real aircraft
+All 67 Python checks passed inside the Pi's Olympe SDK with real aircraft
 constructors guarded. The tests exercise the complete fake takeoff/QR/arc/land
 sequence on one object, full-orbit selection, interruption, wrong marker
 distance, absent physical records and native image dimensions. These are

@@ -81,7 +81,7 @@ reported `SkyController` piloting source; it never changes the source to
 `Controller`, which disables RC joysticks. A source change fails the flight
 state gate. These checks do not prove a working manual override.
 
-All 51 Python checks passed on the installed Pi Olympe 8.5.0 SDK using fake
+All 67 Python checks passed on the installed Pi Olympe 8.5.0 SDK using fake
 aircraft and guarded constructors. No live controller SDK connection or QR flight
 has been tested. The optional controller SDK route is controller USB-C → a working
 USB-A data cable/adapter → Pi USB-A, then the existing Ethernet backend tunnel.

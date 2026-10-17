@@ -1,5 +1,9 @@
 # Direct Pi terminal takeoff and landing checkout
 
+For the current calibration-free circle request, see
+[QR preset circle and nearby hover](QR_PRESET_DEMO.md). The short hover test
+below remains the way to check the X-key landing input separately.
+
 Updated 17 October 2026. The selected route is ANAFI Wi-Fi → Pi → Ethernet →
 laptop, with the Skycontroller off. The laptop keeps Internet Wi-Fi for Gemini
 and TigerData. This checkout needs no controller USB adapter.
@@ -96,7 +100,7 @@ dashboard but does not create a fire incident or invoke Gemini.
 
 The source-only installer puts the code in `/home/pet/emberwatch/qr-demo`.
 The launcher is installed at `C:\Users\anshi\Desktop\drone\scripts\Start-HoverCheckout.ps1`.
-All 51 Python checks passed on the installed Olympe SDK with real aircraft
+All 67 Python checks passed on the installed Olympe SDK with real aircraft
 constructors guarded and fake drivers. These test input, aborts, no automatic
 takeoff, landing confirmation and ground/air attitude limits; they are not a
 flight test.
