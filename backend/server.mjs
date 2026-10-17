@@ -327,7 +327,17 @@ export async function createPgPool({ databaseUrl, pgCaFile }) {
   if (pgCaFile) {
     config.ssl = { ca: await readFile(pgCaFile, 'utf8'), rejectUnauthorized: true };
   }
-  return new pg.default.Pool(config);
+  // Drop idle connections before networks (eduroam, phone tethers) silently kill them,
+  // and detect dead ones with keep-alives.
+  Object.assign(config, { idleTimeoutMillis: 30_000, keepAlive: true, connectionTimeoutMillis: 10_000 });
+  const pool = new pg.default.Pool(config);
+  // An idle connection dying (e.g. ETIMEDOUT on a Wi-Fi blip) is reported here. Without a
+  // listener Node treats it as fatal and the whole backend exits. The pool replaces the
+  // connection on the next query; the failing query (if any) still gets its own error.
+  pool.on('error', (err) => {
+    console.error(`database: idle connection lost (${err.code || err.message}); it will reconnect on the next query`);
+  });
+  return pool;
 }
 
 export async function createStorage({ databaseUrl, pgCaFile } = {}) {

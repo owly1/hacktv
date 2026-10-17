@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createApp, MemoryStorage } from '../backend/server.mjs';
+import { createApp, MemoryStorage, createPgPool } from '../backend/server.mjs';
 import { ApiError } from '../backend/validation.mjs';
 
 const INGEST = 'ingest-token-aaa';
@@ -465,4 +465,19 @@ test('identical or empty tokens are refused at startup', () => {
       allowedOrigins: [],
       storage: new MemoryStorage(),
     }));
+});
+
+test('a lost idle database connection does not crash the backend', async () => {
+  const pool = await createPgPool({ databaseUrl: 'postgres://user:pass@127.0.0.1:1/none' });
+  assert.ok(pool.listenerCount('error') >= 1, 'pool has an error listener');
+  const logged = [];
+  const orig = console.error;
+  console.error = (msg) => logged.push(String(msg));
+  try {
+    pool.emit('error', Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }));
+  } finally {
+    console.error = orig;
+  }
+  assert.match(logged.join(' '), /idle connection lost \(ETIMEDOUT\)/);
+  await pool.end();
 });
