@@ -149,3 +149,17 @@ Still to verify with hardware/credentials: a real flight of `--demo-flight` (sta
 ## 11. How each AI should work and hand off
 
 Establish the teammate's role and task, inspect the files involved, preserve the contracts in §5 and the decisions in §1, test what you change, and hand off a short record: what changed, interfaces touched, checks run, what still needs hardware or credentials.
+
+## 12. QR orbit experiment (17 October 2026)
+
+The new source is separate from the deployed observation-only Pi receiver.
+`bridge/qr_orbit_rehearsal.py` is a laptop companion on port 8789 that only reads
+the local camera and previews a simulated path. `qr_orbit_bridge.py` defaults to
+rehearsal and has an explicit `--execute` option, calibrated pose requirements,
+recent physical preflight acknowledgments and a one-time typed pilot arming.
+It starts only from a pilot-established hover; it never takes off automatically.
+The user has an indoor cleared/netted area, but has **not tested a pilot landing
+control with the Pi connected**. No flight or controller coexistence was tested
+by this change. Do not install/arm this experiment through Start BOSCO.
+Gemini, dashboard actions and encoded QR fire data cannot issue flight commands.
+See `docs/QR_ORBIT_DEMO.md` for the precise integration and acceptance steps.

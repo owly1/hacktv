@@ -1,8 +1,8 @@
 # Maxim: start here on main
 
-Prepared 17 October 2026. Code snapshot `cd5689e`; comparison main `cd5689e`. These are pre-documentation code tips.
+Updated 17 October 2026 after merging `feat/qr-orbit-rehearsal` into main.
 
-This is the shared observation/dashboard baseline. It receives real Pi camera and telemetry data, but does not contain the new QR preset flight experiment, historical-case Gemini routes, or person-search feature.
+This is the shared dashboard, Pi observation and QR preset codebase. The historical-case Gemini routes and person-search feature remain on their separate branches.
 
 ## The project in plain English
 
@@ -31,6 +31,8 @@ Keep simulated incidents, real observations and AI interpretation distinct.
   QR-scanned preset demo, and main's normal startup does not invoke it.
 - `bridge/anafi_observer.py`: observation-only Pi receiver, with configurable
   camera FPS. Current recorded Pi target is 10 FPS, measured around 8-9 FPS.
+- `bridge/qr_orbit_rehearsal.py`: laptop QR recognition and simulated orbit preview.
+- `bridge/qr_preset_demo.py`: explicitly armed QR-triggered takeoff, preset circle, bounded hover and landing; see [the current preset guide](docs/QR_PRESET_DEMO.md).
 - `scripts/Start-BOSCO.ps1`: restart helper for the already provisioned laptop
   and Pi, not a universal installer for an arbitrary teammate's computer.
 
@@ -38,7 +40,7 @@ Grounded Pi camera/telemetry reception was physically verified. Existing
 Gemini and TigerData round-trip evidence is in `docs/VERIFIED.md`. It does not
 prove that every teammate's credentials work or that the entire flight/fire
 pipeline has been tested. The standalone short-hover success belongs to the
-QR feature work, not a main-branch acceptance of its older flight script.
+QR feature work. The actual QR circle and X-key landing still need physical verification; merging source does not establish flight acceptance.
 
 ## Where the data goes
 
@@ -113,8 +115,8 @@ green configured badge.
    Confirm an advancing picture timestamp and current telemetry with Replay off.
 2. Ask for a current Gemini analysis and verify TigerData with the database
    owner. Record results and evidence timestamps; never paste keys into chat.
-3. Review the QR branch's `handoff.md`, then integrate its flight source only
-   after the physical terminal-landing and circle checks have been recorded.
+3. Review `handoff.md` and `docs/QR_PRESET_DEMO.md`, then record physical
+   terminal-landing and circle checks before treating the QR flight as verified.
 4. Review `democases` and `person-search` as separate integrations. Their
    backend/frontend/bridge changes can overlap; resolve and test those together.
 5. Keep response plans visibly subject to human review and spread outputs
@@ -124,12 +126,10 @@ green configured badge.
 
 | Branch | Purpose |
 |---|---|
-| `main` | Shared dashboard/backend and provisioned Pi observation baseline |
-| `feat/qr-orbit-rehearsal` | Terminal hover checkout, QR rehearsal and opt-in preset flight |
+| `main` | Shared dashboard/backend, Pi observation, QR rehearsal and opt-in preset flight |
 | `democases` | No-drone historical-fire presentation with live Gemini calls |
 | `person-search` | Person observations, uncertain rescue leads, coverage and simulated search |
-| `combining-everything` | Earlier integration of fire/QR detection, backend and map |
-| `master` | Older simulation/API prototype and standalone drone camera viewer |
+Older `master` and `combining-everything` code is already incorporated or superseded in main; archive tags preserve their branch-specific onboarding documents.
 
 These documents describe each branch at its own tip; they do not merge its
 feature code into the others. To receive the documentation, use

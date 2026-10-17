@@ -1,0 +1,9 @@
+{
+  "measured_and_verified": false,
+  "image_size": [1280, 720],
+  "camera_matrix": [[0, 0, 640], [0, 0, 360], [0, 0, 1]],
+  "distortion_coefficients": [0, 0, 0, 0, 0],
+  "camera_offset_body_m": [0, 0, 0],
+  "qr_black_square_side_m": 0.18,
+  "notes": "TEMPLATE ONLY. Calibrate the actual decoded camera feed at fixed zoom, measure the printed black QR square and camera offset, and verify gimbal axes/known floor target poses before setting measured_and_verified. Zero focal lengths deliberately prevent execution."
+}
