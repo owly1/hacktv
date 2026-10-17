@@ -217,6 +217,14 @@ label.tgl{display:flex;gap:8px;align-items:center;font-size:13px;margin:4px 0;cu
 .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .about{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
 footer{font-size:11.5px;color:var(--muted);padding:6px 18px;border-top:1px solid var(--line);background:var(--panel)}
+.dir-pad{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:6px 0 2px}
+.dir-pad button{font:inherit;font-size:11px;padding:3px 0;border:1px solid var(--line);border-radius:6px;background:#fbfcfd;cursor:pointer}
+.dir-pad button.on{background:var(--model);color:#fff;border-color:var(--model)}
+.sc-row{display:flex;align-items:center;gap:8px;margin:8px 0}
+.sc-k{width:120px;font-size:11.5px;color:var(--muted);flex:none}
+.sc-row input[type=range]{flex:1;min-width:0}
+.sc-v{width:66px;text-align:right;font-size:12px;font-weight:600;flex:none}
+.badge-mod{font-size:10px;background:var(--model-soft);color:var(--model);border-radius:999px;padding:2px 7px;font-weight:700;text-transform:none;letter-spacing:.02em}
 table.fires{width:100%;border-collapse:collapse;font-size:13px}
 table.fires th,table.fires td{border:1px solid var(--line);padding:6px 8px;text-align:left}
 table.fires th{background:#fbfcfd}
@@ -244,6 +252,21 @@ table.fires th{background:#fbfcfd}
         <div><span class="swatch" style="background:#fff;border:2px dashed #5a4fc7"></span>Illustrative prediction zone + wind arrow</div>
         <div><span class="swatch" style="background:#d9480f;border-radius:50%"></span>Ignition point</div>
       </div>
+    </section>
+    <section><h2>Scenario inputs <span class="badge-mod" id="mod-badge" style="display:none">modified</span></h2>
+      <div class="sc-row" style="display:block">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="sc-k">Wind direction</span><span class="sc-v" id="dir-v"></span>
+        </div>
+        <div class="dir-pad" id="dir-pad"></div>
+      </div>
+      <div class="sc-row"><span class="sc-k">Wind speed</span><input type="range" id="sc-wind" min="0" max="160" step="5"><span class="sc-v" id="wind-v"></span></div>
+      <div class="sc-row"><span class="sc-k">Fuel dryness</span><input type="range" id="sc-dry" min="0" max="100" step="1"><span class="sc-v" id="dry-v"></span></div>
+      <div class="sc-row"><span class="sc-k">Temperature</span><input type="range" id="sc-temp" min="-10" max="50" step="1"><span class="sc-v" id="temp-v"></span></div>
+      <div class="sc-row"><span class="sc-k">Rel. humidity</span><input type="range" id="sc-rh" min="0" max="100" step="1"><span class="sc-v" id="rh-v"></span></div>
+      <div class="sc-row"><span class="sc-k">Minutes from ignition</span><input type="range" id="sc-min" min="0" max="60" step="1"><span class="sc-v" id="min-v"></span></div>
+      <button class="card" id="sc-reset">Reset to recorded conditions</button>
+      <div class="leg" style="margin-top:8px">These inputs control an illustrative zone drawing. They do not describe real weather or fire behavior — no terrain, spotting, suppression or probabilistic physics. Direction is <b>toward</b>, clockwise from north.</div>
     </section>
     <section class="detail"><h2>Selected case</h2><div id="detail"></div></section>
     <section><h2>Dataset</h2><div class="stats" id="stats"></div></section>
@@ -354,27 +377,50 @@ function perimeter(f){
   }
   return pts;
 }
-/* Dashed wedge from ignition toward direction — the SHAPE the future model emits. */
-function modelZone(f, halfAngleDeg, lengthScale){
-  var a = semiMajor(f)*lengthScale;
+/* ---- live scenario inputs (artistic zone drawing; not fire physics) ---- */
+var BASE = {wind:18, direction:45, dryness:65, temp:20, rh:50, minutes:60};
+var scenario = Object.assign({}, BASE);
+
+function scenarioFor(f){
+  var d = f.drivers||{};
+  return {
+    wind: d.windKmh != null ? d.windKmh : BASE.wind,
+    direction: f.directionDeg != null ? f.directionDeg : BASE.direction,
+    dryness: d.rhPct != null ? Math.max(0, 100-d.rhPct) : BASE.dryness,
+    temp: d.tempC != null ? d.tempC : BASE.temp,
+    rh: d.rhPct != null ? d.rhPct : BASE.rh,
+    minutes: BASE.minutes
+  };
+}
+/* Environment factor: hotter/drier/lower-RH enlarges the zone. */
+function envFactor(sc){
+  var e = 1 + (sc.dryness-50)/200 + (sc.temp-20)/200 - (sc.rh-50)/300;
+  return Math.max(0.6, Math.min(1.6, e));
+}
+/* Dashed wedge from ignition toward sc.direction — the SHAPE the future model emits. */
+function modelZone(f, sc, innerScale){
+  var t = Math.max(0.08, Math.min(1, sc.minutes/60));
+  var windStretch = 1 + sc.wind/65;      // dashboard footprint() parity
+  var halfAngle = Math.max(15, 45 - sc.wind*0.4);
+  var r = semiMajor(f)*1.25*t*windStretch*envFactor(sc)*(innerScale||1);
   var pts = [[f.lat, f.lon]];
-  for(var t=-1;t<=1;t+=0.125){
-    var brg = f.directionDeg + t*halfAngleDeg;
-    var r = a*(1 - Math.abs(t)*0.35);
-    pts.push(destPoint(f.lat, f.lon, brg, r));
+  for(var tt=-1; tt<=1; tt+=0.125){
+    var brg = sc.direction + tt*halfAngle;
+    pts.push(destPoint(f.lat, f.lon, brg, r*(1-Math.abs(tt)*0.35)));
   }
   return pts;
 }
-function windArrow(f){
+function windArrow(f, sc){
   var a = semiMajor(f);
-  var from = destPoint(f.lat, f.lon, f.directionDeg+180, a*0.25);
-  var to   = destPoint(f.lat, f.lon, f.directionDeg, a*0.75);
+  var from = destPoint(f.lat, f.lon, sc.direction+180, a*0.25);
+  var to   = destPoint(f.lat, f.lon, sc.direction, a*0.75);
   return [from, to];
 }
 
 /* ---------- map ---------- */
 var map, layers = {actual:null, model:null, ignition:null};
 var selected = null;
+var modelGroups = {};
 
 function initMap(){
   map = L.map('map').setView([50.5, -110], 4);
@@ -415,14 +461,42 @@ function initMap(){
     L.polygon(perimeter(f), {color:'#c2410c', weight:1.5, fillColor:'#e05a2b', fillOpacity:.28})
       .addTo(layers.actual)
       .bindTooltip('Recorded burn area (approx.) — '+f.name);
-    L.polygon(modelZone(f, 38, 1.25), {color:'#5a4fc7', weight:2, dashArray:'7 6', fillColor:'#5a4fc7', fillOpacity:.07})
-      .addTo(layers.model)
-      .bindTooltip('Illustrative prediction zone — '+f.name);
-    var arr = windArrow(f);
-    L.polyline(arr, {color:'#5a4fc7', weight:1.4, dashArray:'2 6', opacity:.8}).addTo(layers.model);
+    modelGroups[f.id] = buildModelGroup(f, scenarioFor(f));
   });
   var bounds = L.latLngBounds(FIRES.map(function(f){ return [f.lat,f.lon]; }));
   map.fitBounds(bounds.pad(0.15));
+}
+
+function buildModelGroup(f, sc){
+  var g = L.layerGroup();
+  L.polygon(modelZone(f, sc, 0.55), {color:'#5a4fc7', weight:0, fillColor:'#5a4fc7', fillOpacity:.14})
+    .addTo(g).bindTooltip('Higher-intensity illustrative core — '+f.name);
+  L.polygon(modelZone(f, sc, 1), {color:'#5a4fc7', weight:2, dashArray:'7 6', fillColor:'#5a4fc7', fillOpacity:.07})
+    .addTo(g).bindTooltip('Illustrative prediction zone — '+f.name);
+  L.polyline(windArrow(f, sc), {color:'#5a4fc7', weight:1.4, dashArray:'2 6', opacity:.8}).addTo(g);
+  if(map) g.addTo(layers.model);
+  return g;
+}
+
+function redrawScenario(){
+  if(!map || !selected) return;
+  var old = modelGroups[selected.id];
+  if(old) layers.model.removeLayer(old);
+  modelGroups[selected.id] = buildModelGroup(selected, scenario);
+  markModified();
+}
+
+function markModified(){
+  var rec = scenarioFor(selected);
+  var mod = ['wind','direction','dryness','temp','rh','minutes'].some(function(k){ return scenario[k] !== rec[k]; });
+  document.getElementById('mod-badge').style.display = mod ? 'inline-block' : 'none';
+  if(map && selected){
+    var arr = windArrow(selected, scenario);
+    L.popup({closeButton:false, className:'dir-pop'})
+      .setLatLng(arr[1])
+      .setContent('<b>Wind → '+scenario.direction+'° '+fmt.compass(scenario.direction)+' at '+scenario.wind+' km/h</b><br><span style="font-size:11px">'+(mod?'scenario input — illustrative':'recorded dominant direction')+'</span>')
+      .openOn(map);
+  }
 }
 
 function selectFire(id, zoom){
@@ -432,13 +506,19 @@ function selectFire(id, zoom){
     c.classList.toggle('active', c.dataset.id === selected.id);
   });
   renderDetail(selected);
-  if(map && zoom !== false){
-    var b = L.latLngBounds(perimeter(selected).concat(modelZone(selected,38,1.25)));
-    map.flyToBounds(b.pad(0.2), {duration:.8});
-    var arr = windArrow(selected);
+  scenario = scenarioFor(selected);
+  syncInputs(); markModified();
+  if(map){
+    var old = modelGroups[selected.id];
+    if(old){ layers.model.removeLayer(old); modelGroups[selected.id] = buildModelGroup(selected, scenario); }
+    if(zoom !== false){
+      var b = L.latLngBounds(perimeter(selected).concat(modelZone(selected, scenario, 1)));
+      map.flyToBounds(b.pad(0.2), {duration:.8});
+    }
+    var arr = windArrow(selected, scenario);
     L.popup({closeButton:false, className:'dir-pop'})
       .setLatLng(arr[1])
-      .setContent('<b>Spread → '+fmt.compass(selected.directionDeg)+'</b><br><span style="font-size:11px">recorded dominant direction</span>')
+      .setContent('<b>Spread → '+scenario.direction+'° '+fmt.compass(scenario.direction)+' at '+scenario.wind+' km/h</b><br><span style="font-size:11px">recorded dominant direction</span>')
       .openOn(map);
   }
   if(history.replaceState) history.replaceState(null,'','?fire='+selected.id);
@@ -459,8 +539,49 @@ function renderFallback(){
     }).join('') + '</table>';
 }
 
+/* ---------- scenario controls ---------- */
+var DIRS = [['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]];
+function syncInputs(){
+  document.getElementById('sc-wind').value = scenario.wind;
+  document.getElementById('sc-dry').value = scenario.dryness;
+  document.getElementById('sc-temp').value = scenario.temp;
+  document.getElementById('sc-rh').value = scenario.rh;
+  document.getElementById('sc-min').value = scenario.minutes;
+  paintInputs();
+}
+function paintInputs(){
+  document.getElementById('wind-v').textContent = scenario.wind+' km/h';
+  document.getElementById('dry-v').textContent = scenario.dryness+'%';
+  document.getElementById('temp-v').textContent = scenario.temp+' °C';
+  document.getElementById('rh-v').textContent = scenario.rh+'%';
+  document.getElementById('min-v').textContent = 'T+'+scenario.minutes+' min';
+  document.getElementById('dir-v').textContent = scenario.direction+'° → '+fmt.compass(scenario.direction);
+  document.querySelectorAll('#dir-pad button').forEach(function(b){
+    b.classList.toggle('on', Number(b.dataset.deg) === scenario.direction);
+  });
+}
+function bindScenarioControls(){
+  var pad = document.getElementById('dir-pad');
+  DIRS.forEach(function(d){
+    var b = document.createElement('button');
+    b.type='button'; b.textContent=d[0]; b.dataset.deg=d[1];
+    b.addEventListener('click', function(){ scenario.direction=d[1]; paintInputs(); redrawScenario(); });
+    pad.appendChild(b);
+  });
+  [['sc-wind','wind'],['sc-dry','dryness'],['sc-temp','temp'],['sc-rh','rh'],['sc-min','minutes']]
+    .forEach(function(pair){
+      document.getElementById(pair[0]).addEventListener('input', function(e){
+        scenario[pair[1]] = Number(e.target.value); paintInputs(); redrawScenario();
+      });
+    });
+  document.getElementById('sc-reset').addEventListener('click', function(){
+    if(!selected) return;
+    scenario = scenarioFor(selected); syncInputs(); redrawScenario();
+  });
+}
+
 /* ---------- boot ---------- */
-renderList(); renderStats();
+renderList(); renderStats(); bindScenarioControls();
 ['actual','model','ignition'].forEach(function(k){
   document.getElementById('tgl-'+k).addEventListener('change', function(e){
     if(!map) return;
