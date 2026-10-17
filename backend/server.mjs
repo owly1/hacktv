@@ -986,6 +986,14 @@ export function createApp({
     return state.frameTimes.length / 2;
   }
 
+  function acceptCameraFrame(jpeg, capturedAtMs, detections = '[]') {
+    const frame = { jpeg, capturedAtMs, detections };
+    state.latestFrame = frame;
+    state.latestSnapshot = { jpeg, capturedAtMs };
+    state.frameTimes.push(now());
+    broadcastFrame(frame);
+  }
+
   async function handleTile(res, layer, z, x, y) {
     const zi = Number(z), xi = Number(x), yi = Number(y);
     if (!TILE_SOURCES[layer] || !Number.isInteger(zi) || zi < 0 || zi > 19
@@ -1140,7 +1148,9 @@ export function createApp({
       requireAuth(req, 'ingest');
       const body = await readJson(req);
       const { capturedAtMs, jpeg } = validateSnapshotEnvelope(body, now());
-      state.latestSnapshot = { jpeg, capturedAtMs };
+      // The tested Pi observer sends low-rate snapshots. Relay these to the
+      // same dashboard viewers as the higher-rate /ingest/frame bridge.
+      acceptCameraFrame(jpeg, capturedAtMs);
       sendJson(res, 200, { accepted: true });
       return;
     }
@@ -1172,11 +1182,7 @@ export function createApp({
         const parsed = JSON.parse(req.headers['x-detections'] ?? '[]');
         if (Array.isArray(parsed)) detections = JSON.stringify(parsed.slice(0, 10));
       } catch { /* malformed overlay data is dropped, the frame still counts */ }
-      const frame = { jpeg, capturedAtMs, detections };
-      state.latestFrame = frame;
-      state.latestSnapshot = { jpeg, capturedAtMs };
-      state.frameTimes.push(now());
-      broadcastFrame(frame);
+      acceptCameraFrame(jpeg, capturedAtMs, detections);
       res.writeHead(204, { 'cache-control': 'no-store' });
       res.end();
       return;

@@ -238,8 +238,8 @@ async function drawFrame(f) {
     const now = Date.now(); state.video.lastAt = now; state.video.times.push(now); state.video.times = state.video.times.filter(t => now - t < 2000);
     $('camera-label').innerHTML = f.detections.length ? '<i class="hot"></i> FIRE IN VIEW' : '<i></i> LIVE · ANAFI-01';
     $('camera-clock').textContent = f.captured ? new Date(f.captured).toLocaleTimeString() : '—';
-    $('video-fps').textContent = `${(state.video.times.length / 2).toFixed(0)} fps`;
-    $('video-status').textContent = 'Live video via backend relay';
+    $('video-fps').textContent = `${(state.video.times.length / 2).toFixed(1)} fps`;
+    $('video-status').textContent = 'Live camera frames via backend relay';
   } catch {} finally { state.video.decoding = false; }
 }
 
