@@ -14,7 +14,7 @@ Checked by: __________  Date/time: __________  Commit: __________
 ## B. Drone link (Must)
 
 - [ ] `bridge/anafi_bridge.py --backend …` connects; the ANAFI-01 panel shows smooth live video (fps shown) within a few seconds.
-- [ ] Altitude AGL, ground speed, drone power and flight state update about once a second; stale telemetry (>10 s) is marked STALE.
+- [ ] Altitude above takeoff, ground speed, drone power and flight state update about once a second; stale telemetry (>10 s) is marked STALE.
 - [ ] The drone's position appears on the map (GPS outdoors; home + moves indoors).
 
 ## C. Detection → everything (Must)

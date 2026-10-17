@@ -33,8 +33,25 @@
     if (document.fullscreenEnabled && !document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
-    window.dispatchEvent(new Event('resize'));
+    refit();
+    showHint();
     panel.querySelector('.fs-button').focus({ preventScroll: true });
+  }
+
+  // Leaflet measures its container on resize; re-measure after the open animation too.
+  function refit() {
+    window.dispatchEvent(new Event('resize'));
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 260);
+  }
+
+  function showHint() {
+    document.querySelector('.fs-hint')?.remove();
+    const hint = document.createElement('div');
+    hint.className = 'fs-hint';
+    hint.setAttribute('aria-hidden', 'true');
+    hint.textContent = 'Full screen · press Esc to exit';
+    document.body.append(hint);
+    setTimeout(() => hint.remove(), 2800);
   }
 
   function close(keepBrowserFullscreen = false) {
@@ -46,7 +63,8 @@
     setButton(panel, false);
     syncRail();
     if (!keepBrowserFullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    window.dispatchEvent(new Event('resize'));
+    document.querySelector('.fs-hint')?.remove();
+    refit();
   }
 
   for (const id of Object.keys(PANELS)) {
@@ -74,9 +92,11 @@
     });
   }
 
-  // The logo and wordmark return to the dashboard overview from any full-screen feature.
+  // The wordmark returns to the dashboard overview from any full-screen feature.
+  // The logo does the same while a panel is full screen; otherwise it opens the BOSCO home page.
   for (const home of document.querySelectorAll('.brand-mark, .wordmark')) {
     home.addEventListener('click', (event) => {
+      if (home.classList.contains('brand-mark') && !current) return;
       event.preventDefault();
       close();
       window.scrollTo({ top: 0, behavior: 'smooth' });

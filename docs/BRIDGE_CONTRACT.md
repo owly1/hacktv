@@ -14,7 +14,7 @@ clock** (bridge and backend on the same laptop share a clock).
 | `observed_at` | ISO 8601 | **required**, capture time |
 | `provenance` | string | **required**, `"live"` (`sim`/`demo`/`test`… are rejected) |
 | `battery_pct` | 0–100 | |
-| `altitude_m` | number | metres AGL |
+| `altitude_m` | number | metres above takeoff (`AltitudeChanged`); not measured terrain clearance |
 | `ground_speed_mps`, `vertical_speed_mps` | number | ground speed ≥ 0; vertical negative = descending |
 | `latitude`, `longitude` | number | pair rule: both or neither. GPS when the drone has a fix; indoors, the `--home` point plus the offsets of commanded moves |
 | `state` | string | Olympe flying state: `landed`, `takingoff`, `hovering`, `flying`, `landing`, … |

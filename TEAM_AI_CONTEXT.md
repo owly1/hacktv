@@ -5,6 +5,8 @@
 **Tracks:** TigerData (Timescale) and Gemini.
 **Purpose of this file:** give each teammate's AI the same requirements, architecture, decisions and contracts. Read it before proposing or changing the project. Inspect current source before claiming anything is implemented or tested.
 
+**Pi hardware addition, 17 October 2026:** the grounded ANAFI Extended → Pi 4B → encrypted Ethernet tunnel → laptop path passed actual telemetry and decoded 640 × 360 JPEG reception. This tested, observation-only receiver is added separately as `bridge/anafi_observer.py`; the team's existing `bridge/anafi_bridge.py` is retained. Snapshot ingest now feeds the existing camera relay so either receiver can populate that viewer. Read `docs/PI_OBSERVER_CONTEXT.md` before changing the Pi deployment. Hardware proof applies to the grounded receiver path, not detection, flight or controller coexistence. Cloud-service verification remains recorded separately in `docs/VERIFIED.md`.
+
 Version 2.0 replaces the v1.0 "simulation-first" rules. The decisions in §1 were made by the team and are deliberate — do not revert them.
 
 ## 1. Product decisions (v2.0)

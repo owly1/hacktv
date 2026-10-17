@@ -1,0 +1,5 @@
+Bricolage Grotesque — Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage)
+Instrument Sans — Copyright 2022 The Instrument Sans Project Authors (https://github.com/Instrument/instrument-sans)
+
+Both fonts are latin subsets downloaded unchanged from Google Fonts and are licensed under the
+SIL Open Font License, Version 1.1: https://scripts.sil.org/OFL
