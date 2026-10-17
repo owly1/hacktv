@@ -1,108 +1,88 @@
-# Bridge → backend ingest contract (for developer C)
+# Bridge → backend ingest contract
 
-What the Python bridge (Olympe) must POST. Backend is Node, default
-`http://127.0.0.1:8787`. All endpoints require `Authorization: Bearer <token>`.
-The **ingest token** (`INGEST_TOKEN` in `.env`) is the only credential the
-bridge needs — never send it the dashboard token or the Gemini key.
+What `bridge/anafi_bridge.py` POSTs to the backend (default
+`http://127.0.0.1:8787`). Every request carries `Authorization: Bearer
+<INGEST_TOKEN>` — the only credential the bridge holds. All timestamps are
+ISO 8601 UTC with an explicit `Z` and must be within **±30 s of the server
+clock** (bridge and backend on the same laptop share a clock).
 
-## Telemetry — `POST /api/ingest/telemetry`
-
-JSON body. Send roughly 1–2 Hz; every accepted sample is stored (hypertable
-when TigerData is configured, memory otherwise).
+## Telemetry — `POST /api/ingest/telemetry` (~1 Hz)
 
 | Field | Type | Rule |
 |---|---|---|
-| `drone_id` | string | optional, e.g. `"anafi-1"` |
-| `observed_at` | ISO 8601 | **required.** UTC capture time with explicit `Z`/offset. Must be within **±30 s of the server clock** — sync the laptop clock or the POST is refused with 400. |
-| `provenance` | string | **required.** Must be `"live"` for real drone data. `sim`/`synthetic`/`fixture`/`demo`/`test` are actively rejected — simulation frames never go through this endpoint. |
-| `battery_pct` | number 0–100 | optional |
-| `altitude_m` | number | optional |
-| `ground_speed_mps` | number ≥ 0 | optional |
-| `vertical_speed_mps` | number | optional (negative = descending) |
-| `latitude`, `longitude` | number | **pair rule:** both or neither. Never (0, 0) for unknown — send `null` on both when GPS has no fix. |
-| `state` | string | optional: `"landed"`, `"hovering"`, `"flying"`, … |
-| `gps_fix` | string or boolean | optional: `"no fix"`, `"2d"`, `"3d"`, or `false` (normalized to `"no fix"`) |
-| `attitude_deg` | object | optional: `{roll, pitch, yaw}` degrees |
-| `extra` | object | optional free-form JSON bag for anything else Olympe gives you (gimbal angles, link quality…). Stored verbatim. Unknown **top-level** fields are dropped — put extras here. |
+| `drone_id` | string | `"ANAFI-01"` |
+| `observed_at` | ISO 8601 | **required**, capture time |
+| `provenance` | string | **required**, `"live"` (`sim`/`demo`/`test`… are rejected) |
+| `battery_pct` | 0–100 | |
+| `altitude_m` | number | metres AGL |
+| `ground_speed_mps`, `vertical_speed_mps` | number | ground speed ≥ 0; vertical negative = descending |
+| `latitude`, `longitude` | number | pair rule: both or neither. GPS when the drone has a fix; indoors, the `--home` point plus the offsets of commanded moves |
+| `state` | string | Olympe flying state: `landed`, `takingoff`, `hovering`, `flying`, `landing`, … |
+| `gps_fix` | boolean | |
+| `attitude_deg` | `{roll, pitch, yaw}` | degrees |
+| `extra` | object | `heading_deg`, `gimbal_pitch_deg`, `position_source` (`gps` or `home+odometry`), `flight_phase`, `wifi_rssi_dbm`, `video_fps` |
 
-At least one numeric measurement is required or the sample is rejected.
-Errors come back as `{"error": "<why>"}` — log them; a 400 means the sample
-did not land.
+At least one measurement is required. Errors return `{"error": "..."}`.
 
-## Snapshot — `POST /api/ingest/snapshot`
+## Video — `POST /api/ingest/frame` (~15 fps)
+
+Raw JPEG body (`Content-Type: image/jpeg`, ≤ 2 MB, 960 px wide by default),
+headers `X-Captured-At: <ISO>` and optional `X-Detections: [{source, label,
+confidence, bbox}]` with boxes normalized 0..1 for the dashboard overlay.
+Returns 204. The bridge reuses one keep-alive connection per thread.
+
+## Fire detection — `POST /api/ingest/detection`
+
+Sent when a fire has been seen in **3 consecutive** detector passes (~5 Hz),
+then every 5 s while it stays in view. A run of sightings shares one
+`episode_id`; it ends after 15 s unseen. The first sighting of an episode
+triggers one automatic Gemini analysis.
 
 ```json
-{ "captured_at": "<ISO 8601, ±30 s>", "jpeg_base64": "<base64 JPEG, ≤ 5 MB>" }
+{
+  "detected_at": "2026-10-17T06:24:07.120Z",
+  "episode_id": "ep-1792218232-d7f93c",
+  "source": "qr-test",                       // or "yolo"
+  "label": "fire",                           // yolo: "fire" or "smoke"
+  "confidence": 1.0,
+  "bbox": [0.51, 0.59, 0.58, 0.71],          // x1, y1, x2, y2, normalized
+  "fire": { "latitude": 43.786599, "longitude": -79.190279, "distance_m": 1.7,
+            "bearing_deg": 93.8, "position_source": "home+odometry+marker-size" },
+  "drone": { "latitude": 43.7866, "longitude": -79.1903, "altitude_m": 1.0,
+             "heading_deg": 90, "gimbal_pitch_deg": -45, "state": "hovering" },
+  "details": { "name": "Alpha", "area_ha": 120, "intensity": "extreme",
+               "spread_m_per_min": 35, "fuel": "dry mixed forest and grass",
+               "wind_kmh": 30, "wind_dir_deg": 60, "temp_c": 31, "rh_pct": 18,
+               "marker_size_m": 0.18, "test_marker": true },
+  "frame_jpeg_base64": "<the frame, ≤ 5 MB>"
+}
 ```
 
-Grab one frame from the video pipeline and post it periodically (every few
-seconds is plenty — the latest frame is what Gemini analyzes). Must start
-with JPEG magic bytes (FF D8 FF), which any encoder output has.
+Fire position: the ray through the box centre is cast from the camera
+(heading + horizontal offset, gimbal pitch + vertical offset) to flat ground
+at the drone's altitude (`camera-ray`). For the test marker, range comes from
+its known printed size instead (`marker-size`), which is more accurate
+indoors. With the camera near the horizon the range is capped
+(`camera-bearing`). YOLO sightings report `details.area_ha` estimated from
+the box width at that range.
 
-## No control channel on purpose
+### QR test marker payload
 
-There are no takeoff/landing/movement endpoints and there never will be —
-the honesty contract bans command paths through this system (§7).
+`EW1:name|area_ha|intensity|spread_m_per_min|fuel|wind_kmh|toward_deg|temp_c|rh_pct|side_cm`
+— intensity `L/M/H/X`, fuel `F` conifer forest, `G` grass, `M` mixed, `S`
+brush. Kept short so the code has few, large modules (QR version 3).
+Generate with `python3 bridge/make_test_marker.py [--name … --area … --wind … --dir …]`.
 
-## Stdlib-only Python poster
+## Flight events — `POST /api/ingest/flight`
 
-No dependencies beyond Python 3. Drop into the Olympe telemetry loop:
+`{ "at": ISO, "phase": "preflight|takeoff|climb|circle|return|landing|landed|aborted|error", "step": 3, "steps": 8, "message": "…" }`
 
-```python
-import base64, json, urllib.request
-from datetime import datetime, timezone
+## No control channel through the backend
 
-BASE = "http://127.0.0.1:8787"
-INGEST_TOKEN = "paste INGEST_TOKEN here"   # get the real value from B/Sharon
-
-def post(path, payload):
-    req = urllib.request.Request(
-        BASE + path,
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {INGEST_TOKEN}",
-            "Content-Type": "application/json",
-        },
-    )
-    return json.loads(urllib.request.urlopen(req, timeout=5).read())
-
-def utcnow_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-def send_telemetry(t):
-    """t: dict of raw olympe readings (whatever keys you have)."""
-    lat, lon = t.get("latitude"), t.get("longitude")
-    fix = bool(lat is not None and lon is not None and (lat or lon))
-    post("/api/ingest/telemetry", {
-        "drone_id": "anafi-1",
-        "observed_at": utcnow_iso(),          # use the sample's own time if Olympe gives one
-        "provenance": "live",
-        "battery_pct": t.get("battery_pct"),
-        "altitude_m": t.get("altitude_m"),
-        "ground_speed_mps": t.get("ground_speed_mps"),
-        "vertical_speed_mps": t.get("vertical_speed_mps"),
-        "latitude": lat if fix else None,     # pair rule: both or neither, never (0,0)
-        "longitude": lon if fix else None,
-        "state": t.get("state"),              # "landed" etc.
-        "gps_fix": fix,                       # or the fix-quality string Olympe reports
-        "attitude_deg": {
-            "roll": t.get("roll_deg"),
-            "pitch": t.get("pitch_deg"),
-            "yaw": t.get("yaw_deg"),
-        },
-        "extra": {"gimbal_pitch_deg": t.get("gimbal_pitch_deg")},
-    })
-
-def send_snapshot(jpeg_path):
-    post("/api/ingest/snapshot", {
-        "captured_at": utcnow_iso(),
-        "jpeg_base64": base64.b64encode(open(jpeg_path, "rb").read()).decode(),
-    })
-```
+The backend and dashboard cannot command the drone. Flight is only started
+from the bridge's terminal with `--demo-flight` and a typed `FLY`.
 
 ## Verify it landed
 
-`GET /api/telemetry/latest` and `GET /api/telemetry/history` (dashboard
-token) echo the newest samples back; `GET /api/snapshot` returns the JPEG.
-Acceptance item G wants one real telemetry sample + one real JPEG visible in
-the dashboard with real capture times — these two POSTs satisfy it.
+Dashboard token: `GET /api/status`, `/api/telemetry/latest`, `/api/incident`,
+`/api/flight`, `/api/analysis/latest`; `GET /api/video` streams the frames.

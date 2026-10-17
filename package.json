@@ -1,11 +1,12 @@
 {
   "name": "emberwatch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Emberwatch — Parrot ANAFI wildfire-monitoring hackathon dashboard (Hack the Valley 11)",
   "scripts": {
-    "start": "node backend/server.mjs",
+    "start": "node --env-file=.env backend/server.mjs",
+    "db:init": "node --env-file=.env backend/db-init.mjs",
     "test": "node --test"
   },
   "engines": {

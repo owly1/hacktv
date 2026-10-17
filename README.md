@@ -1,31 +1,49 @@
 # Emberwatch
 
-Wildfire-monitoring hackathon prototype (Parrot ANAFI + simulated fire-spread dashboard).
-Read [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md) for requirements, architecture and the `emberwatch.v1` API contract.
+Live wildfire monitoring from a Parrot ANAFI drone. The drone's camera feed is
+checked for fire several times a second; when it finds one, the fire is pinned
+on the map, its spread is projected, Gemini analyzes the scene and writes an
+operational plan, and everything is stored in TigerData.
+Read [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md) for decisions, architecture and the API contract.
 
-## Run the dashboard (no install, no keys)
+## 1. Backend + dashboard (Windows or WSL, Node 22+)
 
-Open `dist/index.html` in a browser, or serve it:
-
-```
-python3 -m http.server -d dist 8000
-```
-
-then visit http://localhost:8000.
-
-## Run the backend (connected mode)
-
-```
-cp .env.example .env        # set INGEST_TOKEN + DASHBOARD_TOKEN (must differ)
-node --env-file=.env backend/server.mjs     # dashboard + API on http://127.0.0.1:8787
+```bash
+npm install
+cp .env.example .env     # set INGEST_TOKEN and DASHBOARD_TOKEN (different), GEMINI_API_KEY
+npm start                # http://127.0.0.1:8787 — opens live, no token needed on this computer
 ```
 
-Optional TigerData: `npm install` (for `pg`), apply `backend/schema.sql` to the
-provisioned service, set `DATABASE_URL`, then `npm start`.
+TigerData: put the service URL in `DATABASE_URL`, then `npm run db:init` once
+(creates the hypertables, continuous aggregate and compression policy, then
+proves an insert and read-back).
 
-## Status
+## 2. Bridge (WSL Ubuntu, on the drone's Wi-Fi)
 
-- `dist/` — static frontend, simulation mode works offline.
-- `backend/` — emberwatch.v1 API: token auth, origin allowlist, telemetry/snapshot ingest + history, TigerData/pg adapter, memory fallback mode. `/api/analyze` runs Gemini as an evidence-seeking agent: function-calling tools (`get_latest_telemetry`, `get_telemetry_history`, `get_snapshot`) let the model pull live evidence before writing a structured assessment whose `falsifiers` field states what would overturn it; every record carries `provenance: gemini-unverified` and a `tool_trace`. Verified by 24 contract tests + a real round-trip on gemini-3.8-flash.
-- `tests/` — `node --test` runs the backend contract suite.
-- `bridge/`, `docs/` — not yet in this repo.
+```bash
+bash bridge/setup.sh                     # once, with internet: venv deps + fire model + test marker
+source ~/anafi-env/bin/activate
+set -a; source .env; set +a              # INGEST_TOKEN
+python3 bridge/anafi_bridge.py --backend http://127.0.0.1:8787
+python3 bridge/anafi_bridge.py --backend http://127.0.0.1:8787 --demo-flight   # + autonomous demo circle
+```
+
+The drone's Wi-Fi has no internet: Gemini needs a second connection (phone
+USB tether). Open the dashboard once while online so the UTSC map tiles are
+cached.
+
+## 3. Test without a real fire
+
+Print `http://127.0.0.1:8787/test-marker.html` at 100% (the code must measure
+18 cm). The QR code stands in for a large fire and carries its details; the
+drone reads it from up to ~2 m.
+
+## Demo
+
+The **Demo** button replays recorded historical fires from
+`examples/historical-fires.mjs` and the drone's flight pattern. It is only
+shown when requested.
+
+## Tests
+
+`npm test` — 41 backend contract tests (Gemini, TigerData and the drone are faked).

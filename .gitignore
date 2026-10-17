@@ -1,0 +1,16 @@
+# secrets
+.env
+
+# runtime output
+anafi_out/
+data/
+__pycache__/
+*.pyc
+node_modules/
+
+# local diagnostics
+diag_log.txt
+fix_firewall.done
+
+# model weights (downloaded by bridge/setup.sh)
+*.pt

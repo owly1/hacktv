@@ -30,6 +30,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.PORT) || 8790;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -40,7 +41,7 @@ const HOST = process.env.HOST || '127.0.0.1';
  * drivers = the factors our predictor will take as input; null = unknown.
  * impacts: null = not reliably reported; figures marked approximate in UI.
  * ------------------------------------------------------------------ */
-const FIRES = [
+export const FIRES = [
   {
     id: 'horse-river-2016',
     name: 'Horse River (Fort McMurray)',
@@ -169,7 +170,7 @@ const FIRES = [
   },
 ];
 
-const CONTEXT_NOTE =
+export const CONTEXT_NOTE =
   'Context: Canada\'s 2023 season burned ≈18.5 M ha nationally (CIFFC) — more than double the previous national record.';
 
 const PAGE = `<!doctype html>
@@ -604,38 +605,43 @@ function renderPage(){
     .replace('__CONTEXT_JSON__', JSON.stringify(CONTEXT_NOTE));
 }
 
-/* --emit <dir>: write a fully static copy (no Node needed to view). */
-if (process.argv.includes('--emit')) {
-  const dir = process.argv[process.argv.indexOf('--emit') + 1] || 'site-dist';
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'index.html'), renderPage());
-  fs.writeFileSync(path.join(dir, 'fires.json'),
-    JSON.stringify({ contract: 'emberwatch-testcase.v1', note: 'recorded events; illustrative zones; not a prediction', fires: FIRES }, null, 2));
-  console.log(`Static site written to ${dir}/ (index.html + fires.json)`);
-  process.exit(0);
+// Only act as a server/emitter when run directly; the Emberwatch backend
+// imports FIRES from this file for the dashboard's Demo mode.
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  /* --emit <dir>: write a fully static copy (no Node needed to view). */
+  if (process.argv.includes('--emit')) {
+    const dir = process.argv[process.argv.indexOf('--emit') + 1] || 'site-dist';
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'index.html'), renderPage());
+    fs.writeFileSync(path.join(dir, 'fires.json'),
+      JSON.stringify({ contract: 'emberwatch-testcase.v1', note: 'recorded events; illustrative zones; not a prediction', fires: FIRES }, null, 2));
+    console.log(`Static site written to ${dir}/ (index.html + fires.json)`);
+    process.exit(0);
+  }
+
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    if (url.pathname === '/healthz') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end('{"ok":true}');
+    }
+    if (url.pathname === '/fires.json') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ contract: 'emberwatch-testcase.v1', note: 'recorded events; illustrative zones; not a prediction', fires: FIRES }));
+    }
+    if (url.pathname === '/' || url.pathname === '/index.html') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(renderPage());
+    }
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end('{"error":"not found"}');
+  });
+
+  server.listen(PORT, HOST, () => {
+    console.log(`Emberwatch historical-fire test case`);
+    console.log(`  → http://${HOST}:${PORT}        (dashboard)`);
+    console.log(`  → http://${HOST}:${PORT}/fires.json  (dataset)`);
+    console.log(`Recorded events; ellipses and prediction zones are illustrative — not a model output.`);
+  });
 }
-
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-  if (url.pathname === '/healthz') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end('{"ok":true}');
-  }
-  if (url.pathname === '/fires.json') {
-    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-    return res.end(JSON.stringify({ contract: 'emberwatch-testcase.v1', note: 'recorded events; illustrative zones; not a prediction', fires: FIRES }));
-  }
-  if (url.pathname === '/' || url.pathname === '/index.html') {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    return res.end(renderPage());
-  }
-  res.writeHead(404, { 'content-type': 'application/json' });
-  res.end('{"error":"not found"}');
-});
-
-server.listen(PORT, HOST, () => {
-  console.log(`Emberwatch historical-fire test case`);
-  console.log(`  → http://${HOST}:${PORT}        (dashboard)`);
-  console.log(`  → http://${HOST}:${PORT}/fires.json  (dataset)`);
-  console.log(`Recorded events; ellipses and prediction zones are illustrative — not a model output.`);
-});

@@ -1,0 +1,12 @@
+parrot-olympe
+opencv-python
+numpy
+certifi
+pysdl2
+pysdl2-dll
+PyOpenGL
+# fire detection (install torch from the CPU index first — see bridge/setup.sh)
+ultralytics
+huggingface_hub
+# QR test marker generator
+segno

@@ -205,6 +205,124 @@ export function validateSnapshotEnvelope(body, nowMs) {
   return { capturedAtMs, jpeg };
 }
 
+export const MAX_FRAME_BYTES = 2 * 1024 * 1024;
+const DETECTION_SOURCES = new Set(['yolo', 'qr-test']);
+const FLIGHT_PHASES = new Set([
+  'preflight', 'takeoff', 'climb', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
+]);
+
+function isJpeg(buf) {
+  return buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+}
+
+// Live video frame: raw JPEG body, capture time in the X-Captured-At header.
+export function validateFrame(body, capturedAtHeader, nowMs) {
+  const capturedAtMs = parseIsoTimestamp(capturedAtHeader, 'X-Captured-At');
+  assertWithinClockWindow(capturedAtMs, nowMs, 'X-Captured-At');
+  if (body.length > MAX_FRAME_BYTES) {
+    throw new ApiError(413, `frame exceeds the ${MAX_FRAME_BYTES}-byte limit`);
+  }
+  if (!isJpeg(body)) throw new ApiError(400, 'frame is not a JPEG image');
+  return capturedAtMs;
+}
+
+function finiteOrNull(value, name, range = {}) {
+  checkNumberOrNull(value, name, range);
+  return value ?? null;
+}
+
+// Fire detection sighting from the bridge. One episode (a continuous run of
+// sightings of the same fire) carries the same episode_id; each POST is one
+// sighting row in the detections time series.
+export function validateDetection(body, nowMs) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new ApiError(400, 'detection must be a JSON object');
+  }
+  const detectedAtMs = parseIsoTimestamp(body.detected_at, 'detected_at');
+  assertWithinClockWindow(detectedAtMs, nowMs, 'detected_at');
+  if (!DETECTION_SOURCES.has(body.source)) {
+    throw new ApiError(400, `source must be one of ${[...DETECTION_SOURCES].join(', ')}`);
+  }
+  if (typeof body.episode_id !== 'string' || !/^[A-Za-z0-9_-]{4,64}$/.test(body.episode_id)) {
+    throw new ApiError(400, 'episode_id must be 4-64 characters of [A-Za-z0-9_-]');
+  }
+  if (typeof body.label !== 'string' || body.label.length === 0 || body.label.length > 40) {
+    throw new ApiError(400, 'label must be a non-empty string');
+  }
+  if (typeof body.confidence !== 'number' || !(body.confidence >= 0 && body.confidence <= 1)) {
+    throw new ApiError(400, 'confidence must be a number between 0 and 1');
+  }
+  const bbox = body.bbox;
+  if (!Array.isArray(bbox) || bbox.length !== 4
+      || !bbox.every((v) => typeof v === 'number' && v >= 0 && v <= 1)) {
+    throw new ApiError(400, 'bbox must be [x1, y1, x2, y2] normalized to 0..1');
+  }
+  const fire = body.fire ?? {};
+  const latitude = finiteOrNull(fire.latitude, 'fire.latitude', { min: -90, max: 90 });
+  const longitude = finiteOrNull(fire.longitude, 'fire.longitude', { min: -180, max: 180 });
+  if ((latitude === null) !== (longitude === null)) {
+    throw new ApiError(400, 'fire.latitude and fire.longitude must be provided together');
+  }
+  for (const key of ['details', 'drone']) {
+    if (body[key] !== undefined && body[key] !== null
+        && (typeof body[key] !== 'object' || Array.isArray(body[key]))) {
+      throw new ApiError(400, `${key} must be a JSON object when present`);
+    }
+  }
+  let jpeg = null;
+  if (body.frame_jpeg_base64 !== undefined && body.frame_jpeg_base64 !== null) {
+    if (typeof body.frame_jpeg_base64 !== 'string') {
+      throw new ApiError(400, 'frame_jpeg_base64 must be a base64 string');
+    }
+    jpeg = Buffer.from(body.frame_jpeg_base64, 'base64');
+    if (jpeg.length > MAX_SNAPSHOT_BYTES) throw new ApiError(413, 'detection frame too large');
+    if (!isJpeg(jpeg)) throw new ApiError(400, 'detection frame is not a JPEG image');
+  }
+  return {
+    detection: {
+      detected_at: new Date(detectedAtMs).toISOString(),
+      episode_id: body.episode_id,
+      source: body.source,
+      label: body.label,
+      confidence: body.confidence,
+      bbox,
+      fire: {
+        latitude,
+        longitude,
+        distance_m: finiteOrNull(fire.distance_m, 'fire.distance_m', { min: 0 }),
+        bearing_deg: finiteOrNull(fire.bearing_deg, 'fire.bearing_deg', { min: -360, max: 720 }),
+        position_source: typeof fire.position_source === 'string' ? fire.position_source : null,
+      },
+      drone: body.drone ? JSON.parse(JSON.stringify(body.drone)) : null,
+      details: body.details ? JSON.parse(JSON.stringify(body.details)) : null,
+    },
+    jpeg,
+  };
+}
+
+export function validateFlightEvent(body, nowMs) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new ApiError(400, 'flight event must be a JSON object');
+  }
+  const atMs = parseIsoTimestamp(body.at, 'at');
+  assertWithinClockWindow(atMs, nowMs, 'at');
+  if (!FLIGHT_PHASES.has(body.phase)) {
+    throw new ApiError(400, `phase must be one of ${[...FLIGHT_PHASES].join(', ')}`);
+  }
+  const step = body.step ?? null;
+  const steps = body.steps ?? null;
+  if ((step !== null && !Number.isInteger(step)) || (steps !== null && !Number.isInteger(steps))) {
+    throw new ApiError(400, 'step and steps must be integers when present');
+  }
+  return {
+    at: new Date(atMs).toISOString(),
+    phase: body.phase,
+    step,
+    steps,
+    message: typeof body.message === 'string' ? body.message.slice(0, 200) : '',
+  };
+}
+
 // Exact origin allowlist for browser access. Non-browser requests carry no
 // Origin header and are not subject to this check; CORS headers below are what
 // a browser enforces, this is the server-side guard for credentialed fetches.

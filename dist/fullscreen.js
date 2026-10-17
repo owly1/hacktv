@@ -6,7 +6,6 @@
     'drone-panel': 'ANAFI-01 drone feed',
     'analysis-panel': 'Gemini analysis',
     'response-panel': 'Response planning assistant',
-    'personnel-panel': 'Incident personnel',
   };
   const railLinks = [...document.querySelectorAll('.rail-links a[href^="#"]')];
   let current = null;

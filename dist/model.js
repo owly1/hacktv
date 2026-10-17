@@ -1,32 +1,84 @@
-/* Deterministic visual illustration. No physical spread model or calibrated probabilities. */
+/* Emberwatch fire-spread model on real map coordinates.
+   A detected fire starts as a disc of its reported (or camera-estimated) area,
+   then grows as a wind-driven ellipse: the head runs downwind at the spread
+   rate, the back burns slowly, and stronger wind makes the shape longer and
+   narrower. Heat, dryness and low humidity speed it up. */
 (function(root) {
-  const BASE = Object.freeze({wind:18, direction:45, dryness:65});
-  function compass(deg) { return ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8]; }
-  function footprint(minutes, scenario=BASE, scale=1) {
-    const t=Math.max(0,Math.min(60,Number(minutes)||0))/60;
-    const dry=Math.max(.1,Math.min(1,scenario.dryness/100));
-    const wind=Math.max(0,Math.min(45,scenario.wind));
-    const rad=scenario.direction*Math.PI/180;
-    const drift=t*wind*2.3;
-    const cx=410+Math.sin(rad)*drift, cy=290-Math.cos(rad)*drift;
-    const radius=34+t*(57+dry*55);
-    const points=[];
-    for(let i=0;i<80;i++) {
-      const a=i/80*Math.PI*2;
-      const irregular=1+.075*Math.sin(a*5+.5)+.04*Math.cos(a*9);
-      const along=radius*(1+wind/65)*Math.cos(a)*scale*irregular;
-      const across=radius*.81*Math.sin(a)*scale*irregular;
-      points.push([cx+along*Math.sin(rad)+across*Math.cos(rad),cy-along*Math.cos(rad)+across*Math.sin(rad)]);
+  const BASE = Object.freeze({wind:18, direction:45, dryness:65, temp:20, rh:40});
+  const M_PER_DEG = 111320;
+  function compass(deg) { return ['N','NE','E','SE','S','SW','W','NW'][Math.round(((deg%360)+360)%360/45)%8]; }
+  function destPoint(lat, lon, bearingDeg, distM) {
+    const b = bearingDeg*Math.PI/180;
+    return [lat + distM*Math.cos(b)/M_PER_DEG, lon + distM*Math.sin(b)/(M_PER_DEG*Math.cos(lat*Math.PI/180))];
+  }
+  /* Hotter, drier, less humid -> faster. Clamped so extreme inputs stay readable. */
+  function envFactor(sc) {
+    return Math.max(.5, Math.min(2.2, 1 + (sc.dryness-50)/120 + (sc.temp-20)/90 - (sc.rh-40)/140));
+  }
+  /* Head-fire spread rate in metres per minute. */
+  function baseRate(sc) { return (1.5 + sc.wind*.9)*envFactor(sc); }
+  /* A reported rate holds at the reported conditions; changing the inputs scales it. */
+  function spreadRate(sc, details) {
+    if (details && Number.isFinite(details.spread_m_per_min)) return details.spread_m_per_min*baseRate(sc)/baseRate(scenarioFrom(details));
+    return baseRate(sc);
+  }
+  function startRadius(details) {
+    const ha = details && Number.isFinite(details.area_ha) && details.area_ha > 0 ? details.area_ha : .05;
+    return Math.sqrt(ha*10000/Math.PI);
+  }
+  /* Scenario inputs implied by a detection's reported conditions. */
+  function scenarioFrom(details) {
+    const d = details || {};
+    return {
+      wind: Number.isFinite(d.wind_kmh) ? d.wind_kmh : BASE.wind,
+      direction: Number.isFinite(d.wind_dir_deg) ? d.wind_dir_deg : BASE.direction,
+      dryness: Number.isFinite(d.rh_pct) ? Math.max(0, Math.min(100, 100-d.rh_pct)) : BASE.dryness,
+      temp: Number.isFinite(d.temp_c) ? d.temp_c : BASE.temp,
+      rh: Number.isFinite(d.rh_pct) ? d.rh_pct : BASE.rh,
+    };
+  }
+  /* Fire outline after `minutes`, as [lat, lon] points. scale < 1 gives the
+     hotter inner bands, which sit toward the head of the fire. */
+  function footprint(origin, minutes, sc, details, scale=1) {
+    const r0 = startRadius(details), t = Math.max(0, minutes);
+    const rate = spreadRate(sc, details);
+    const lw = Math.min(4, 1 + sc.wind/35);                // length-to-width ratio
+    const head = r0 + rate*t, back = r0 + rate*t*.12;
+    const a = (head+back)/2, b = Math.max(r0, a/lw);
+    const shift = (head-back)/2 + (1-scale)*a*.35;          // inner bands lean downwind
+    const centre = destPoint(origin[0], origin[1], sc.direction, shift);
+    const pts = [];
+    for (let i = 0; i < 72; i++) {
+      const ang = i/72*Math.PI*2;
+      const wob = 1 + .06*Math.sin(ang*5 + sc.direction/40) + .035*Math.cos(ang*9);
+      const u = a*scale*Math.cos(ang)*wob, v = b*scale*Math.sin(ang)*wob;
+      pts.push(destPoint(centre[0], centre[1], sc.direction + Math.atan2(v, u)*180/Math.PI, Math.hypot(u, v)));
     }
-    return points;
+    return pts;
   }
-  function path(points) { return points.map((p,i)=>(i?'L':'M')+p.map(x=>x.toFixed(2)).join(' ')).join(' ')+'Z'; }
-  function areaHa(points) { let a=0; for(let i=0;i<points.length;i++){const p=points[i],q=points[(i+1)%points.length];a+=p[0]*q[1]-q[0]*p[1];}return Math.abs(a)/2*16/10000; }
-  function reviewDraft(objective,scenario,minutes,assumptions) {
-    const names={situational:'Situational awareness briefing',community:'Community information needs',handoff:'Incident handoff briefing'};
-    const questions={situational:['Which observations have a time, location and named source?','What independent observations could confirm a reported change?','Who is the authorized decision-maker for the next briefing?'],community:['Which community information requests are confirmed by the incident lead?','Who is authorized to publish verified public information?','Which accessibility and language needs should the liaison confirm?'],handoff:['Which records, timestamps and unresolved questions need handoff?','Who has accepted each review responsibility?','When will the incoming incident lead recheck stale information?']};
-    return {id:'draft-'+Date.now(),createdAt:new Date().toISOString(),title:names[objective]||names.situational,provenance:'simulation',status:'draft',scenario:{...scenario},minute:Number(minutes.toFixed(1)),assumptions:assumptions.trim(),observations:[`Illustration at T + ${Math.round(minutes)} min: ${areaHa(footprint(minutes,scenario)).toFixed(1)} ha on a fictional schematic.`,`Assumed wind ${scenario.wind} km/h toward ${compass(scenario.direction)}; dryness input ${scenario.dryness}%.`],questions:questions[objective]||questions.situational,unknowns:['Actual fire perimeter and ground conditions are unknown.','Access, occupied locations, resources and airspace status are unverified.','Illustrative spread has no validated accuracy or confidence interval.'],checks:[false,false,false],reviewer:'',reviewedAt:null,limits:'Briefing support only. No crew dispatch, suppression tactics, safe-route claim or evacuation order. Human review does not validate the spread model.'};
+  function areaHa(points) {
+    if (!points.length) return 0;
+    const lat0 = points[0][0]*Math.PI/180;
+    let s = 0;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i], q = points[(i+1)%points.length];
+      s += (p[1]*Math.cos(lat0))*q[0] - (q[1]*Math.cos(lat0))*p[0];
+    }
+    return Math.abs(s)/2*M_PER_DEG*M_PER_DEG/10000;
   }
-  const api={BASE,compass,footprint,path,areaHa,reviewDraft};root.EmberModel=api;
-  if(typeof module!=='undefined')module.exports=api;
-})(typeof globalThis!=='undefined'?globalThis:this);
+  function headDistance(minutes, sc, details) { return startRadius(details) + spreadRate(sc, details)*Math.max(0, minutes); }
+  /* Recorded burn ellipse for a historical (demo) fire, elongated along its spread direction. */
+  function recordedPerimeter(f) {
+    const area = f.areaHa*10000, a = Math.sqrt(area*2.4/Math.PI), b = area/(Math.PI*a);
+    const centre = destPoint(f.lat, f.lon, f.directionDeg, a*.45), pts = [];
+    for (let i = 0; i < 64; i++) {
+      const ang = i/64*Math.PI*2, wob = 1 + .08*Math.sin(ang*5 + f.directionDeg) + .05*Math.cos(ang*7);
+      const u = a*Math.cos(ang)*wob, v = b*Math.sin(ang)*wob;
+      pts.push(destPoint(centre[0], centre[1], f.directionDeg + Math.atan2(v, u)*180/Math.PI, Math.hypot(u, v)));
+    }
+    return pts;
+  }
+  const api = {BASE, compass, destPoint, envFactor, spreadRate, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter};
+  root.EmberModel = api;
+  if (typeof module !== 'undefined') module.exports = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);

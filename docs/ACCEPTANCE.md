@@ -1,78 +1,53 @@
-# Acceptance checklist
+# Acceptance checklist (v2.0 — live by default)
 
-The demo is "done" when every **Must** item passes. Run the full list at the H30 clean-start rehearsal
-and record who checked it and when. A failing item gets fixed or removed from the demo script.
-Never demo around a failing item.
+The demo is "done" when every **Must** item passes at the clean-start rehearsal.
+A failing item gets fixed or removed from the demo script.
 
 Checked by: __________  Date/time: __________  Commit: __________
 
-## A. Offline simulation (Must; no internet, no keys, no backend)
-
-- [ ] Opening `dist/index.html` shows the map, animated fire spread, synthetic camera and all panels.
-- [ ] Play/pause animates the spread; the timeline slider and T+0 / +30 / +60 presets move it.
-- [ ] Changing wind direction changes the spread direction; dryness and wind speed change its size.
-- [ ] Map zoom in/out/reset and layer toggles work.
-- [ ] Every synthetic panel is labelled (SIM, Simulated feed, DEMO FIXTURE, Illustrative, Exercise).
-- [ ] The simulation banner says spread is illustrative, not a validated prediction.
-
-## B. Layout and navigation (Must)
-
-- [ ] Desktop width (≥1240 px): no overlapping or clipped panels.
-- [ ] Phone width (~390 px): single column, no horizontal scrolling, all controls usable.
-- [ ] Each sidebar button opens its panel full screen; clicking it again or pressing Esc closes it.
-- [ ] The full-screen button on map, drone, Gemini, planning and personnel panels works both ways.
-- [ ] Scenario and Integrations dialogs open and close, including while a panel is full screen.
-
-## C. Honest data states (Must)
-
-- [ ] Connected mode with the backend **not running** shows an unreachable/error state, not sample data.
-- [ ] Connected mode with a wrong token shows an auth error.
-- [ ] Connected mode with no telemetry yet shows "awaiting samples", not zeros.
-- [ ] Unknown values (e.g. GPS) show as unknown, never as 0 or (0, 0).
-- [ ] Telemetry or snapshots older than 10 s are marked stale.
-- [ ] Connected mode hides the synthetic fire overlay.
-- [ ] Switching back to simulation clears live data and the token.
-
-## D. Backend integration (Must for connected demo)
-
-Start with `node --env-file=.env backend/server.mjs` and open http://127.0.0.1:8787.
+## A. Startup (Must)
 
 - [ ] `npm test` passes.
-- [ ] A live telemetry POST (ingest token) appears in the dashboard within ~2 s with its real timestamp.
-- [ ] A sample with `provenance` other than `live` is refused in connected mode.
-- [ ] Status panel shows storage mode (`memory only` or `postgres`) and Gemini configuration honestly.
-- [ ] Analyze without fresh evidence shows the 409 message; a second click within 30 s shows the 429 message.
+- [ ] `npm start`, then http://127.0.0.1:8787 opens straight into live mode (no token prompt) showing "Waiting for the drone".
+- [ ] With the backend stopped, the page says the backend is unreachable — no example data appears.
 
-## E. Gemini analysis
+## B. Drone link (Must)
 
-- [ ] **Must:** In simulation, the analysis panel is labelled DEMO FIXTURE and says no Gemini request was made.
-- [ ] **Should:** One real Gemini response captured (date/time + screenshot) with summary, unknowns, limitations, provenance `gemini-unverified`.
-- [ ] **Should:** A slow but valid Gemini response (>12 s) still appears in the browser (timeout fix).
-- [ ] **Should:** Telemetry-only analysis explicitly says there is no visual fire evidence.
+- [ ] `bridge/anafi_bridge.py --backend …` connects; the ANAFI-01 panel shows smooth live video (fps shown) within a few seconds.
+- [ ] Altitude AGL, ground speed, drone power and flight state update about once a second; stale telemetry (>10 s) is marked STALE.
+- [ ] The drone's position appears on the map (GPS outdoors; home + moves indoors).
 
-## F. Response planning and review (Must)
+## C. Detection → everything (Must)
 
-- [ ] A draft can be created for each objective; it starts **unreviewed**.
-- [ ] Recording a review requires all three checkboxes **and** a non-empty name.
-- [ ] Changing assumptions, objective, scenario or the timeline (manually) invalidates the review.
-- [ ] JSON and Markdown exports include timestamps, provenance, assumptions, review state and limitations.
-- [ ] No draft text gives tactical commands, crew dispatches, evacuation orders or "safe route" claims.
-- [ ] Nothing in the app sends commands to a drone, crew or outside service.
+- [ ] Showing the printed test marker (18 cm, within ~2 m) triggers "Fire detected" within a second or two; the video shows the detection box.
+- [ ] The fire pin appears on the map with the marker's name/area, and the spread projection grows when Play is pressed.
+- [ ] Gemini analysis appears automatically (AUTO tag) with severity and spread outlook — or, with no internet, "Cannot connect to Gemini" with the reason.
+- [ ] "Mark false alarm" clears the incident.
 
-## G. Hardware (Should; demo must not depend on it)
+## D. Planning (Must)
 
-- [ ] Exact ANAFI model, firmware and controller recorded.
-- [ ] Bridge sends at least one real telemetry sample, visible in the dashboard with its capture time.
-- [ ] Bridge sends at least one real JPEG snapshot, visible in the drone panel.
-- [ ] Bridge contains no takeoff, landing or movement commands.
+- [ ] "Generate operational plan" returns prioritized actions with owners and timing, triggers and the stated advantage.
+- [ ] Changing conditions marks the plan stale; approval needs a name.
+- [ ] Export brief contains the fire, projection, telemetry, analysis and plan.
 
-## H. Persistence (Should)
+## E. Demo flight (Should — needs the venue's OK and a person on the controller)
 
-- [ ] `backend/schema.sql` applied to TigerData; a telemetry insert is read back.
-- [ ] Hypertable confirmed (screenshot or query output saved).
+- [ ] `--demo-flight` refuses to start below 30% battery or when not landed, and waits for `FLY`.
+- [ ] Take-off, +1 m climb, 8-segment circle, return, landing; progress shows in the ANAFI-01 panel.
+- [ ] `x` + Enter, `l` in the video window and Ctrl+C each land the drone immediately.
 
-## I. Release (Must, H34)
+## F. TigerData (Must for the track)
+
+- [ ] `npm run db:init` reports insert + read-back via `telemetry_1m` and lists the hypertables.
+- [ ] Status shows TigerData "Connected"; the Integrations chart shows altitude per minute from the continuous aggregate.
+- [ ] Detections, analyses and plans rows exist after a test run.
+
+## G. Demo mode (Should)
+
+- [ ] The Demo button loads the historical fires from `examples/`; each replays from ignition to its recorded size.
+- [ ] "ANAFI demo flight pattern" replays the circle at the Sam Ibrahim Building; Exit demo returns to live.
+
+## H. Release (Must)
 
 - [ ] `.env` is not committed; `.env.example` has no real values.
-- [ ] README run commands work from a fresh clone.
-- [ ] Source zip and checksum created from the frozen commit.
+- [ ] README commands work from a fresh clone.
