@@ -50,6 +50,7 @@ const LOOK_INTERVAL_MS = 5_000;
 export const NOT_RESEEN_LOOKS = 3;
 export const FIRE_STANDOFF_MIN = 10;       // never suggest flying over ground the fire reaches this soon
 export const FIRE_PATH_MIN = 60;           // "in the fire's path" for trail colouring
+export const FIRE_STANDOFF_M = 60;         // and never closer than this to the fire's edge
 
 /**
  * Minutes until the projected fire covers a point, from a spread context
@@ -521,6 +522,10 @@ export class PersonSearch {
       const [vlat, vlon] = toLatLon(this.ref, ve, vn);
       const arrives = fireArrival(spread, vlat, vlon);
       if (arrives != null && arrives < FIRE_STANDOFF_MIN) continue; // inside or about to be: smoke and heat
+      if (spread?.origin) {
+        const [oe, on] = toLocal(this.ref, spread.origin[0], spread.origin[1]);
+        if (Math.hypot(ve - oe, vn - on) < EM.startRadius(spread.details) + FIRE_STANDOFF_M) continue;
+      }
       let predicted;
       try {
         predicted = geolocate({
@@ -591,8 +596,7 @@ export class PersonSearch {
     if (movement.status === 'stationary' && multiView) reasons.push(`not moving for ${fmtSpan(movement.span_s)} — may be unable to move or call for help`);
     if (movement.status === 'moving') reasons.push('moving — likely able to self-evacuate, keep tracking');
     const arrival = lead.closed ? undefined : fireArrival(ctx.spread, lat, lon);
-    if (arrival === 0) reasons.push('inside the projected fire area now');
-    else if (arrival != null) reasons.push(`fire projected to reach this spot in about ${arrival} min`);
+    if (arrival != null && arrival > FIRE_STANDOFF_MIN) reasons.push(`fire projected to reach this spot in about ${arrival} min`);
     if (fireDist != null && fireDist < 300) reasons.push(`${fireDist} m from the detected fire`);
     if (obs.some((o) => o.delayed)) reasons.push('includes delayed observations');
     // Another lead this one could be: it was last seen within walking reach of where this one first appeared.
@@ -605,11 +609,16 @@ export class PersonSearch {
       if (Math.hypot(other.fused.e - b.e, other.fused.n - b.n) <= reach && (b.at_ms - a.at_ms) < 10 * 60_000) sameAs.push(other.number);
     }
     if (sameAs.length) reasons.push(`may be the same person as Target ${sameAs.join(', ')} (within walking distance)`);
-    const tier = lead.closed ? 9
+    const baseTier = lead.closed ? 9
       : status === 'possible-person' && movement.status === 'stationary' ? 1
       : status === 'possible-person' ? 2
       : status === 'not-re-seen' && multiView ? 3
       : status === 'needs-another-view' ? 4 : 5;
+    // At the fire first: anyone inside the fire's edge, or where it arrives within 10 minutes,
+    // outranks every other lead, whatever their evidence.
+    const atFire = !lead.closed && arrival != null && arrival <= FIRE_STANDOFF_MIN;
+    if (atFire) reasons.unshift(arrival === 0 ? 'AT THE FIRE: inside the projected fire edge now' : `AT THE FIRE: the front reaches this spot in about ${arrival} min`);
+    const tier = atFire ? 0 : baseTier;
     return {
       id: lead.id,
       number: lead.number,
@@ -632,7 +641,8 @@ export class PersonSearch {
       delayed: { any: obs.some((o) => o.delayed), max_delay_s: Math.max(0, ...obs.map((o) => o.delay_s)) },
       fire_distance_m: fireDist,
       fire_arrival: arrival === undefined ? null : { minutes: arrival, basis: 'spread model projection at the reported conditions; an estimate, not a forecast' },
-      priority: { tier, reasons },
+      at_fire: atFire,
+      priority: { tier, base_tier: baseTier, reasons },
       acknowledged: lead.ack,
       closed: lead.closed,
       possibly_same_as: sameAs,

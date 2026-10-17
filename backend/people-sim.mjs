@@ -10,60 +10,135 @@
  * the least time), and nothing is flown over ground the fire reaches within
  * 10 minutes or closer than a fixed standoff from it.
  */
-import { PersonSearch, DEFAULT_ERRORS, toLatLon, toLocal, projectToImage, rayToGround, compass, fireArrival, FIRE_STANDOFF_MIN, FIRE_PATH_MIN } from './people.mjs';
+import { PersonSearch, DEFAULT_ERRORS, toLatLon, toLocal, projectToImage, rayToGround, compass, fireArrival, FIRE_STANDOFF_MIN, FIRE_PATH_MIN, FIRE_STANDOFF_M } from './people.mjs';
 
 const EM = globalThis.EmberModel;
 
 const RAD = Math.PI / 180;
-export const SIM_DURATION_S = 420;
+export const SIM_DURATION_S = 560;
 const ALT = 70, PITCH = -55, CRUISE = 9, HFOV = 69, ASPECT = 16 / 9;
-const OUTAGE = [140, 205];
+const OUTAGE = [200, 265];
+const HALF = 270;                             // the assigned sector: a square this far either side of its centre
+const FIRE_BACK = 130;                        // the fire sits this far upwind of the sector centre
+const LEG_SPACING = 75;
+const STANDOFF_M = FIRE_STANDOFF_M;
+const ORBIT_POINTS = 16;
 
 function rng(seed) {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 function gauss(r) { return Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r()); }
+const wrap = (a) => ((a % 360) + 360) % 360;
+const inArc = (deg, [a, b]) => { const x = wrap(deg - a), w = wrap(b - a); return x < w; };
 
-/* Ground truth, metres east/north of the sim origin. Never shown as truth on the dashboard. */
+/* Ground truth in the fire's wind frame: u metres downwind of the fire, v metres across
+   (to the right of the wind). Directions are relative to the wind. Never shown as truth. */
 const TARGETS = [
-  { id: 'injured', kind: 'person', pos: () => [70, -45], hidden: [[0, 80]], thermal: 0.85, visible: 0.35 },
-  { id: 'walker', kind: 'person', pos: (t) => { const k = Math.min(1, t * 1.1 / 240); return [-150 + 130 * k, 90 - 200 * k]; }, hidden: [], thermal: 0.8, visible: 0.5 },
-  // A sun-heated rock: hot only on its south-west face, and the hot spot sits on a slope, so its
+  // Trapped at the fire's flank: the reason the search starts at the fire.
+  { id: 'trapped', u: () => 18, v: () => 40, hiddenRel: [], thermal: 0.6, visible: 0.3 },   // inside the fire's edge
+  { id: 'injured', u: () => 175, v: () => -20, hiddenRel: [[135, 215]], thermal: 0.85, visible: 0.35 },
+  { id: 'walker', u: (t) => 230 + 55 * Math.min(1, t * 1.1 / 240), v: (t) => 185 - 190 * Math.min(1, t * 1.1 / 240), hiddenRel: [], thermal: 0.8, visible: 0.5 },
+  // A sun-heated rock: hot only on its downwind face, and the hot spot sits on a slope, so its
   // apparent ground position shifts with the viewing angle (it fails multi-view agreement).
-  { id: 'hot-rock', kind: 'false', pos: () => [95, -10], seenFrom: [195, 255], thermal: 0.9, visible: 0, parallax: 7 },
+  { id: 'hot-rock', u: () => 131, v: () => -18, seenFromRel: [-12, 12], thermal: 0.9, visible: 0, parallax: 7 },
 ];
-const FIRE = [175, 95];
-/* The simulated fire, as a detection would report it: spreading toward the south-west. */
+
+/* The UTSC scenario: a small ravine fire near the Sam Ibrahim Building, spreading south-west. */
 export const SIM_FIRE_DETAILS = Object.freeze({
   name: 'Ravine fire (simulated)', area_ha: 0.8, intensity: 'high', spread_m_per_min: 4,
   fuel: 'mixed forest and brush', wind_kmh: 24, wind_dir_deg: 225, temp_c: 28, rh_pct: 35,
 });
-const SECTOR = [-230, 230, -170, 170];        // west, east, south, north (metres)
-const LEG_SPACING = 75;
-const STANDOFF_M = 60;                        // beyond the fire's edge, whatever the wind
+
+/**
+ * A simulated search at one of the project's historical fires: its real ignition point,
+ * spread direction and recorded weather. The fire is simulated at its first minutes, and
+ * its spread speed is scaled down so the front stays within a drone-sized search area.
+ */
+export function scenarioFromExample(f) {
+  const d = f.drivers ?? {};
+  const base = { wind_kmh: d.windKmh ?? 30, wind_dir_deg: f.directionDeg, temp_c: d.tempC ?? 25, rh_pct: d.rhPct ?? 20 };
+  const recorded = EM.spreadRate(EM.scenarioFrom(base), null);
+  return {
+    id: f.id, name: f.name, latitude: f.lat, longitude: f.lon,
+    note: `Recorded location, wind (${base.wind_kmh} km/h toward ${compass(f.directionDeg)}) and weather; spread speed scaled to a drone-sized search area.`,
+    details: Object.freeze({
+      name: `${f.name}: ignition area (simulated)`, area_ha: 0.8, intensity: 'extreme',
+      spread_m_per_min: Math.round(Math.min(6, Math.max(3, recorded / 8)) * 2) / 2,
+      fuel: d.fuel ?? null, ...base,
+    }),
+  };
+}
 
 export class PersonSearchSim {
-  constructor({ site, startMs, seed = 17 }) {
+  /**
+   * @param {object} opts
+   * @param {object} opts.site       { latitude, longitude } for the UTSC scenario
+   * @param {object} [opts.scenario] a scenarioFromExample() result; UTSC when omitted
+   */
+  constructor({ site, startMs, seed = 17, scenario = null }) {
     this.site = site;
-    this.origin = { lat: site.latitude - 0.0012, lon: site.longitude + 0.0018 };
+    this.scenario = scenario ?? { id: 'utsc', name: 'UTSC · Highland Creek ravine', latitude: null, longitude: null, note: 'Simulated fire near the Sam Ibrahim Building.', details: SIM_FIRE_DETAILS };
+    this.details = this.scenario.details;
+    const th = this.details.wind_dir_deg * RAD;
+    this.d = [Math.sin(th), Math.cos(th)];          // downwind
+    this.p = [this.d[1], -this.d[0]];               // across the wind
+    this.F = [-this.d[0] * FIRE_BACK, -this.d[1] * FIRE_BACK];
+    // Local frame origin = sector centre; the fire sits FIRE_BACK upwind of it.
+    if (this.scenario.latitude != null) {
+      const [la, lo] = EM.destPoint(this.scenario.latitude, this.scenario.longitude, this.details.wind_dir_deg, FIRE_BACK);
+      this.origin = { lat: la, lon: lo };
+    } else {
+      this.origin = { lat: site.latitude - 0.0012, lon: site.longitude + 0.0018 };
+    }
     this.startMs = startMs;
     this.r = rng(seed);
-    const [sw, ne] = [toLatLon(this.origin, -230, -170), toLatLon(this.origin, 230, 170)];
+    const [sw, ne] = [toLatLon(this.origin, -HALF, -HALF), toLatLon(this.origin, HALF, HALF)];
     this.search = new PersonSearch({ hfovDeg: HFOV, aspect: ASPECT, cellM: 6, sector: [sw[0], sw[1], ne[0], ne[1]], cruiseMps: CRUISE });
     this.t = -1;
-    const [flat, flon] = this.ll(...FIRE);
-    this.spread = { origin: [flat, flon], scenario: EM.scenarioFrom(SIM_FIRE_DETAILS), details: SIM_FIRE_DETAILS };
-    this.fireEdge = EM.footprint(this.spread.origin, 0, this.spread.scenario, SIM_FIRE_DETAILS)
+    const [flat, flon] = this.ll(...this.F);
+    this.spread = { origin: [flat, flon], scenario: EM.scenarioFrom(this.details), details: this.details };
+    this.fireEdge = EM.footprint(this.spread.origin, 0, this.spread.scenario, this.details)
       .filter((_, i) => i % 6 === 0).map(([la, lo]) => toLocal(this.origin, la, lo));
-    this.fireEdge.push([...FIRE]);
-    this.pos = [-215, 155]; this.heading = 135; this.pitch = PITCH;   // launch point: upwind flank, north-west corner
-    this.legs = this.planSurvey();
+    this.fireEdge.push([...this.F]);
+    this.pos = this.launchPoint(); this.heading = 0; this.pitch = PITCH;
+    this.orbit = this.planOrbit();
+    this.legs = this.planSurvey(this.orbit.at(-1));
     this.waypoints = this.legs.flatMap((l) => [l.a, l.b]);
-    this.wp = 0; this.mode = 'survey'; this.revisit = null; this.revisited = new Map();
+    this.ow = 0; this.wp = 0; this.phase = 'orbit'; this.mode = 'survey'; this.revisit = null; this.revisited = new Map();
     this.queue = []; this.log = []; this.track = []; this.lastSeen = new Map();
-    const first = this.legs.find((l) => l.arrival != null);
-    this.say(0, `Survey planned around the fire: ${this.legs.length} legs across the wind at 70 m, ground the fire reaches soonest first${first ? ` (first leg: about ${first.arrival} min ahead of the front)` : ''}. Nothing within ${FIRE_STANDOFF_MIN} min of the front.`);
+    this.say(0, `Searching the fire first: circling it about ${Math.round(this.orbitRadius)} m out, outside the standoff, with the camera on its edge. Then its path: ${this.legs.length} legs across the wind, soonest-reached first.`);
+  }
+
+  /** Local point from wind-frame (u downwind of the fire, v across). */
+  wf(u, v) { return [this.F[0] + u * this.d[0] + v * this.p[0], this.F[1] + u * this.d[1] + v * this.p[1]]; }
+
+  /** Take off from the sector corner nearest the fire that is clear of it. */
+  launchPoint() {
+    const corners = [[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([a, b]) => [a * (HALF - 15), b * (HALF - 15)]).filter((c) => !this.excluded(...c));
+    corners.sort((a, b) => Math.hypot(a[0] - this.F[0], a[1] - this.F[1]) - Math.hypot(b[0] - this.F[0], b[1] - this.F[1]));
+    return [...corners[0]];
+  }
+
+  /** A full circle round the fire, pushed out wherever the standoff or the 10-minute front reaches further. */
+  planOrbit() {
+    const base = EM.startRadius(this.details) + STANDOFF_M;
+    const start = Math.atan2(this.pos[0] - this.F[0], this.pos[1] - this.F[1]);
+    const pts = [];
+    let maxR = 0;
+    for (let k = 0; k <= ORBIT_POINTS; k++) {
+      const a = start + (k / ORBIT_POINTS) * 2 * Math.PI;
+      let r = base;
+      const at = (rr) => [this.F[0] + rr * Math.sin(a), this.F[1] + rr * Math.cos(a)];
+      // Clear of the fire, and so is the straight hop from the previous orbit point.
+      while ((this.excluded(...at(r)) || (pts.length && !this.clear(pts.at(-1), at(r)))) && r < 400) r += 5;
+      r += 5;
+      maxR = Math.max(maxR, r);
+      pts.push([this.F[0] + r * Math.sin(a), this.F[1] + r * Math.cos(a)]);
+    }
+    this.orbitRadius = base + 5;
+    this.safeRadius = maxR + 10;   // the circle the drone uses to go round the fire
+    return pts;
   }
 
   /** Minutes until the projected fire reaches local point (e, n); null if not within 3 h. */
@@ -71,27 +146,27 @@ export class PersonSearchSim {
 
   /** Too close to fly: within the standoff of the fire, or ground it reaches within 10 minutes. */
   excluded(e, n) {
-    if (Math.hypot(e - FIRE[0], n - FIRE[1]) < EM.startRadius(SIM_FIRE_DETAILS) + STANDOFF_M) return true;
+    if (Math.hypot(e - this.F[0], n - this.F[1]) < EM.startRadius(this.details) + STANDOFF_M) return true;
+    if (!this.spread) return false;
     const a = this.arrivalAt(e, n);
     return a != null && a < FIRE_STANDOFF_MIN;
   }
 
   /**
-   * Survey legs across the wind, clipped to the sector and to the standoff,
-   * ordered by projected fire arrival (soonest first); ground the fire does not
-   * reach within 3 h comes last, nearest the fire first.
+   * After the fire itself: legs across the wind, clipped to the sector and the standoff,
+   * ordered by projected fire arrival (soonest first); ground the fire does not reach
+   * within 3 h comes last, nearest the fire first.
    */
-  planSurvey() {
-    const th = SIM_FIRE_DETAILS.wind_dir_deg * RAD;
-    const d = [Math.sin(th), Math.cos(th)], p = [d[1], -d[0]];
-    const [W, E, S, N] = SECTOR.map((v) => v - Math.sign(v) * 15);
+  planSurvey(from) {
+    const { d, p } = this;
+    const lim = HALF - 15;
     const legs = [];
-    for (let u = -500; u <= 700; u += LEG_SPACING) {
-      const base = [FIRE[0] + u * d[0], FIRE[1] + u * d[1]];
+    for (let u = -600; u <= 800; u += LEG_SPACING) {
+      const base = [this.F[0] + u * d[0], this.F[1] + u * d[1]];
       let vmin = -Infinity, vmax = Infinity;
-      for (const [k, lo, hi] of [[0, W, E], [1, S, N]]) {
-        if (Math.abs(p[k]) < 1e-9) { if (base[k] < lo || base[k] > hi) vmax = -Infinity; continue; }
-        let a = (lo - base[k]) / p[k], b = (hi - base[k]) / p[k];
+      for (const k of [0, 1]) {
+        if (Math.abs(p[k]) < 1e-9) { if (Math.abs(base[k]) > lim) vmax = -Infinity; continue; }
+        let a = (-lim - base[k]) / p[k], b = (lim - base[k]) / p[k];
         if (a > b) [a, b] = [b, a];
         vmin = Math.max(vmin, a); vmax = Math.min(vmax, b);
       }
@@ -109,8 +184,7 @@ export class PersonSearchSim {
       legs.push({ u, a: best[0], b: best.at(-1), arrival: arrivals.length ? Math.min(...arrivals) : null });
     }
     legs.sort((x, y) => (x.arrival ?? 1e9) - (y.arrival ?? 1e9) || Math.abs(x.u) - Math.abs(y.u));
-    // Fly each leg from whichever end is nearer the previous one.
-    let at = this.pos;
+    let at = from;
     for (const leg of legs) {
       if (Math.hypot(leg.b[0] - at[0], leg.b[1] - at[1]) < Math.hypot(leg.a[0] - at[0], leg.a[1] - at[1])) [leg.a, leg.b] = [leg.b, leg.a];
       at = leg.b;
@@ -137,6 +211,42 @@ export class PersonSearchSim {
     while (this.t < until) this.step(++this.t);
   }
 
+  /** Is the straight line from a to b clear of the fire? */
+  clear(a, b) {
+    const n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 8);
+    for (let i = 1; i < n; i++) if (this.excluded(a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n)) return false;
+    return true;
+  }
+
+  /**
+   * Fly toward target, going round the fire when the straight line would cross it:
+   * out to a safe circle, along it the short way, then in to the target.
+   */
+  goTo(target, t) {
+    const key = `${target[0].toFixed(1)},${target[1].toFixed(1)}`;
+    if (this.routeKey !== key) {
+      this.routeKey = key;
+      this.route = [];
+      if (!this.clear(this.pos, target)) {
+        const R = this.safeRadius;
+        const ang = (q) => Math.atan2(q[0] - this.F[0], q[1] - this.F[1]);
+        let a0 = ang(this.pos), a1 = ang(target), da = a1 - a0;
+        while (da > Math.PI) da -= 2 * Math.PI;
+        while (da < -Math.PI) da += 2 * Math.PI;
+        const steps = Math.max(1, Math.ceil(Math.abs(da) / (20 * RAD)));
+        for (let k = 0; k <= steps; k++) {
+          const a = a0 + da * k / steps;
+          this.route.push([this.F[0] + R * Math.sin(a), this.F[1] + R * Math.cos(a)]);
+        }
+      }
+    }
+    while (this.route.length) {
+      if (!this.fly(this.route[0], t)) return false;
+      this.route.shift();
+    }
+    return this.fly(target, t);
+  }
+
   fly(target, t) {
     const dx = target[0] - this.pos[0], dy = target[1] - this.pos[1], d = Math.hypot(dx, dy);
     if (d > 0.5) this.heading = (Math.atan2(dx, dy) / RAD + 360) % 360;
@@ -152,7 +262,24 @@ export class PersonSearchSim {
     if (t === OUTAGE[1]) { this.say(t, `Link restored — ${this.queue.length} stored observation${this.queue.length === 1 ? '' : 's'} delivered, marked delayed.`); }
 
     // ---- mission: survey, propose, revisit, resolve, report, continue
-    if (this.mode === 'survey') {
+    if (this.mode === 'survey' && this.phase === 'orbit') {
+      // First: the fire itself. Circle it outside the standoff, camera on the fire's edge.
+      const target = this.orbit[this.ow];
+      if ((this.ow === 0 ? this.goTo(target, t) : this.fly(target, t))) this.ow++;
+      const dx = this.F[0] - this.pos[0], dy = this.F[1] - this.pos[1];
+      if (this.ow > 0) {
+        this.heading = wrap(Math.atan2(dx, dy) / RAD);
+        this.pitch = -Math.round(Math.atan2(ALT, Math.max(1, Math.hypot(dx, dy) - EM.startRadius(this.details) * 0.5)) / RAD);
+      }
+      if (this.ow >= this.orbit.length) {
+        this.phase = 'legs'; this.pitch = PITCH;
+        const first = this.legs.find((l) => l.arrival != null);
+        this.say(t, `Fire area searched from all sides. Now its path${first ? `: leg 1 is about ${first.arrival} min ahead of the front` : ''}.`);
+      } else if (this.ow === 1 && !this.orbitStarted) {
+        this.orbitStarted = true;
+        this.say(t, 'At the fire: circling it with the camera on its edge.');
+      }
+    } else if (this.mode === 'survey') {
       const lead = linkUp && this.pickRevisit();
       if (lead) {
         this.mode = 'revisit'; this.revisit = { id: lead.id, look: lead.next_look, hold: 0 };
@@ -160,7 +287,7 @@ export class PersonSearchSim {
         this.say(t, `Proposed: ${lead.next_look.kind === 'recheck' ? 're-check' : 'revisit'} Target ${lead.number} from the ${lead.next_look.from} (${lead.next_look.flight_s} s away). Survey paused.`);
       } else if (this.wp < this.waypoints.length) {
         this.pitch = PITCH;
-        if (this.fly(this.waypoints[this.wp], t)) {
+        if (this.goTo(this.waypoints[this.wp], t)) {
           this.wp++;
           if (this.wp % 2 === 0 && this.wp < this.waypoints.length) {
             const leg = this.legs[this.wp / 2 - 1];
@@ -171,7 +298,7 @@ export class PersonSearchSim {
     } else if (this.mode === 'revisit') {
       const L = this.revisit.look;
       const [e, n] = toLocal(this.origin, L.latitude, L.longitude);
-      if (this.fly([e, n], t)) {
+      if (this.goTo([e, n], t)) {
         this.heading = L.look_heading_deg; this.pitch = L.gimbal_pitch_deg;
         if (++this.revisit.hold >= 6) {
           const lead = this.search.snapshot(nowMs).leads.find((l) => l.id === this.revisit.id);
@@ -189,13 +316,14 @@ export class PersonSearchSim {
     this.search.observePose(pose, nowMs); // the aircraft logs its own footprints, link or not
 
     // ---- detections from the true pose; reported with pose errors drawn from the error model
+    const wind = this.details.wind_dir_deg;
     for (const tg of TARGETS) {
       if (t - (this.lastSeen.get(tg.id) ?? -99) < 2) continue;
-      let [te, tn] = tg.pos(t);
+      let [te, tn] = this.wf(tg.u(t), tg.v(t));
       const lookAz = (Math.atan2(te - this.pos[0], tn - this.pos[1]) / RAD + 360) % 360;
-      const from = (lookAz + 180) % 360;
-      if (tg.hidden?.some(([a, b]) => from >= a && from < b)) continue;
-      if (tg.seenFrom && !(from >= tg.seenFrom[0] && from < tg.seenFrom[1])) continue;
+      const from = wrap(lookAz + 180 - wind);   // where the drone is, relative to the wind
+      if (tg.hiddenRel?.some((arc) => inArc(from, arc))) continue;
+      if (tg.seenFromRel && !inArc(from, tg.seenFromRel)) continue;
       if (tg.parallax) { te += tg.parallax * Math.sin(lookAz * RAD); tn += tg.parallax * Math.cos(lookAz * RAD); }
       const img = projectToImage(cam, te - this.pos[0], tn - this.pos[1]);
       if (!img || img.dep < 20) continue;
@@ -224,17 +352,23 @@ export class PersonSearchSim {
     if (res.new_lead) this.say(t, `New candidate: Target ${res.lead.number} (${obs.sensor}). Seen from one direction — another angle requested.`);
     else if (!res.duplicate) {
       const s = this.search.summarize(res.lead, receivedMs, this.context());
-      if (s.status === 'possible-person' && !res.lead.announced) { res.lead.announced = true; this.say(t, `Target ${s.number} seen from ${s.views} angles at the same spot — now a possible person. Alert sent to responders.`); }
+      if (s.status === 'possible-person' && !res.lead.announced) {
+        res.lead.announced = true;
+        this.say(t, s.at_fire
+          ? `TOP PRIORITY: Target ${s.number} is at the fire and seen from ${s.views} angles — possible person. Alert sent to responders.`
+          : `Target ${s.number} seen from ${s.views} angles at the same spot — now a possible person. Alert sent to responders.`);
+      }
     }
   }
 
   pickRevisit() {
+    // Leads are already ordered: anyone at the fire's edge first, then by status, then by fire arrival.
     const snap = this.search.snapshot(this.startMs + this.t * 1000, this.context());
     return snap.leads.find((l) => l.status === 'needs-another-view' && l.next_look && (this.revisited.get(l.id) ?? 0) < 2 && l.last_seen_age_s >= 4)
       ?? snap.leads.find((l) => l.status === 'possible-person' && l.next_look?.kind === 'recheck' && (this.revisited.get(l.id) ?? 0) < 3);
   }
 
-  fireLL() { const [lat, lon] = this.ll(...FIRE); return { latitude: lat, longitude: lon }; }
+  fireLL() { const [lat, lon] = this.ll(...this.F); return { latitude: lat, longitude: lon }; }
 
   snapshot() {
     const nowMs = this.startMs + Math.max(0, this.t) * 1000;
@@ -242,12 +376,13 @@ export class PersonSearchSim {
     const [lat, lon] = this.ll(...this.pos);
     return {
       simulated: true, t: this.t, duration_s: SIM_DURATION_S,
+      scenario: { id: this.scenario.id, name: this.scenario.name, note: this.scenario.note },
       ...this.search.snapshot(nowMs, this.context()),
       fire,
-      fire_model: { origin: this.spread.origin, scenario: this.spread.scenario, details: SIM_FIRE_DETAILS },
+      fire_model: { origin: this.spread.origin, scenario: this.spread.scenario, details: this.details },
       drone: { latitude: lat, longitude: lon, altitude_m: ALT, heading_deg: Math.round(this.heading), gimbal_pitch_deg: this.pitch },
       track: this.track,
-      mission: { mode: this.mode, revisit: this.revisit?.id ?? null, link: this.t >= OUTAGE[0] && this.t < OUTAGE[1] ? 'down' : 'up', stored: this.queue.length, log: this.log.slice(-14).reverse(), heading_text: compass(this.heading) },
+      mission: { phase: this.phase, mode: this.mode, revisit: this.revisit?.id ?? null, link: this.t >= OUTAGE[0] && this.t < OUTAGE[1] ? 'down' : 'up', stored: this.queue.length, log: this.log.slice(-14).reverse(), heading_text: compass(this.heading) },
     };
   }
 }

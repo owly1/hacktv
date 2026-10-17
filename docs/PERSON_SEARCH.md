@@ -90,11 +90,31 @@ These are projections at the stated conditions, not forecasts.
   - **Amber:** the centre of the view was on ground the fire reaches within
     60 min.
   - **Teal:** elsewhere.
-- **The simulated survey follows the fire.** Its legs run across the wind and
-  are ordered by projected arrival, soonest first. Ground the fire doesn't reach
-  comes last. Nothing is flown within 60 m of the fire's edge or over ground it
-  reaches within 10 min. Next-look suggestions obey the same 10-minute limit.
-  A test flies the whole simulation and checks that the drone never breaks it.
+- **The fire is searched first.** People at or inside the fire's edge have the
+  least time and the least chance of calling for help, so:
+  - **Ranking.** A lead inside the projected fire edge, or one the front reaches
+    within 10 min, is marked **At the fire**. It outranks every other lead, even
+    a better-confirmed one further away. The dashboard recomputes this when the
+    Conditions change.
+  - **Flight order.** The simulated search first circles the fire just outside
+    the standoff: 60 m beyond its edge, pushed out wherever the 10-minute front
+    reaches further. The camera stays on the fire's edge, and the circle gives
+    many viewing angles quickly. Only then does it sweep the fire's path: legs
+    across the wind, soonest-reached ground first, then ground the fire doesn't
+    reach.
+  - **Standoff.** Nothing is flown inside the standoff. When a straight hop
+    would cross it, the drone goes round the fire on a safe circle. Next-look
+    suggestions obey the same limits.
+- **Every example fire.** Demo → *Person search · fire first* runs the same
+  search at UTSC and at each fire in `examples/historical-fires.mjs`. It uses
+  the recorded ignition point, spread direction, wind and weather, and models
+  the fire's first minutes. Spread speed is scaled to 3–6 m/min so the front
+  stays inside a drone-sized search area. The people, hot rock and sector are
+  placed relative to each fire's wind.
+- **Tests.** One test flies all ten scenarios and checks that the fire is
+  searched before the path and the first alert comes while circling it. It also
+  checks that the person at the fire is listed first and the standoff is never
+  entered.
 
 ## Coverage map (observability)
 
@@ -134,10 +154,12 @@ any such phrase in a plan, and the plan record carries it in
 
 ## Demo
 
-**Demo → Person search · simulated multi-view** replays a seeded simulation
-through the same pipeline (`backend/people-sim.mjs`):
+**Demo → Person search · fire first** replays a seeded simulation through the
+same pipeline (`backend/people-sim.mjs`), at UTSC or at any of the example
+fires. It includes:
 
-- A 70 m survey of the sector.
+- A circle round the fire first, then a 70 m survey of its path.
+- A person trapped inside the fire's edge, found while circling it.
 - An injured person who doesn't move, partly hidden from the north-east.
 - A walker who leaves their first spot and reappears; the dashboard notes
   "may be the same person".

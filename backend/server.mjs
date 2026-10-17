@@ -16,7 +16,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PersonSearch, validatePersonObservation, describeLeadsForPlan, MAX_CROP_BYTES } from './people.mjs';
-import { PersonSearchSim } from './people-sim.mjs';
+import { PersonSearchSim, scenarioFromExample } from './people-sim.mjs';
 import {
   ApiError,
   MAX_FRAME_BYTES,
@@ -771,7 +771,7 @@ export function createApp({
     flightEvents: [],
     autoTimer: null,
     peopleSaveTimer: null,
-    demoSim: null,
+    demoSims: new Map(), // scenario id -> PersonSearchSim
   };
   const peopleFile = dataDir ? path.join(dataDir, 'people', 'state.json') : null;
   let people = new PersonSearch(personSearch);
@@ -816,11 +816,21 @@ export function createApp({
     };
   }
 
-  function demoSimAt(t) {
-    const nowMs = now();
-    if (!state.demoSim || t < state.demoSim.t) state.demoSim = new PersonSearchSim({ site, startMs: nowMs - t * 1000 });
-    state.demoSim.advanceTo(t);
-    return state.demoSim;
+  // Simulated person searches: UTSC, or one at each historical fire in examples/.
+  function demoScenario(id) {
+    if (!id || id === 'utsc') return null;
+    const fire = demoFires.find((f) => f.id === id);
+    if (!fire) throw new ApiError(404, 'no demo fire with that id');
+    return scenarioFromExample(fire);
+  }
+  function demoSimAt(t, id = 'utsc') {
+    let sim = state.demoSims.get(id);
+    if (!sim || t < sim.t) {
+      sim = new PersonSearchSim({ site, startMs: now() - t * 1000, scenario: demoScenario(id) });
+      state.demoSims.set(id, sim);
+    }
+    sim.advanceTo(t);
+    return sim;
   }
 
   function requireAuth(req, kind) {
@@ -1450,15 +1460,16 @@ export function createApp({
       await peopleReady;
       const body = await readJson(req);
       if (typeof body.lead_id !== 'string') throw new ApiError(400, 'lead_id is required');
-      const target = body.demo === true ? state.demoSim?.search : people;
+      const demoSim = body.demo === true ? state.demoSims.get(typeof body.scenario === 'string' ? body.scenario : 'utsc') : null;
+      const target = body.demo === true ? demoSim?.search : people;
       if (!target) throw new ApiError(404, 'no demo search is running');
       // The simulation keeps its own clock; stamp demo actions with it so times line up.
-      const atMs = target === people ? now() : state.demoSim.startMs + Math.max(0, state.demoSim.t) * 1000;
+      const atMs = target === people ? now() : demoSim.startMs + Math.max(0, demoSim.t) * 1000;
       const lead = pathname.endsWith('/ack')
         ? target.acknowledge(body.lead_id, { by: body.by, note: body.note }, atMs)
         : target.close(body.lead_id, { by: body.by, outcome: body.outcome, note: body.note }, atMs);
       if (target === people) savePeople();
-      sendJson(res, 200, { lead: target.summarize(lead, now(), body.demo ? state.demoSim.context() : await peopleContext()) });
+      sendJson(res, 200, { lead: target.summarize(lead, now(), body.demo ? demoSim.context() : await peopleContext()) });
       return;
     }
 
@@ -1476,7 +1487,7 @@ export function createApp({
     if (req.method === 'GET' && pathname === '/api/demo/people') {
       requireAuth(req, 'dashboard');
       const t = Math.max(0, Math.min(Number(url.searchParams.get('t')) || 0, 3600));
-      sendJson(res, 200, demoSimAt(t).snapshot());
+      sendJson(res, 200, demoSimAt(t, url.searchParams.get('scenario') || 'utsc').snapshot());
       return;
     }
 

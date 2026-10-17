@@ -123,7 +123,7 @@ function tickPeopleDemo(now) {
   let t = (now - d.started) / 1000 * PEOPLE_DEMO_SPEED;
   if (t > duration + PEOPLE_DEMO_HOLD_S * PEOPLE_DEMO_SPEED) { d.started = now; t = 0; peopleState.listKey = ''; peopleState.covKey = ''; peopleState.seen.clear(); }
   d.lastFetch = now; d.inflight = true;
-  getJson(`/api/demo/people?t=${Math.min(t, duration).toFixed(1)}`).then(snap => { if (peopleDemoActive()) renderPeople(snap); })
+  getJson(`/api/demo/people?t=${Math.min(t, duration).toFixed(1)}&scenario=${encodeURIComponent(state.demo.selected.scenario || 'utsc')}`).then(snap => { if (peopleDemoActive()) renderPeople(snap); })
     .catch(e => toast('Simulated search unavailable: ' + e.message)).finally(() => { d.inflight = false; });
 }
 
@@ -174,7 +174,8 @@ function leadCard(l) {
   const close = l.closed
     ? `<p class="lead-ack closed">Closed by <b>${escapeHTML(l.closed.by)}</b> · ${escapeHTML(CLOSE_OUTCOMES.find(o => o[0] === l.closed.outcome)?.[1] || l.closed.outcome)} · ${fmtTime(l.closed.at)}</p>`
     : `<span class="lead-close"><select data-close-for="${l.id}" aria-label="Close ${escapeHTML(l.title)} with outcome"><option value="">Close lead…</option>${CLOSE_OUTCOMES.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select><button class="button compact" data-action="close" data-id="${l.id}">Close</button></span>`;
-  return `<article class="lead-card ${st.cls}${l.acknowledged ? ' is-ack' : ''}" data-lead="${l.id}">
+  return `<article class="lead-card ${st.cls}${l.acknowledged ? ' is-ack' : ''}${l.atFire ? ' at-fire' : ''}" data-lead="${l.id}">
+    ${l.atFire ? '<p class="at-fire-banner">At the fire · search here first</p>' : ''}
     <header><span class="lead-num">${l.number}</span><div><h3>${escapeHTML(l.title)}</h3><p class="lead-status"><span class="lead-chip">${st.label}</span>${escapeHTML(l.status_text)}</p></div>${viewRose(l)}</header>
     <dl class="lead-facts">
       <div><dt>Location</dt><dd><button class="linkish" data-action="locate" data-id="${l.id}" title="Show on the map">${fmtCoord(l)}</button> <button class="icon-btn" data-action="copy" data-id="${l.id}" aria-label="Copy coordinates" title="Copy coordinates"><svg><use href="#i-link"/></svg></button></dd></div>
@@ -198,16 +199,18 @@ function leadCard(l) {
 function withArrival(leads) {
   return leads.map(l => {
     const arrival = l.closed ? undefined : fireArrivalAt(l.latitude, l.longitude);
-    const reasons = l.priority.reasons.filter(r => !/^fire projected to reach|^inside the projected fire/.test(r));
-    if (arrival === 0) reasons.unshift('inside the projected fire area now');
+    const reasons = l.priority.reasons.filter(r => !/^fire projected to reach|^inside the projected fire|^AT THE FIRE/.test(r));
+    const atFire = arrival === undefined ? l.at_fire : !l.closed && arrival != null && arrival <= 10;
+    if (atFire) reasons.unshift(arrival === 0 || (arrival === undefined && l.fire_arrival?.minutes === 0) ? 'AT THE FIRE: inside the projected fire edge now' : `AT THE FIRE: the front reaches this spot in about ${arrival ?? l.fire_arrival?.minutes} min`);
     else if (arrival != null) reasons.unshift(`fire projected to reach this spot in about ${arrival} min`);
-    return {...l, arrival, reasons};
-  }).sort((a, b) => a.priority.tier - b.priority.tier || (a.arrival ?? 1e9) - (b.arrival ?? 1e9));
+    const tier = atFire ? 0 : l.priority.base_tier ?? l.priority.tier;
+    return {...l, arrival, reasons, atFire, tier};
+  }).sort((a, b) => a.tier - b.tier || (a.arrival ?? 1e9) - (b.arrival ?? 1e9));
 }
 
 function renderLeadList(snap) {
   const leads = withArrival(snap.leads);
-  const key = JSON.stringify(leads.map(l => [l.id, l.status, l.observations, l.acknowledged?.at, l.closed?.at, l.uncertainty.major_95_m, l.movement.status, l.missed_looks, l.next_look?.from, Math.floor(l.last_seen_age_s / 15), l.arrival]));
+  const key = JSON.stringify(leads.map(l => [l.id, l.atFire, l.status, l.observations, l.acknowledged?.at, l.closed?.at, l.uncertainty.major_95_m, l.movement.status, l.missed_looks, l.next_look?.from, Math.floor(l.last_seen_age_s / 15), l.arrival]));
   if (key === peopleState.listKey) return;
   // Don't wipe a half-chosen close outcome out from under the responder.
   if (document.activeElement?.closest?.('#lead-list select')) return;
@@ -248,7 +251,7 @@ function renderPeopleMap(snap) {
     }
     L.polygon(ellipsePoints(l), {color: colour, weight: 1.6, fillColor: colour, fillOpacity: l.closed ? .05 : .16, dashArray: l.views >= 2 ? null : '5 4'}).addTo(lp)
       .bindTooltip(`${escapeHTML(l.title)} · 95% area ±${l.uncertainty.major_95_m} m`);
-    L.marker([l.latitude, l.longitude], {icon: L.divIcon({className: 'lead-pin-wrap', html: `<div class="lead-pin ${st.cls}${l.acknowledged ? ' is-ack' : ''}">${l.number}</div>`, iconSize: [28, 28], iconAnchor: [14, 14]}), zIndexOffset: 500})
+    L.marker([l.latitude, l.longitude], {icon: L.divIcon({className: 'lead-pin-wrap', html: `<div class="lead-pin ${st.cls}${l.acknowledged ? ' is-ack' : ''}${l.at_fire ? ' at-fire' : ''}">${l.number}</div>`, iconSize: [28, 28], iconAnchor: [14, 14]}), zIndexOffset: 500})
       .addTo(lp).on('click', () => focusLead(l.id))
       .bindTooltip(`<b>${escapeHTML(l.title)}</b><br>${escapeHTML(l.status_text)}<br>Last seen ${fmtTime(l.last_seen_at)}`);
     if (l.next_look && !l.closed) {
@@ -272,7 +275,7 @@ function renderPeopleMap(snap) {
         // The simulated fire runs through the same spread model as a live detection.
         sel.lat = snap.fire.latitude; sel.lon = snap.fire.longitude;
         if (snap.fire_model) { sel.details = snap.fire_model.details; state.scenario = {...snap.fire_model.scenario}; }
-        peopleState.listKey = ''; renderSpread();
+        peopleState.listKey = ''; renderSpread(); fitToFire();
       }
     }
   }
@@ -314,18 +317,19 @@ function renderMission(snap) {
   const m = snap.mission;
   let active = null;
   if (m) {
-    active = m.mode === 'revisit' ? 'revisit' : m.mode === 'done' ? 'report' : 'survey';
+    active = m.phase === 'orbit' ? 'fire' : m.mode === 'revisit' ? 'revisit' : m.mode === 'done' ? 'report' : 'survey';
     const latest = m.log[0]?.text || '';
-    if (/^Proposed/.test(latest)) active = 'propose';
+    if (m.phase === 'orbit') { /* searching the fire itself: that step stays lit */ }
+    else if (/^Proposed/.test(latest)) active = 'propose';
     else if (/^Resolved/.test(latest)) active = 'resolve';
     else if (/possible person|Alert sent/.test(latest)) active = 'report';
     log.innerHTML = (m.link === 'down' ? `<li class="link-down"><b>Link down</b> · ${m.stored} observation${m.stored === 1 ? '' : 's'} stored on board</li>` : '')
       + m.log.map(e => `<li><span>${fmtTime(e.at)}</span> ${escapeHTML(e.text)}</li>`).join('');
     const d = snap.drone;
     if (d && peopleDemoActive()) {
-      $('flight-phase').textContent = `Simulated search · ${m.mode}${m.link === 'down' ? ' · link down' : ''}`;
+      $('flight-phase').textContent = `Simulated search · ${m.phase === 'orbit' ? 'searching the fire' : m.mode}${m.link === 'down' ? ' · link down' : ''}`;
       $('flight-bar').style.width = Math.round(snap.t / snap.duration_s * 100) + '%';
-      $('altitude').innerHTML = `${d.altitude_m} <small>m</small>`; $('flight-state').textContent = m.mode === 'revisit' ? 'Revisiting' : m.mode === 'done' ? 'Holding' : 'Surveying';
+      $('altitude').innerHTML = `${d.altitude_m} <small>m</small>`; $('flight-state').textContent = m.phase === 'orbit' ? 'Circling fire' : m.mode === 'revisit' ? 'Revisiting' : m.mode === 'done' ? 'Holding' : 'Surveying path';
       $('ground-speed').innerHTML = `${m.mode === 'done' ? 0 : 9} <small>m/s</small>`;
       drawWaiting('Simulated person search', `${m.mode === 'revisit' ? 'revisiting a candidate' : m.mode} · heading ${d.heading_deg}° · camera ${d.gimbal_pitch_deg}°`);
       $('camera-label').innerHTML = '<i></i> SIMULATED';
@@ -365,7 +369,7 @@ async function onLeadAction(event) {
   if (action === 'copy') { try { await navigator.clipboard.writeText(fmtCoord(l)); toast('Coordinates copied.'); } catch { toast(fmtCoord(l)); } return; }
   const by = $('responder-name').value.trim();
   if (!by) { $('responder-name').focus(); toast('Enter your name or call sign first, so the team knows who has this lead.'); return; }
-  const body = {lead_id: id, by, demo: peopleDemoActive()};
+  const body = {lead_id: id, by, demo: peopleDemoActive(), scenario: state.demo.selected?.scenario};
   if (action === 'close') {
     const outcome = document.querySelector(`select[data-close-for="${CSS.escape(id)}"]`)?.value;
     if (!outcome) { toast('Choose an outcome to close the lead.'); return; }

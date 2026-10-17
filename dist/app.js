@@ -349,7 +349,11 @@ async function toggleDemo() {
   $('incident-eyebrow').textContent = 'DEMO · HISTORICAL CASES'; $('incident-title').textContent = 'Demo replay'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
   $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'demo — live detection paused';
   const sel = $('demo-fire'); sel.hidden = false;
-  sel.innerHTML = '<option value="people">Person search · simulated multi-view</option><option value="flight">ANAFI demo flight pattern · UTSC</option>' + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${escapeHTML(f.startDate.slice(0, 4))}</option>`).join('');
+  const yr = f => escapeHTML(f.startDate.slice(0, 4));
+  sel.innerHTML = '<optgroup label="Person search · fire first (simulated)"><option value="people">UTSC · Highland Creek ravine</option>'
+    + state.demo.fires.map(f => `<option value="people:${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>'
+    + '<optgroup label="Recorded burns"><option value="flight">ANAFI demo flight pattern · UTSC</option>'
+    + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>';
   state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.trail.clearLayers();
   for (const f of state.demo.fires) L.circleMarker([f.lat, f.lon], {radius: 6, color: '#d9480f', weight: 2, fillColor: '#d9480f', fillOpacity: .85}).addTo(state.layers.demo).bindTooltip(f.name).on('click', () => { sel.value = f.id; selectDemo(f.id); });
   selectDemo('people'); sel.value = 'people';
@@ -359,17 +363,20 @@ function selectDemo(id) {
   state.demo.layer?.remove();
   state.demo.layer = L.layerGroup().addTo(state.map);
   stopPeopleDemo();
-  if (id === 'people') {
-    // Simulated search: a fire whose position arrives with the first snapshot; spread grows from it.
-    state.demo.selected = {id: 'people', lat: null, lon: null, areaHa: 3, directionDeg: 225};
-    state.scenario = {...M.BASE, wind: 24, direction: 225}; state.minute = 20;
-    setBanner('demo', '<strong>Demo mode · simulated person search.</strong> A seeded simulation runs through the real lead pipeline: survey, multi-angle revisits, a hot rock that never confirms, and a radio outage with delayed alerts. Nothing here is live.');
-    $('incident-eyebrow').textContent = 'DEMO · SIMULATED SEARCH'; $('incident-title').textContent = 'Person search replay';
-    $('incident-sub').textContent = 'Simulated wildfire person search · 70 m survey, multi-view revisits, a radio outage · seeded, the same every run';
-    $('map-subtitle').textContent = 'Simulated search: rescue leads, observed ground, next looks and the fire';
+  if (id === 'people' || id.startsWith('people:')) {
+    // Simulated search: at UTSC, or at one of the historical fires' ignition points.
+    // The fire's position and conditions arrive with the first snapshot; spread grows from it.
+    const scenarioId = id === 'people' ? 'utsc' : id.slice(7);
+    const fire = state.demo.fires.find(f => f.id === scenarioId);
+    state.demo.selected = {id: 'people', scenario: scenarioId, name: fire?.name ?? 'UTSC · Highland Creek ravine', lat: null, lon: null, areaHa: 3, directionDeg: fire?.directionDeg ?? 225};
+    state.scenario = {...M.BASE, wind: fire?.drivers?.windKmh ?? 24, direction: fire?.directionDeg ?? 225}; state.minute = 20;
+    setBanner('demo', `<strong>Demo mode · simulated person search${fire ? ` at ${escapeHTML(fire.name)}` : ''}.</strong> The fire is searched first: the drone circles it outside the standoff with the camera on its edge, then sweeps its path, soonest-reached ground first. A hot rock never confirms, and a radio outage delays some alerts. ${fire ? 'Recorded location, wind and weather; spread speed scaled to a drone-sized area. ' : ''}Nothing here is live.`);
+    $('incident-eyebrow').textContent = 'DEMO · SIMULATED SEARCH'; $('incident-title').textContent = fire ? `Person search · ${fire.name}` : 'Person search replay';
+    $('incident-sub').textContent = fire ? `${fire.region} · ignition point of the ${fire.startDate.slice(0, 4)} fire · first minutes, simulated` : 'Simulated wildfire person search at UTSC · seeded, the same every run';
+    $('map-subtitle').textContent = 'Fire searched first, then its path: rescue leads, observed ground, next looks';
+    $('map-location').textContent = fire ? fire.name : 'UTSC · Highland Creek ravine';
     startPeopleDemo();
-    state.map.setView([state.site.latitude - .0012, state.site.longitude + .0018], 17);
-    setTimeout(() => { if (peopleDemoActive()) fitToFire(); }, 1500);
+    if (fire) state.map.setView([fire.lat, fire.lon], 16); else state.map.setView([state.site.latitude - .0012, state.site.longitude + .0018], 17);
     renderSpread(); return;
   }
   setBanner('demo', '<strong>Demo mode.</strong> Recorded historical fires from <code>examples/</code> and a replay of the ANAFI demo flight pattern. Live data resumes when you exit.');
@@ -401,7 +408,7 @@ function selectDemo(id) {
 }
 
 function exitDemo() {
-  stopPeopleDemo();
+  stopPeopleDemo(); $('map-location').textContent = state.site.name;
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.layers.demo.clearLayers(); state.map.closePopup();
   $('demo-toggle').innerHTML = 'Demo <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
   $('map-pill').textContent = 'Live'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
@@ -444,7 +451,7 @@ async function pollFlight() { state.flight = await getJson('/api/flight'); rende
 async function pollAnalysis() { const m = await getJson('/api/analysis/latest'); state.analysisMeta = m; if (typeof m.analysis?.summary === 'string') state.analysis = m.analysis; renderAnalysis(); }
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
-  const s = state.status; state.site = s.site || state.site; $('map-location').textContent = state.site.name;
+  const s = state.status; state.site = s.site || state.site; if (state.mode !== 'demo') $('map-location').textContent = state.site.name;
   $('parrot-status').textContent = s.video?.available && s.video.age_ms < 3000 ? `Live · ${Math.round(s.video.fps)} fps` : s.telemetry?.available ? 'Telemetry only' : 'Waiting';
   $('tiger-status').textContent = s.storage?.status === 'postgres' ? 'Connected' : s.storage?.status === 'postgres-unavailable' ? 'Unavailable' : 'Memory only';
   $('gemini-status').textContent = !s.gemini?.configured ? 'Not configured' : s.gemini.last_error && (!s.gemini.last_ok_at || s.gemini.last_error_at > s.gemini.last_ok_at) ? 'Cannot connect' : s.gemini.last_ok_at ? 'Connected' : `Ready · ${s.gemini.model}`;

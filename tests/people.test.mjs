@@ -4,7 +4,8 @@ import http from 'node:http';
 import {
   PersonSearch, geolocate, rayToGround, projectToImage, ellipse95, validatePersonObservation, toLocal, toLatLon,
 } from '../backend/people.mjs';
-import { PersonSearchSim, SIM_DURATION_S, SIM_FIRE_DETAILS } from '../backend/people-sim.mjs';
+import { PersonSearchSim, SIM_DURATION_S, SIM_FIRE_DETAILS, scenarioFromExample } from '../backend/people-sim.mjs';
+import { FIRES } from '../examples/historical-fires.mjs';
 import { fireArrival, FIRE_STANDOFF_MIN } from '../backend/people.mjs';
 import { createApp, MemoryStorage, findUnsafeWording } from '../backend/server.mjs';
 
@@ -192,6 +193,51 @@ test('the simulated survey flies the fire\'s path first and never enters the sta
   }
 });
 
+test('a lead at the fire outranks everything, even a stronger lead further away', () => {
+  const s = new PersonSearch();
+  const place = (bearing, dist, de = 0, dn = -60, t = 0) => {
+    const [lat, lon] = EM.destPoint(FIRE_O[0], FIRE_O[1], bearing, dist);
+    const [e, n] = toLocal(REF, lat, lon);
+    return obsOf(e, n, { de: e + de, dn: n + dn, t });
+  };
+  // A well-confirmed person 400 m down the path (two angles)...
+  s.addObservation(place(225, 400, 0, -60, 0), T0);
+  s.addObservation(place(225, 400, 60, 0, 5), T0 + 5000);
+  // ...and a one-angle candidate inside the fire's edge.
+  s.addObservation(place(90, 30, 0, -80, 6), T0 + 6000);
+  const leads = s.snapshot(T0 + 7000, { fire: { latitude: FIRE_O[0], longitude: FIRE_O[1] }, spread }).leads;
+  assert.equal(leads[0].at_fire, true);
+  assert.equal(leads[0].priority.tier, 0);
+  assert.equal(leads[0].status, 'needs-another-view');
+  assert.match(leads[0].priority.reasons[0], /^AT THE FIRE/);
+  assert.equal(leads[1].status, 'possible-person');
+});
+
+test('every example fire: the search starts at the fire, keeps the standoff, and puts the person at the fire first', () => {
+  for (const scenario of [null, ...FIRES.map(scenarioFromExample)]) {
+    const name = scenario?.name ?? 'UTSC';
+    const sim = new PersonSearchSim({ site: { latitude: 43.7866, longitude: -79.1903 }, startMs: T0, scenario });
+    let orbitDoneAt = null;
+    for (let t = 0; t <= SIM_DURATION_S; t++) {
+      sim.advanceTo(t);
+      assert.equal(sim.excluded(...sim.pos), false, `${name}: drone inside the standoff at t=${t}`);
+      if (sim.phase === 'legs') orbitDoneAt ??= t;
+    }
+    const snap = sim.snapshot();
+    const firstLegLog = sim.log.findIndex((e) => /Survey leg 1 /.test(e.text));
+    const fireDone = sim.log.findIndex((e) => /Fire area searched/.test(e.text));
+    assert.ok(fireDone >= 0 && (firstLegLog < 0 || fireDone < firstLegLog), `${name}: fire searched before the path`);
+    const firstAlert = sim.log.find((e) => /possible person/.test(e.text));
+    assert.ok(firstAlert && firstAlert.t < orbitDoneAt, `${name}: the first alert comes while circling the fire`);
+    assert.equal(snap.leads[0].at_fire, true, `${name}: the person at the fire is listed first`);
+    assert.equal(snap.scenario.id, scenario?.id ?? 'utsc');
+    if (scenario) {
+      const d = Math.hypot(...toLocal({ lat: scenario.latitude, lon: scenario.longitude }, snap.fire.latitude, snap.fire.longitude));
+      assert.ok(d < 1, `${name}: simulated fire sits on the recorded ignition point (${d.toFixed(2)} m off)`);
+    }
+  }
+});
+
 // ------------------------------------------------------------------ HTTP
 
 const INGEST = 'ingest-token-aaa', DASH = 'dashboard-token-bbb', ORIGIN = 'http://127.0.0.1:8787';
@@ -224,6 +270,7 @@ test('person ingest, lead listing, acknowledgement and the demo endpoint over HT
     const demo = await call(base, '/api/demo/people?t=120');
     assert.equal(demo.body.simulated, true);
     assert.ok(demo.body.leads.length >= 1);
+    assert.equal((await call(base, '/api/demo/people?t=10&scenario=no-such-fire')).status, 404);
   } finally {
     srv.close();
   }
