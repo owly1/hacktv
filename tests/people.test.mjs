@@ -4,7 +4,8 @@ import http from 'node:http';
 import {
   PersonSearch, geolocate, rayToGround, projectToImage, ellipse95, validatePersonObservation, toLocal, toLatLon,
 } from '../backend/people.mjs';
-import { PersonSearchSim, SIM_DURATION_S } from '../backend/people-sim.mjs';
+import { PersonSearchSim, SIM_DURATION_S, SIM_FIRE_DETAILS } from '../backend/people-sim.mjs';
+import { fireArrival, FIRE_STANDOFF_MIN } from '../backend/people.mjs';
 import { createApp, MemoryStorage, findUnsafeWording } from '../backend/server.mjs';
 
 const REF = { lat: 43.78, lon: -79.19 };
@@ -141,6 +142,54 @@ test('the simulated search confirms people from several angles and does not conf
   assert.ok(snap.leads.some((l) => l.delayed.any), 'outage produced delayed alerts');
   assert.ok(snap.coverage.sector.well_pct > 30);
   assert.ok(snap.mission.log.length > 5);
+});
+
+// ------------------------------------------------------------- fire-aware
+
+const EM = globalThis.EmberModel;
+const FIRE_O = [43.7840, -79.1880];
+const spread = { origin: FIRE_O, scenario: EM.scenarioFrom(SIM_FIRE_DETAILS), details: SIM_FIRE_DETAILS };
+
+test('fire arrival: inside now is 0, downwind is sooner than crosswind, upwind never', () => {
+  const at = (bearing, dist) => fireArrival(spread, ...EM.destPoint(FIRE_O[0], FIRE_O[1], bearing, dist));
+  assert.equal(at(0, 0), 0);
+  const downwind = at(225, 200), crosswind = at(315, 200);
+  assert.ok(downwind > 0 && downwind < 60, `downwind ${downwind}`);
+  assert.ok(crosswind == null || crosswind > downwind, `crosswind ${crosswind}`);
+  assert.equal(at(45, 200), null);
+});
+
+test('leads carry projected fire arrival and the sooner one ranks first within a tier', () => {
+  const s = new PersonSearch();
+  const ref = { lat: FIRE_O[0], lon: FIRE_O[1] };
+  const place = (bearing, dist, t) => {
+    const [lat, lon] = EM.destPoint(FIRE_O[0], FIRE_O[1], bearing, dist);
+    const [e, n] = toLocal(REF, lat, lon);
+    return obsOf(e, n, { de: e, dn: n - 60, t });
+  };
+  s.addObservation(place(225, 400, 0), T0);   // later
+  s.addObservation(place(225, 150, 1), T0 + 1000); // sooner
+  const leads = s.snapshot(T0 + 2000, { fire: { latitude: ref.lat, longitude: ref.lon }, spread }).leads;
+  assert.ok(leads[0].fire_arrival.minutes < leads[1].fire_arrival.minutes);
+  assert.match(leads[0].priority.reasons.join(' '), /fire projected to reach this spot in about \d+ min/);
+});
+
+test('the simulated survey flies the fire\'s path first and never enters the standoff', () => {
+  const sim = new PersonSearchSim({ site: { latitude: 43.7866, longitude: -79.1903 }, startMs: T0 });
+  const arrivals = sim.legs.map((l) => l.arrival).filter((a) => a != null);
+  assert.ok(arrivals.length >= 3);
+  assert.deepEqual(arrivals, [...arrivals].sort((a, b) => a - b), 'legs ordered by fire arrival');
+  for (let t = 0; t <= SIM_DURATION_S; t++) {
+    sim.advanceTo(t);
+    assert.equal(sim.excluded(...sim.pos), false, `drone inside the standoff at t=${t}`);
+  }
+  const snap = sim.snapshot();
+  assert.ok(snap.track.some((p) => p[2] === 'path'), 'trail marks time over the fire path');
+  for (const l of snap.leads) {
+    if (!l.next_look) continue;
+    const a = fireArrival(snap.fire_model, l.next_look.latitude, l.next_look.longitude);
+    assert.ok(a == null || a >= FIRE_STANDOFF_MIN, `next look for Target ${l.number} is ${a} min from the fire`);
+  }
 });
 
 // ------------------------------------------------------------------ HTTP

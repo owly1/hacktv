@@ -16,6 +16,8 @@
  * labels ground or a route as safe. A responder acknowledges every lead.
  */
 import { ApiError, parseIsoTimestamp } from './validation.mjs';
+import '../dist/model.js'; // the dashboard's spread model, shared so both project the same fire
+const EM = globalThis.EmberModel;
 
 export const M_PER_DEG = 111_320;
 const RAD = Math.PI / 180;
@@ -46,6 +48,17 @@ const MIN_LOOK_DEPRESSION_DEG = 15;        // grazing looks don't see under cano
 const LOOK_GAP_MS = 8_000;                 // a look counts as "not seen" only this long after the last sighting
 const LOOK_INTERVAL_MS = 5_000;
 export const NOT_RESEEN_LOOKS = 3;
+export const FIRE_STANDOFF_MIN = 10;       // never suggest flying over ground the fire reaches this soon
+export const FIRE_PATH_MIN = 60;           // "in the fire's path" for trail colouring
+
+/**
+ * Minutes until the projected fire covers a point, from a spread context
+ * { origin: [lat, lon], scenario, details }. 0 = inside now, null = not within 3 h.
+ */
+export function fireArrival(spread, lat, lon) {
+  if (!spread?.origin) return undefined;
+  return EM.arrivalMinutes(spread.origin, [lat, lon], spread.scenario, spread.details);
+}
 export const DELAYED_MS = 15_000;          // received this long after capture -> delayed alert
 export const STORE_FORWARD_MAX_MS = 6 * 3600_000;
 const MAX_OBS_PER_LEAD = 200;
@@ -482,7 +495,7 @@ export class PersonSearch {
    * single-view candidate, a genuinely new angle) minus flight time minus
    * exposure to the fire. Suggestions only — the pilot decides.
    */
-  nextLook(lead, { fire = null, pose = this.lastPose } = {}) {
+  nextLook(lead, { fire = null, spread = null, pose = this.lastPose } = {}) {
     if (lead.closed || !lead.fused) return null;
     const views = viewClusters(lead.observations.map((o) => o.view_az_deg));
     const needsAngle = views.span < DISTINCT_VIEW_DEG;
@@ -506,6 +519,8 @@ export class PersonSearch {
       const fireDist = fireLocal ? Math.hypot(ve - fireLocal[0], vn - fireLocal[1]) : Infinity;
       if (fireDist < 40) continue; // hard limit: never suggest hovering over the fire
       const [vlat, vlon] = toLatLon(this.ref, ve, vn);
+      const arrives = fireArrival(spread, vlat, vlon);
+      if (arrives != null && arrives < FIRE_STANDOFF_MIN) continue; // inside or about to be: smoke and heat
       let predicted;
       try {
         predicted = geolocate({
@@ -575,6 +590,9 @@ export class PersonSearch {
     if (sensors.length > 1) reasons.push('seen in thermal and visible');
     if (movement.status === 'stationary' && multiView) reasons.push(`not moving for ${fmtSpan(movement.span_s)} — may be unable to move or call for help`);
     if (movement.status === 'moving') reasons.push('moving — likely able to self-evacuate, keep tracking');
+    const arrival = lead.closed ? undefined : fireArrival(ctx.spread, lat, lon);
+    if (arrival === 0) reasons.push('inside the projected fire area now');
+    else if (arrival != null) reasons.push(`fire projected to reach this spot in about ${arrival} min`);
     if (fireDist != null && fireDist < 300) reasons.push(`${fireDist} m from the detected fire`);
     if (obs.some((o) => o.delayed)) reasons.push('includes delayed observations');
     // Another lead this one could be: it was last seen within walking reach of where this one first appeared.
@@ -613,6 +631,7 @@ export class PersonSearch {
       missed_looks: lead.missed_looks,
       delayed: { any: obs.some((o) => o.delayed), max_delay_s: Math.max(0, ...obs.map((o) => o.delay_s)) },
       fire_distance_m: fireDist,
+      fire_arrival: arrival === undefined ? null : { minutes: arrival, basis: 'spread model projection at the reported conditions; an estimate, not a forecast' },
       priority: { tier, reasons },
       acknowledged: lead.ack,
       closed: lead.closed,
@@ -662,7 +681,8 @@ export class PersonSearch {
 
   snapshot(nowMs, ctx = {}) {
     const leads = [...this.leads.values()].filter((l) => l.fused).map((l) => this.summarize(l, nowMs, ctx))
-      .sort((a, b) => a.priority.tier - b.priority.tier || (a.fire_distance_m ?? 1e9) - (b.fire_distance_m ?? 1e9) || b.last_seen_at.localeCompare(a.last_seen_at));
+      // Within a tier: whoever the fire reaches first, then nearest the fire, then most recent.
+      .sort((a, b) => a.priority.tier - b.priority.tier || arrivalKey(a) - arrivalKey(b) || (a.fire_distance_m ?? 1e9) - (b.fire_distance_m ?? 1e9) || b.last_seen_at.localeCompare(a.last_seen_at));
     return {
       generated_at: new Date(nowMs).toISOString(),
       leads,
@@ -690,6 +710,7 @@ export class PersonSearch {
   }
 }
 
+const arrivalKey = (l) => l.fire_arrival?.minutes ?? 1e9;
 const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
 function fmtSpan(s) { return s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`; }
 
@@ -698,5 +719,5 @@ export function describeLeadsForPlan(snapshot) {
   const open = snapshot.leads.filter((l) => !l.closed);
   if (!open.length) return 'Person search: no open rescue leads.';
   return 'Person search rescue leads (positions are 95% ellipses from the error model, not confidence scores): '
-    + open.slice(0, 8).map((l) => `${l.title} at ${l.latitude}, ${l.longitude} ±${l.uncertainty.major_95_m} m; ${l.status_text}; movement: ${l.movement.status}; last seen ${l.last_seen_at}${l.acknowledged ? `; acknowledged by ${l.acknowledged.by}` : '; NOT yet acknowledged'}${l.fire_distance_m != null ? `; ${l.fire_distance_m} m from the fire` : ''}.`).join(' ');
+    + open.slice(0, 8).map((l) => `${l.title} at ${l.latitude}, ${l.longitude} ±${l.uncertainty.major_95_m} m; ${l.status_text}; movement: ${l.movement.status}; last seen ${l.last_seen_at}${l.acknowledged ? `; acknowledged by ${l.acknowledged.by}` : '; NOT yet acknowledged'}${l.fire_distance_m != null ? `; ${l.fire_distance_m} m from the fire` : ''}${l.fire_arrival?.minutes != null ? `; fire projected to reach it in about ${l.fire_arrival.minutes} min` : ''}.`).join(' ');
 }

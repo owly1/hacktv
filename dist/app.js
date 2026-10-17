@@ -80,7 +80,7 @@ function initMap() {
   tiles.on('tileerror', () => { state.tileErrors++; if (!state.tilesOk && state.tileErrors >= 4) { $('map-viewport').classList.add('tiles-offline'); renderMapChip(); } });
   tiles.addTo(map);
   for (const name of ['spread', 'wind', 'fire', 'drone', 'demo']) state.layers[name] = L.layerGroup().addTo(map);
-  state.layers.path = L.polyline([], {color: '#2F8F8A', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
+  state.layers.trail = L.layerGroup().addTo(state.layers.drone); // drone trail, coloured by what it was doing about the fire
   state.droneMarker = L.marker([state.site.latitude, state.site.longitude], {icon: L.divIcon({className: 'drone-icon-wrap', html: '<div class="drone-icon"><span>▲</span></div>', iconSize: [30, 30], iconAnchor: [15, 15]}), keyboard: false, opacity: 0}).addTo(state.layers.drone).bindTooltip('ANAFI-01');
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
   peopleInitMap();
@@ -101,9 +101,16 @@ function renderDrone() {
   state.droneMarker.setLatLng(ll).setOpacity(1);
   const el = state.droneMarker.getElement()?.querySelector('.drone-icon');
   if (el) el.style.transform = `rotate(${t.extra?.heading_deg ?? 0}deg)`;
-  state.layers.path.setLatLngs(state.flight.path.map(p => [p.latitude, p.longitude]));
+  drawTrail(state.layers.trail, liveTrail(state.flight.path));
   if (!state.centredOnDrone) { state.centredOnDrone = true; if (!activeFire()) state.map.setView(ll, 19); }
 }
+
+/* Detection details driving the spread model: the live detection, or the simulated search's fire. */
+function fireDetails() {
+  if (state.mode === 'demo') return state.demo.selected?.id === 'people' ? state.demo.selected.details ?? null : null;
+  return activeFire()?.latest.details ?? null;
+}
+const modelledFire = () => state.mode === 'live' ? !!activeFire() : !!(state.demo.selected?.id === 'people' && state.demo.selected.details);
 
 function origin() {
   if (state.mode === 'demo') { const f = state.demo.selected; return f && f !== 'flight' && f.lat != null ? [f.lat, f.lon] : null; }
@@ -120,13 +127,13 @@ function renderSpread() {
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? 'select a fire' : 'no fire detected'; return; }
   let outline, ring = scale => [];
-  if (state.mode === 'demo') {
+  if (state.mode === 'demo' && !modelledFire()) {
     // Demo: replay the recorded burn growing from its ignition point over the timeline.
     const f = state.demo.selected, k = Math.sqrt(.03 + .97 * t / 60), rec = M.recordedPerimeter(f);
     ring = scale => rec.map(p => [o[0] + (p[0] - o[0]) * k * scale, o[1] + (p[1] - o[1]) * k * scale]);
     outline = ring(1);
   } else {
-    const details = activeFire().latest.details;
+    const details = fireDetails();
     ring = scale => M.footprint(o, t, sc, details, scale);
     outline = ring(1);
     L.polygon(M.footprint(o, 0, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip('Fire now');
@@ -135,7 +142,7 @@ function renderSpread() {
   const area = M.areaHa(outline);
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
   $('area-context').textContent = t < .5 ? 'now' : `projected at +${Math.round(t)} min`;
-  const reach = state.mode === 'demo' ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, activeFire().latest.details);
+  const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
   L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), M.destPoint(o[0], o[1], sc.direction, reach)], {color: '#4E6A70', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
 }
 
@@ -153,7 +160,7 @@ function fitToFire() {
   if (peopleDemoActive() && fitPeople()) return;
   const o = origin(); if (!o) { const t = state.telemetry; if (t?.latitude != null) state.map.setView([t.latitude, t.longitude], 19); else state.map.setView([state.site.latitude, state.site.longitude], 17); return; }
   state.map.invalidateSize();
-  const pts = state.mode === 'demo' ? M.recordedPerimeter(state.demo.selected) : M.footprint(o, 30, state.scenario, activeFire().latest.details);
+  const pts = !modelledFire() ? M.recordedPerimeter(state.demo.selected) : M.footprint(o, 30, state.scenario, fireDetails());
   state.map.fitBounds(L.latLngBounds(pts).pad(.15), {maxZoom: 20});
 }
 
@@ -343,7 +350,7 @@ async function toggleDemo() {
   $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'demo — live detection paused';
   const sel = $('demo-fire'); sel.hidden = false;
   sel.innerHTML = '<option value="people">Person search · simulated multi-view</option><option value="flight">ANAFI demo flight pattern · UTSC</option>' + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${escapeHTML(f.startDate.slice(0, 4))}</option>`).join('');
-  state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.path.setLatLngs([]);
+  state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.trail.clearLayers();
   for (const f of state.demo.fires) L.circleMarker([f.lat, f.lon], {radius: 6, color: '#d9480f', weight: 2, fillColor: '#d9480f', fillOpacity: .85}).addTo(state.layers.demo).bindTooltip(f.name).on('click', () => { sel.value = f.id; selectDemo(f.id); });
   selectDemo('people'); sel.value = 'people';
 }
@@ -471,7 +478,7 @@ function bindUi() {
   $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'Started from the conditions reported with the detected fire. Adjust them to see how the spread changes.' : 'These conditions drive the projected spread on the map.'; openDialog('scenario-dialog'); };
   for (const [id, key] of [['wind-input', 'wind'], ['direction-input', 'direction'], ['dry-input', 'dryness'], ['temp-input', 'temp'], ['rh-input', 'rh']]) $(id).oninput = () => { pending[key] = +$(id).value; scenarioControls(pending); };
   $('reset-scenario').onclick = () => { pending = {...(state.detectedScenario || M.BASE)}; scenarioControls(pending); };
-  $('apply-scenario').onclick = () => { state.scenario = {...pending}; markPlanDirty(); renderSpread(); $('scenario-dialog').close(); };
+  $('apply-scenario').onclick = () => { state.scenario = {...pending}; markPlanDirty(); renderSpread(); refreshFireTiming(); $('scenario-dialog').close(); };
   $('play').onclick = () => { state.playing = !state.playing; setPlayButton(); };
   $('speed').onclick = () => { state.speed = state.speed === 4 ? 1 : state.speed * 2; $('speed').textContent = state.speed + '×'; };
   $('timeline').oninput = () => { state.playing = false; setPlayButton(); state.minute = +$('timeline').value; renderSpread(); };

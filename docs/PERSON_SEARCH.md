@@ -69,6 +69,33 @@ suggested. A possible person unseen for 90 s gets a **re-check** suggestion.
 The weights are tunable and are stated here so nobody mistakes them for
 measurements.
 
+## Fire-aware search
+
+The spread model in `dist/model.js` also runs on the backend, so the dashboard
+and the planner project the same fire. `arrivalMinutes` returns when the
+projected outline first covers a point:
+
+- **0:** the point is inside the fire now.
+- **null:** the fire doesn't reach it within 3 h.
+
+These are projections at the stated conditions, not forecasts.
+
+- **Leads show when the fire reaches them.** Each card shows "Fire projected
+  here in about N min". The dashboard recomputes it whenever the Conditions
+  change. Within a priority tier, the lead the fire reaches first comes first.
+  Gemini plans receive the same figures.
+- **The drone trail is coloured by purpose.** Each trail point is classed from
+  the drone's position, heading and camera tilt:
+  - **Ember:** the camera was on the fire.
+  - **Amber:** the centre of the view was on ground the fire reaches within
+    60 min.
+  - **Teal:** elsewhere.
+- **The simulated survey follows the fire.** Its legs run across the wind and
+  are ordered by projected arrival, soonest first. Ground the fire doesn't reach
+  comes last. Nothing is flown within 60 m of the fire's edge or over ground it
+  reaches within 10 min. Next-look suggestions obey the same 10-minute limit.
+  A test flies the whole simulation and checks that the drone never breaks it.
+
 ## Coverage map (observability)
 
 Every telemetry pose projects the camera footprint onto a grid of 5 m cells.
@@ -120,6 +147,7 @@ through the same pipeline (`backend/people-sim.mjs`):
 ## Not done yet
 
 - No elevation model: terrain is flat at take-off height unless `terrain_m` is sent.
+- Fire arrival uses the simple ellipse spread model: no terrain slope, fuel map or spotting.
 - Leads are stored as a JSON file, not in TigerData. Adding tables needs `npm run db:init`.
 - No airborne optical sectioning (integrating thermal frames through canopy).
 - No breathing radar. It would only ever be an optional research layer.

@@ -149,7 +149,8 @@ export class MemoryStorage {
     return this.telemetry
       .filter((s) => Date.parse(s.observed_at) >= sinceMs && s.latitude != null)
       .slice(-limit)
-      .map((s) => ({ t: s.observed_at, latitude: s.latitude, longitude: s.longitude, altitude_m: s.altitude_m }));
+      .map((s) => ({ t: s.observed_at, latitude: s.latitude, longitude: s.longitude, altitude_m: s.altitude_m,
+        heading_deg: s.extra?.heading_deg ?? null, gimbal_pitch_deg: s.extra?.gimbal_pitch_deg ?? null }));
   }
   async insertAnalysis(record) {
     this.analyses.push(record);
@@ -246,8 +247,11 @@ export class PgStorage {
   }
   async flightPath({ sinceMs, limit = 600 }) {
     const rows = await this.q(
-      `SELECT observed_at, latitude, longitude, altitude_m FROM (
-         SELECT observed_at, latitude, longitude, altitude_m FROM telemetry
+      `SELECT observed_at, latitude, longitude, altitude_m, heading_deg, gimbal_pitch_deg FROM (
+         SELECT observed_at, latitude, longitude, altitude_m,
+                (payload->'extra'->>'heading_deg')::float8 AS heading_deg,
+                (payload->'extra'->>'gimbal_pitch_deg')::float8 AS gimbal_pitch_deg
+         FROM telemetry
          WHERE observed_at >= $1 AND latitude IS NOT NULL
          ORDER BY observed_at DESC LIMIT $2) recent
        ORDER BY observed_at`,
@@ -255,6 +259,7 @@ export class PgStorage {
     );
     return rows.map((r) => ({
       t: new Date(r.observed_at).toISOString(), latitude: r.latitude, longitude: r.longitude, altitude_m: r.altitude_m,
+      heading_deg: r.heading_deg, gimbal_pitch_deg: r.gimbal_pitch_deg,
     }));
   }
   async insertAnalysis(record) {
@@ -799,10 +804,16 @@ export function createApp({
     return true;
   }
 
-  async function fireContext() {
+  // Fire context for the person search: where the fire is, and how it is projected to spread.
+  async function peopleContext() {
     const incident = await activeIncident().catch(() => null);
     const f = incident?.active ? incident.latest?.fire : null;
-    return f?.latitude != null ? { latitude: f.latitude, longitude: f.longitude } : null;
+    if (f?.latitude == null) return { fire: null, spread: null };
+    const details = incident.latest.details ?? null;
+    return {
+      fire: { latitude: f.latitude, longitude: f.longitude },
+      spread: { origin: [f.latitude, f.longitude], scenario: globalThis.EmberModel.scenarioFrom(details), details },
+    };
   }
 
   function demoSimAt(t) {
@@ -1352,7 +1363,7 @@ export function createApp({
           : 'No fire is currently detected by the drone; plan for readiness and surveillance.' },
         { text: `Scenario conditions: ${JSON.stringify(scenario)}. Projected spread: ${JSON.stringify(projection)}.` },
         { text: `Latest drone telemetry: ${JSON.stringify(telemetry)}.` },
-        { text: describeLeadsForPlan(people.snapshot(nowMs, { fire: await fireContext() })) },
+        { text: describeLeadsForPlan(people.snapshot(nowMs, await peopleContext())) },
         { text: `Latest Gemini scene analysis: ${JSON.stringify(analyses[0] ? {
           summary: analyses[0].summary, severity: analyses[0].severity, spread_outlook: analyses[0].spread_outlook,
         } : null)}.` },
@@ -1405,7 +1416,7 @@ export function createApp({
       const result = people.addObservation(obs, nowMs);
       if (!result.duplicate && crop && await saveCrop(result.observation.id, crop)) people.attachCrop(result.observation.id);
       savePeople();
-      const summary = people.summarize(result.lead, nowMs, { fire: await fireContext() });
+      const summary = people.summarize(result.lead, nowMs, await peopleContext());
       sendJson(res, 200, {
         accepted: true, duplicate: result.duplicate, obs_id: result.observation?.id ?? obs.obs_id,
         lead_id: summary.id, lead_number: summary.number, new_lead: Boolean(result.new_lead), status: summary.status,
@@ -1430,7 +1441,7 @@ export function createApp({
     if (req.method === 'GET' && pathname === '/api/people') {
       requireAuth(req, 'dashboard');
       await peopleReady;
-      sendJson(res, 200, { simulated: false, ...people.snapshot(now(), { fire: await fireContext() }) });
+      sendJson(res, 200, { simulated: false, ...people.snapshot(now(), await peopleContext()) });
       return;
     }
 
@@ -1447,7 +1458,7 @@ export function createApp({
         ? target.acknowledge(body.lead_id, { by: body.by, note: body.note }, atMs)
         : target.close(body.lead_id, { by: body.by, outcome: body.outcome, note: body.note }, atMs);
       if (target === people) savePeople();
-      sendJson(res, 200, { lead: target.summarize(lead, now(), { fire: body.demo ? state.demoSim.fireLL() : await fireContext() }) });
+      sendJson(res, 200, { lead: target.summarize(lead, now(), body.demo ? state.demoSim.context() : await peopleContext()) });
       return;
     }
 

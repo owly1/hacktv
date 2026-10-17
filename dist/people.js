@@ -16,6 +16,68 @@ const LEAD_STATUS = {
 const CLOSE_OUTCOMES = [['found', 'Person found / reached'], ['not-a-person', 'Not a person'], ['duplicate', 'Duplicate of another lead'], ['handed-off', 'Handed off to another team']];
 const peopleState = {snap: null, listKey: '', covKey: '', demo: null, seen: new Set(), crops: new Map(), focus: null};
 
+const TRAIL = {fire: {color: '#E8562A', label: 'camera on the fire'}, path: {color: '#D9921E', label: "over the fire's 60-min path"}, other: {color: '#2F8F8A', label: 'elsewhere'}};
+const CAMERA_HFOV = 69, CAMERA_VFOV = 2 * Math.atan(Math.tan(CAMERA_HFOV * Math.PI / 360) / (16 / 9)) * 180 / Math.PI;
+const trailCache = new Map();
+
+/* Minutes until the projected fire reaches a point, at the conditions on the map now.
+   undefined = no modelled fire; null = not within 3 h; 0 = inside the fire now. */
+function fireArrivalAt(lat, lon) {
+  const o = origin();
+  if (!o || !modelledFire()) return undefined;
+  return M.arrivalMinutes(o, [lat, lon], state.scenario, fireDetails());
+}
+function arrivalText(min) {
+  if (min === undefined) return '';
+  if (min === 0) return 'Inside the projected fire area now';
+  if (min === null) return 'Not in the projected path within 3 h';
+  return `Fire projected here in about ${min} min`;
+}
+
+/* What the camera was doing at one live trail point: looking at the fire, looking at
+   ground the fire is projected to reach within 60 min, or neither. */
+function liveTrailClass(p) {
+  const o = origin();
+  if (!o || !modelledFire() || p.heading_deg == null || p.gimbal_pitch_deg == null || !(p.altitude_m > 0.5)) return 'other';
+  const key = `${p.t}|${o}|${JSON.stringify(state.scenario)}`;
+  if (trailCache.has(key)) return trailCache.get(key);
+  const kx = 111320 * Math.cos(p.latitude * Math.PI / 180), dn = (o[0] - p.latitude) * 111320, de = (o[1] - p.longitude) * kx;
+  const off = ((Math.atan2(de, dn) * 180 / Math.PI - p.heading_deg) % 360 + 540) % 360 - 180;
+  const dep = Math.atan2(p.altitude_m, Math.hypot(de, dn)) * 180 / Math.PI;
+  let cls = 'other';
+  if (Math.abs(off) <= CAMERA_HFOV / 2 && Math.abs(dep + p.gimbal_pitch_deg) <= CAMERA_VFOV / 2) cls = 'fire';
+  else if (-p.gimbal_pitch_deg >= 3) {
+    const g = M.destPoint(p.latitude, p.longitude, p.heading_deg, p.altitude_m / Math.tan(-p.gimbal_pitch_deg * Math.PI / 180));
+    const a = M.arrivalMinutes(o, g, state.scenario, fireDetails());
+    if (a != null && a <= 60) cls = 'path';
+  }
+  if (trailCache.size > 5000) trailCache.clear();
+  trailCache.set(key, cls);
+  return cls;
+}
+function liveTrail(path) { return path.map(p => [p.latitude, p.longitude, liveTrailClass(p)]); }
+
+/* Draw a trail as runs of one colour; adjacent runs share their joining point. */
+function drawTrail(layer, pts) {
+  layer.clearLayers();
+  let run = [];
+  const flush = () => { if (run.length > 1) { const c = TRAIL[run.cls] || TRAIL.other; L.polyline(run, {color: c.color, weight: run.cls === 'other' ? 2 : 3.5, opacity: run.cls === 'other' ? .7 : .95, dashArray: run.cls === 'other' ? '4 5' : null, interactive: false}).addTo(layer); } };
+  for (const [lat, lon, cls = 'other'] of pts) {
+    if (run.length && run.cls !== cls) { flush(); const last = run.at(-1); run = [last]; }
+    run.cls = cls; run.push([lat, lon]);
+  }
+  flush();
+  const legend = $('trail-legend');
+  if (legend) legend.hidden = !pts.some(p => p[2] === 'fire' || p[2] === 'path');
+}
+
+/* Conditions changed: lead arrival times and the trail colouring change with them. */
+function refreshFireTiming() {
+  peopleState.listKey = ''; trailCache.clear();
+  if (peopleState.snap) renderPeople(peopleState.snap);
+  if (state.mode === 'live') renderDrone();
+}
+
 function peopleLL(ref, e, n) { return [ref.lat + n / 111320, ref.lon + e / (111320 * Math.cos(ref.lat * Math.PI / 180))]; }
 function fmtAgo(s) { return s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago`; }
 function fmtCoord(l) { return `${l.latitude.toFixed(6)}, ${l.longitude.toFixed(6)}`; }
@@ -120,9 +182,9 @@ function leadCard(l) {
       <div><dt>Last seen</dt><dd>${fmtTime(l.last_seen_at)} <small>${fmtAgo(l.last_seen_age_s)}</small></dd></div>
       <div><dt>Evidence</dt><dd>${l.observations} sighting${l.observations === 1 ? '' : 's'} · ${l.views} angle${l.views === 1 ? '' : 's'}${l.views > 1 ? ` (${l.angle_span_deg}° apart)` : ''} · ${sensors}</dd></div>
       <div><dt>Movement</dt><dd>${mv}</dd></div>
-      ${l.fire_distance_m != null ? `<div><dt>Fire</dt><dd>${l.fire_distance_m} m from the detected fire</dd></div>` : ''}
+      ${l.fire_distance_m != null || l.arrival !== undefined ? `<div><dt>Fire</dt><dd>${l.arrival !== undefined ? `<b class="arrival${l.arrival != null && l.arrival <= 30 ? ' soon' : ''}">${arrivalText(l.arrival)}</b>${l.fire_distance_m != null ? ` · ` : ''}` : ''}${l.fire_distance_m != null ? `${l.fire_distance_m} m from the fire` : ''}${l.arrival != null && l.arrival > 0 ? ' <small>(projection at current conditions)</small>' : ''}</dd></div>` : ''}
     </dl>
-    ${l.priority.reasons.length ? `<ul class="lead-reasons">${l.priority.reasons.map(r => `<li>${escapeHTML(r)}</li>`).join('')}</ul>` : ''}
+    ${l.reasons.length ? `<ul class="lead-reasons">${l.reasons.map(r => `<li>${escapeHTML(r)}</li>`).join('')}</ul>` : ''}
     ${l.delayed.any ? `<p class="lead-delayed">Includes observations stored during a link outage, delivered up to ${l.delayed.max_delay_s} s late. The person may have moved since.</p>` : ''}
     ${nl && !l.closed ? `<div class="next-look"><strong>Suggested next look · from the ${escapeHTML(nl.from)}</strong><p>${escapeHTML(nl.reason)} About ${nl.flight_s} s away, ${nl.altitude_m} m up, camera ${nl.gimbal_pitch_deg}°.</p></div>` : ''}
     ${crops ? `<div class="lead-crops">${crops}</div>` : ''}
@@ -131,8 +193,21 @@ function leadCard(l) {
   </article>`;
 }
 
+/* Arrival at the conditions on the map now (they may differ from what the backend assumed),
+   and the priority order that follows from it: within a tier, whoever the fire reaches first. */
+function withArrival(leads) {
+  return leads.map(l => {
+    const arrival = l.closed ? undefined : fireArrivalAt(l.latitude, l.longitude);
+    const reasons = l.priority.reasons.filter(r => !/^fire projected to reach|^inside the projected fire/.test(r));
+    if (arrival === 0) reasons.unshift('inside the projected fire area now');
+    else if (arrival != null) reasons.unshift(`fire projected to reach this spot in about ${arrival} min`);
+    return {...l, arrival, reasons};
+  }).sort((a, b) => a.priority.tier - b.priority.tier || (a.arrival ?? 1e9) - (b.arrival ?? 1e9));
+}
+
 function renderLeadList(snap) {
-  const key = JSON.stringify(snap.leads.map(l => [l.id, l.status, l.observations, l.acknowledged?.at, l.closed?.at, l.uncertainty.major_95_m, l.movement.status, l.missed_looks, l.next_look?.from, Math.floor(l.last_seen_age_s / 15)]));
+  const leads = withArrival(snap.leads);
+  const key = JSON.stringify(leads.map(l => [l.id, l.status, l.observations, l.acknowledged?.at, l.closed?.at, l.uncertainty.major_95_m, l.movement.status, l.missed_looks, l.next_look?.from, Math.floor(l.last_seen_age_s / 15), l.arrival]));
   if (key === peopleState.listKey) return;
   // Don't wipe a half-chosen close outcome out from under the responder.
   if (document.activeElement?.closest?.('#lead-list select')) return;
@@ -142,7 +217,7 @@ function renderLeadList(snap) {
     list.innerHTML = `<div class="lead-empty"><h3>No one found yet.</h3><p>${snap.simulated ? 'The simulated drone is surveying its sector. Candidates appear here as soon as it sees a person-shaped heat signature.' : 'When the drone sees a person-shaped heat signature or figure, it becomes a lead here. It shows where the person is, how sure that location is, and how many angles have confirmed it.'}</p></div>`;
     return;
   }
-  list.innerHTML = snap.leads.map(leadCard).join('');
+  list.innerHTML = leads.map(leadCard).join('');
   for (const img of list.querySelectorAll('img[data-crop]')) loadCrop(img);
 }
 
@@ -185,7 +260,7 @@ function renderPeopleMap(snap) {
   }
   renderCoverage(snap.coverage);
   if (snap.simulated) {
-    if (snap.track?.length) L.polyline(snap.track, {color: '#2F8F8A', weight: 2, opacity: .7, dashArray: '4 5', interactive: false}).addTo(lm);
+    if (snap.track?.length) { const tl = L.layerGroup().addTo(lm); drawTrail(tl, snap.track); }
     if (snap.drone) {
       const m = L.marker([snap.drone.latitude, snap.drone.longitude], {icon: L.divIcon({className: 'drone-icon-wrap', html: `<div class="drone-icon" style="transform:rotate(${snap.drone.heading_deg}deg)"><span>▲</span></div>`, iconSize: [30, 30], iconAnchor: [15, 15]}), zIndexOffset: 800}).addTo(lm);
       m.bindTooltip(`Simulated drone · ${snap.drone.altitude_m} m · heading ${snap.drone.heading_deg}°`);
@@ -193,7 +268,12 @@ function renderPeopleMap(snap) {
     if (snap.fire) {
       L.marker([snap.fire.latitude, snap.fire.longitude], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(lm).bindTooltip('Simulated fire');
       const sel = state.demo.selected;
-      if (sel?.id === 'people' && sel.lat == null) { sel.lat = snap.fire.latitude; sel.lon = snap.fire.longitude; renderSpread(); }
+      if (sel?.id === 'people' && sel.lat == null) {
+        // The simulated fire runs through the same spread model as a live detection.
+        sel.lat = snap.fire.latitude; sel.lon = snap.fire.longitude;
+        if (snap.fire_model) { sel.details = snap.fire_model.details; state.scenario = {...snap.fire_model.scenario}; }
+        peopleState.listKey = ''; renderSpread();
+      }
     }
   }
 }
@@ -309,6 +389,7 @@ function peopleBrief() {
     `- Status: ${l.status_text}`,
     `- Last seen: ${l.last_seen_at} · ${l.observations} sightings from ${l.views} angle(s) · ${l.sensors.join(' + ')}`,
     `- Movement: ${l.movement.detail}`,
+    (() => { const a = fireArrivalAt(l.latitude, l.longitude); return a === undefined ? null : `- Fire: ${arrivalText(a)}${a ? ' (projection at current conditions)' : ''}`; })(),
     l.delayed.any ? `- Includes observations delivered up to ${l.delayed.max_delay_s} s late (link outage)` : null,
     `- ${l.acknowledged ? `Acknowledged by ${l.acknowledged.by} at ${l.acknowledged.at}` : 'NOT YET ACKNOWLEDGED'}`,
   ].filter(Boolean).join('\n')).join('\n\n');
