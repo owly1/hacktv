@@ -31,8 +31,12 @@ with a simulated ANAFI-01 (telemetry + detection, labeled DEMO). **Analyze** and
 `/api/demo/analyze` and `/api/demo/plan`. Demo results are never written to
 TigerData.
 
-The simulated drone flies in from its detection point 1.5 km upwind and
-settles into a 500 m orbit. The camera panel shows a rendered view
+Each case starts as a fresh sighting: the simulated drone, patrolling at 35 m
+about 280 m from the fire, confirms the detection, geolocates the fire (pin
+and spread appear on the map) and climbs to a 450 m survey orbit at 120 m.
+Gemini analyzes the fire automatically about 5 s in. The map's T + 0 outline is
+the fire the camera shows; the timeline grows it to the recorded burn area.
+The camera panel shows a rendered view
 (`dist/sim-camera.js`, WebGL): satellite imagery of the real location, a
 modelled fire front and smoke, a HUD and the detection box. All of it is labeled
 SIMULATED. Demo mode switches the map to satellite imagery (Esri, proxied and

@@ -286,7 +286,7 @@ void main() {
           for (const z of [0, 25]) { const p = project(cam, pose, [e, n, z]); if (p) { x1 = Math.min(x1, p[0]); y1 = Math.min(y1, p[1]); x2 = Math.max(x2, p[0]); y2 = Math.max(y2, p[1]); } }
         }
         x1 = Math.max(4, x1); y1 = Math.max(4, y1); x2 = Math.min(cam.w - 4, x2); y2 = Math.min(cam.h - 4, y2);
-        if (x2 - x1 > 6 && y2 - y1 > 4) { found = [x1, y1, x2, y2]; box(ctx, cam, x1, y1, x2, y2, `FIRE ${Math.round(opts.confidence * 100)}%`); }
+        if (x2 - x1 > 6 && y2 - y1 > 4) { found = [x1, y1, x2, y2]; box(ctx, cam, x1, y1, x2, y2, `${opts.label ?? 'FIRE'} ${Math.round(opts.confidence * 100)}%`); }
       } else if (scene.kind === 'pad') {
         const m = scene.marker, s = m.size / 2, pts = [[-s, -s], [s, -s], [s, s], [-s, s]].map(([de, dn]) => project(cam, pose, [m.e + de, m.n + dn, 0]));
         if (pts.every(Boolean)) {

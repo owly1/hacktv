@@ -145,7 +145,7 @@ function renderDrone() {
 }
 
 function origin() {
-  if (state.mode === 'demo') { const f = state.demo.selected; return f && f !== 'flight' ? [f.lat, f.lon] : null; }
+  if (state.mode === 'demo') { const f = demoCase(); return f && state.demo.located ? [f.lat, f.lon] : null; }
   const inc = activeFire(); return inc ? [inc.latest.fire.latitude, inc.latest.fire.longitude] : null;
 }
 
@@ -157,12 +157,12 @@ function renderSpread() {
   $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}`;
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
   const o = origin();
-  if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? 'select a fire' : 'no fire detected'; return; }
+  if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode !== 'demo' ? 'no fire detected' : demoCase() ? 'confirming detection…' : 'select a fire'; return; }
   let outline, ring = scale => [];
   if (state.mode === 'demo') {
-    // Demo: replay the recorded burn growing from its ignition point over the timeline.
-    const f = state.demo.selected, k = Math.sqrt(.03 + .97 * t / 60), rec = M.recordedPerimeter(f);
-    ring = scale => rec.map(p => [o[0] + (p[0] - o[0]) * k * scale, o[1] + (p[1] - o[1]) * k * scale]);
+    // Demo: the fire ANAFI-01 sees now, growing to the recorded burn over the timeline.
+    const f = demoCase();
+    ring = scale => demoOutline(f, t, scale);
     outline = ring(1);
   } else {
     const details = activeFire().latest.details;
@@ -189,9 +189,11 @@ function renderFirePin() {
 }
 
 function fitToFire() {
-  const o = origin(); if (!o) { const t = state.telemetry; if (t?.latitude != null) state.map.setView([t.latitude, t.longitude], 19); else state.map.setView([state.site.latitude, state.site.longitude], 17); return; }
+  const o = origin();
+  if (!o && demoCase()) { const f = demoCase(); state.map.fitBounds(L.latLng(f.lat, f.lon).toBounds(1100)); return; } // drone and fire, before geolocation
+  if (!o) { const t = state.telemetry; if (t?.latitude != null) state.map.setView([t.latitude, t.longitude], 19); else state.map.setView([state.site.latitude, state.site.longitude], 17); return; }
   state.map.invalidateSize();
-  const pts = state.mode === 'demo' ? M.recordedPerimeter(state.demo.selected) : M.footprint(o, 30, state.scenario, activeFire().latest.details);
+  const pts = state.mode === 'demo' ? [...demoOutline(demoCase(), state.minute), state.demo.pos] : M.footprint(o, 30, state.scenario, activeFire().latest.details);
   state.map.fitBounds(L.latLngBounds(pts).pad(.15), {maxZoom: 20});
 }
 
@@ -384,46 +386,95 @@ function showDemoResults() {
   state.analysisMeta = {configured: state.status?.gemini?.configured ?? true, pending: false, error: null};
   resetAnalysisPanel(); resetPlanPanel();
   if (!r) { $('analysis-summary').textContent = 'Select a fire case, then press Analyze to have Gemini assess it.'; $('analysis-source').textContent = 'DEMO'; return; }
-  if (!state.analysis) { $('analysis-summary').textContent = `Press "Analyze current view" to have Gemini assess ${r && demoCase().name}.`; $('analysis-detail').textContent = 'Gemini receives the recorded conditions and the simulated drone position.'; }
+  if (!state.analysis) { $('analysis-summary').textContent = `Gemini analyzes ${demoCase().name} automatically once ANAFI-01 geolocates it.`; $('analysis-detail').textContent = 'Gemini receives the recorded conditions and the simulated drone position.'; }
   renderAnalysis(); if (state.plan) renderPlan();
 }
 
-/* Simulated ANAFI-01 for a demo case, t seconds after the case was selected:
-   it detected the fire from its recorded range (1.5 km upwind), flies in at
-   up to 15 m/s (ANAFI max ≈16) and settles into a 500 m orbit at 8 m/s with
-   the camera locked on the fire's head. */
-const SIM = {cruise: 15, accel: 4, orbitR: 500, orbitV: 8};
-function simFire(f, t) {
-  const wind = f.drivers.windKmh ?? 20, a = Math.min(320, 110 + t * 1.1);
-  return {a, b: Math.max(40, a / Math.min(4, 1 + wind / 35)), shift: a * .55};
+/* Simulated ANAFI-01 for a demo case, t seconds after its camera first saw
+   the fire: it was patrolling low (35 m) about 280 m upwind, hovers while the
+   detection is confirmed, then climbs at up to 4 m/s (ANAFI max) to its
+   recorded 120 m while widening to a 450 m survey orbit at 8 m/s, camera
+   locked on the fire's head. Information reaches the workspace in the order
+   a real sighting would: detection confirmed, fire geolocated, Gemini. */
+const SIM = {r0: 280, alt0: 35, climbS: 32, orbitR: 450, orbitV: 8};
+const SIM_DELAY = {confirm: 2.5, locate: 4, analyze: 5};
+const ease = k => { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
+/* The burning front the camera sees; the map's T + 0 outline is the same ellipse. */
+function simFire(f, t) { const a = Math.min(300, 90 + t * .8); return {a, b: a / 2.4, shift: a * .45}; }
+function simTrack(f, t) {
+  const radius = u => SIM.r0 + (SIM.orbitR - SIM.r0) * ease((u - 2) / SIM.climbS), speed = u => SIM.orbitV * ease((u - 2) / 6);
+  const end = 2 + SIM.climbS; let ang = 0;
+  for (let u = 0; u < Math.min(t, end); u += .5) ang += speed(u) * Math.min(.5, Math.min(t, end) - u) / radius(u);
+  if (t > end) ang += (t - end) * SIM.orbitV / SIM.orbitR;
+  const bearing = (f.drone.detection.fire.bearing_deg + 180) % 360 + ang * 180 / Math.PI, b = bearing * Math.PI / 180, R = radius(t);
+  return {bearing, R, e: R * Math.sin(b), n: R * Math.cos(b), alt: SIM.alt0 + (f.drone.telemetry.altitude_m - SIM.alt0) * ease((t - 2) / SIM.climbS)};
 }
 function simPose(f, t) {
-  const tel = f.drone.telemetry, det = f.drone.detection, d0 = det.fire.distance_m, R = Math.min(SIM.orbitR, d0 * .6), dist = d0 - R;
-  let ramp = SIM.cruise / SIM.accel, vmax = SIM.cruise;
-  if (dist < vmax * ramp) { ramp = Math.sqrt(dist / SIM.accel); vmax = SIM.accel * ramp; }
-  const cruiseT = (dist - vmax * ramp) / vmax, approachT = 2 * ramp + cruiseT, from = (det.fire.bearing_deg + 180) % 360;
-  let d, speed, bearing = from, phase = 'Approach';
-  if (t < ramp) { speed = SIM.accel * t; d = d0 - SIM.accel * t * t / 2; }
-  else if (t < ramp + cruiseT) { speed = vmax; d = d0 - vmax * ramp / 2 - vmax * (t - ramp); }
-  else if (t < approachT) { const u = approachT - t; speed = SIM.accel * u; d = R + SIM.accel * u * u / 2; }
-  else { phase = 'Orbit'; d = R; speed = SIM.orbitV; bearing = from + (t - approachT) * SIM.orbitV / R * 180 / Math.PI; }
-  const b = bearing * Math.PI / 180, e = d * Math.sin(b), n = d * Math.cos(b), alt = tel.altitude_m + .4 * Math.sin(t * .7);
-  const fire = simFire(f, t), wd = f.directionDeg * Math.PI / 180, te = fire.shift * .6 * Math.sin(wd) - e, tn = fire.shift * .6 * Math.cos(wd) - n;
-  const [lat, lon] = M.destPoint(f.lat, f.lon, bearing, d);
-  return {e, n, alt, lat, lon, speed, phase, fire, range: d, battery: tel.battery_pct - t / 40,
+  const tel = f.drone.telemetry, {bearing, R, e, n, alt: climb} = simTrack(f, t), next = simTrack(f, t + .2);
+  const phase = t < 2 ? 'Detection hover' : t < 2 + SIM.climbS ? 'Climb to survey' : 'Survey orbit';
+  const alt = climb + .3 * Math.sin(t * .7), fire = simFire(f, t), wd = f.directionDeg * Math.PI / 180;
+  const te = fire.shift * .6 * Math.sin(wd) - e, tn = fire.shift * .6 * Math.cos(wd) - n, [lat, lon] = M.destPoint(f.lat, f.lon, bearing, R);
+  return {e, n, alt, lat, lon, phase, fire, range: R, battery: tel.battery_pct - t / 40,
+    speed: Math.hypot(next.e - e, next.n - n) / .2, climbRate: (next.alt - climb) / .2,
     heading: (Math.atan2(te, tn) * 180 / Math.PI + 360) % 360, pitch: Math.atan2(alt, Math.hypot(te, tn)) * 180 / Math.PI};
 }
-/* The detector locks on over the first seconds, then firms up as the drone closes. */
-function simConfidence(f, t, p) {
-  const k = Math.min(1, t / 6), c = f.drone.detection.confidence * (.62 + .38 * k * k * (3 - 2 * k)) + .04 * (1 - p.range / f.drone.detection.fire.distance_m);
+/* The detector locks on over the first seconds, then firms up as the view opens out. */
+function simConfidence(f, t) {
+  const c = f.drone.detection.confidence * (.55 + .45 * ease(t / SIM_DELAY.confirm)) + .03 * ease((t - 2) / SIM.climbS);
   return Math.max(.3, Math.min(.99, c + .012 * Math.sin(t * 5.3) + .008 * Math.sin(t * 11.1)));
+}
+const demoT = () => (performance.now() - state.demo.started) / 1000;
+/* Spread outline at `minute`: the live fire at T + 0, growing geometrically to
+   the recorded final burn area at T + 60, in the recorded burn's shape. */
+function demoOutline(f, minute, scale = 1) {
+  const live = simFire(f, demoT()), a0 = Math.PI * live.a * live.b, af = f.areaHa * 10000;
+  const k = Math.sqrt(a0 * Math.pow(af / a0, minute / 60) / af) * scale;
+  return M.recordedPerimeter(f).map(p => [f.lat + (p[0] - f.lat) * k, f.lon + (p[1] - f.lon) * k]);
+}
+
+/* Once ANAFI-01 has placed the fire on the map. */
+function locateDemoFire(f) {
+  const i = f.impacts, n = v => v == null ? '—' : '≈' + v.toLocaleString();
+  state.demo.located = true;
+  L.marker([f.lat, f.lon], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(state.demo.layer)
+    .bindPopup(`<b>${escapeHTML(f.name)}</b><br>${escapeHTML(f.region)} · ${escapeHTML(f.startDate)}<br>Cause: ${escapeHTML(f.cause)}<br>≈${f.areaHa.toLocaleString()} ha · structures ${n(i.structures)} · evacuated ${n(i.evacuated)} · deaths ${i.deaths ?? '—'}<br><small>${escapeHTML(f.notes)}</small><br><small>Source: ${escapeHTML(f.source)}</small>`);
+  state.demo.sight = L.polyline([state.demo.pos, [f.lat, f.lon]], {color: '#e66c43', weight: 1.5, dashArray: '3 4'}).addTo(state.demo.layer);
+  $('incident-tag').hidden = false; $('incident-dot').classList.add('alert');
+  setBanner('demo', `<strong>Fire geolocated · ${escapeHTML(f.name)}.</strong> ANAFI-01 (simulated) is climbing to survey it. Recorded conditions: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%. Gemini is analyzing it automatically.`);
+  toast(`Fire detected — ${f.name}. Gemini is analyzing it.`);
+  renderSpread();
+}
+
+/* Gemini analyzes each demo fire on its own once it is geolocated, as it does
+   for live detections. Retries rate limits (one request per 10 s) and Gemini
+   timeouts; gives up only when Gemini is not configured or keeps failing. */
+async function autoAnalyze(f) {
+  const ATTEMPTS = 4;
+  for (let attempt = 1; attempt <= ATTEMPTS && demoCase() === f; attempt++) {
+    const r = demoResults(); if (r.analysis) return;
+    state.analysisMeta = {...state.analysisMeta, pending: true, error: null}; renderAnalysis();
+    if (!state.analysis) $('analysis-summary').textContent = attempt === 1 ? `Gemini is analyzing the ${f.name} detection…` : `Gemini is analyzing the ${f.name} detection… (retry ${attempt - 1})`;
+    try {
+      const a = await demoGemini('analyze'); a.trigger = 'auto-detection'; r.analysis = a;
+      if (demoCase() === f) { state.analysis = a; state.analysisMeta = {...state.analysisMeta, pending: false}; renderAnalysis(); toast('Gemini analysis ready.'); }
+      return;
+    } catch (e) {
+      if (demoCase() !== f) return;
+      if (e.status === 503 || attempt === ATTEMPTS) {
+        state.analysisMeta = {...state.analysisMeta, pending: false, configured: e.status !== 503, error: {message: e.message, at: new Date().toISOString()}}; renderAnalysis();
+        if (!state.analysis) $('analysis-summary').textContent = 'Gemini could not analyze this fire. Press "Analyze current view" to try again.';
+        return;
+      }
+      await sleep(10500);
+    }
+  }
 }
 /* The case as Gemini should see it: the simulated drone where it is now. */
 function simCase(f) {
-  const t = (performance.now() - state.demo.started) / 1000, p = simPose(f, t), tel = f.drone.telemetry, det = f.drone.detection;
+  const t = demoT(), p = simPose(f, t), tel = f.drone.telemetry, det = f.drone.detection;
   return {...f, drone: {
     telemetry: {...tel, latitude: +p.lat.toFixed(6), longitude: +p.lon.toFixed(6), altitude_m: +p.alt.toFixed(1), ground_speed_mps: +p.speed.toFixed(1), battery_pct: Math.round(p.battery), state: 'flying', extra: {...tel.extra, heading_deg: Math.round(p.heading), gimbal_pitch_deg: -Math.round(p.pitch), flight_phase: p.phase.toLowerCase()}},
-    detection: {...det, confidence: +simConfidence(f, t, p).toFixed(2), fire: {...det.fire, distance_m: Math.round(p.range), bearing_deg: Math.round(p.heading)}},
+    detection: {...det, confidence: +simConfidence(f, t).toFixed(2), fire: {...det.fire, distance_m: Math.round(p.range), bearing_deg: Math.round(p.heading)}},
   }};
 }
 
@@ -453,26 +504,29 @@ function setDemoVideo(f) {
 let lastPanel = 0;
 function animateDemoCase(now) {
   const f = demoCase(); if (!f || !state.demo.marker) return;
-  const t = (now - state.demo.started) / 1000, p = simPose(f, t), conf = simConfidence(f, t, p);
+  const t = (now - state.demo.started) / 1000, p = simPose(f, t), conf = simConfidence(f, t), confirmed = t >= SIM_DELAY.confirm;
   state.demo.pos = [p.lat, p.lon];
   state.demo.marker.setLatLng(state.demo.pos); setDronePose(state.demo.marker, p.heading, p.alt);
-  state.demo.sight.setLatLngs([state.demo.pos, [f.lat, f.lon]]);
+  if (!state.demo.located && t >= SIM_DELAY.locate) locateDemoFire(f);
+  state.demo.sight?.setLatLngs([state.demo.pos, [f.lat, f.lon]]);
+  if (state.demo.located && !state.playing && now - (state.demo.lastSpread ?? 0) > 1000) { state.demo.lastSpread = now; renderSpread(); } // the live fire keeps growing
+  if (!state.demo.autoAsked && t >= SIM_DELAY.analyze) { state.demo.autoAsked = true; autoAnalyze(f); }
   if (t - (state.demo.lastTrail ?? -9) >= 1) { state.demo.lastTrail = t; state.demo.trail.addLatLng(state.demo.pos); }
   if (state.follow && now - (state.demo.lastPan ?? 0) > 250) { state.demo.lastPan = now; state.map.panTo(state.demo.pos, {animate: false}); }
   const cam = camera(), video = !!state.demo.video && state.demo.video.readyState >= 2;
   if (cam && now - (state.demo.lastCam ?? 0) > 33) {
     state.demo.lastCam = now;
-    const seen = EmberCamera.render($('camera').getContext('2d'), cam, p, {t, fire: p.fire, confidence: conf, speed: p.speed, battery: p.battery, range: p.range, footer: video ? 'REFERENCE FOOTAGE · NOT RECORDED BY ANAFI-01' : `SIMULATED · ${p.phase.toUpperCase()} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`});
+    const seen = EmberCamera.render($('camera').getContext('2d'), cam, p, {t, fire: p.fire, confidence: conf, label: confirmed ? 'FIRE' : 'POSSIBLE FIRE', speed: p.speed, battery: p.battery, range: p.range, footer: video ? 'REFERENCE FOOTAGE · NOT RECORDED BY ANAFI-01' : `SIMULATED · ${p.phase.toUpperCase()} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`});
     state.demo.inView = !!seen;
   }
   if (now - lastPanel < 250) return; lastPanel = now;
   $('altitude').innerHTML = `${p.alt.toFixed(1)} <small>m</small>`; $('ground-speed').innerHTML = `${p.speed.toFixed(1)} <small>m/s</small>`;
-  $('power').innerHTML = `${Math.round(p.battery)} <small>%</small>`; $('flight-state').textContent = `Flying · ${p.phase.toLowerCase()}`;
+  $('power').innerHTML = `${Math.round(p.battery)} <small>%</small>`; $('flight-state').textContent = `${p.climbRate > .3 ? `Climbing ${p.climbRate.toFixed(1)} m/s` : 'Flying'} · ${p.phase.toLowerCase()}`;
   $('battery-value').innerHTML = `${Math.round(p.battery)}<span class="small-unit">%</span>`; $('battery-context').textContent = 'simulated ANAFI-01 (demo)';
   $('telemetry-note').textContent = `DEMO · simulated ANAFI-01 · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${Math.round(p.range)} m from ignition`;
-  $('detect-value').textContent = Math.round(conf * 100); $('detect-unit').textContent = '%';
-  $('detect-context').textContent = `simulated · fire model · ${Math.round(p.range)} m · ${Math.floor(t * 4) + 1} sightings`;
-  $('camera-label').innerHTML = video ? '<i class="hot"></i> REFERENCE FOOTAGE · NOT ANAFI-01' : state.demo.inView ? '<i class="hot"></i> FIRE IN VIEW · SIMULATED' : '<i></i> DEMO · SIMULATED';
+  $('detect-value').textContent = confirmed ? Math.round(conf * 100) : '…'; $('detect-unit').textContent = confirmed ? '%' : '';
+  $('detect-context').textContent = confirmed ? `simulated · fire model · ${Math.round(p.range)} m · ${Math.floor(t * 4) + 1} sightings` : 'simulated · confirming possible fire…';
+  $('camera-label').innerHTML = video ? '<i class="hot"></i> REFERENCE FOOTAGE · NOT ANAFI-01' : state.demo.inView && confirmed ? '<i class="hot"></i> FIRE IN VIEW · SIMULATED' : '<i></i> POSSIBLE FIRE · SIMULATED';
   $('camera-clock').textContent = `${f.startDate} · T+${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   $('video-fps').textContent = cam?.ok ? '30 fps · sim' : '—';
   $('video-status').textContent = video ? `Reference clip · ${state.demo.videoCredit}` : cam?.ok ? 'Simulated camera · satellite imagery + modelled fire' : 'Simulated camera needs WebGL';
@@ -480,8 +534,7 @@ function animateDemoCase(now) {
 
 function demoProjection() {
   const f = demoCase(); if (!f) return null;
-  const k2 = .03 + .97 * state.minute / 60;
-  return {minutes_ahead: Math.round(state.minute), area_ha: Math.round(M.areaHa(M.recordedPerimeter(f)) * k2), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: f.lat, longitude: f.lon}, basis: 'recorded final burn area scaled over a 60-minute replay'};
+  return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(demoOutline(f, state.minute)).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: f.lat, longitude: f.lon}, basis: 'detected fire front growing to the recorded final burn area over a 60-minute replay'};
 }
 
 async function demoGemini(kind) {
@@ -541,22 +594,20 @@ function selectDemo(id) {
     state.scenario = {wind: f.drivers.windKmh ?? M.BASE.wind, direction: f.directionDeg, dryness: f.drivers.rhPct != null ? 100 - f.drivers.rhPct : M.BASE.dryness, temp: f.drivers.tempC ?? M.BASE.temp, rh: f.drivers.rhPct ?? M.BASE.rh};
     state.detectedScenario = {...state.scenario};
     L.polygon(M.recordedPerimeter(f), {color: '#c2410c', weight: 1.2, fill: false, dashArray: '2 4'}).addTo(state.demo.layer).bindTooltip('Recorded final burn area (approx.)');
-    const t = f.drone.telemetry, d = f.drone.detection, i = f.impacts, n = v => v == null ? '—' : '≈' + v.toLocaleString();
-    L.marker([f.lat, f.lon], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(state.demo.layer)
-      .bindPopup(`<b>${escapeHTML(f.name)}</b><br>${escapeHTML(f.region)} · ${escapeHTML(f.startDate)}<br>Cause: ${escapeHTML(f.cause)}<br>≈${f.areaHa.toLocaleString()} ha · structures ${n(i.structures)} · evacuated ${n(i.evacuated)} · deaths ${i.deaths ?? '—'}<br><small>${escapeHTML(f.notes)}</small><br><small>Source: ${escapeHTML(f.source)}</small>`);
+    // A fresh sighting: the fire pin, spread and Gemini follow as the simulated detection firms up.
     state.demo.started = performance.now(); state.demo.lastTrail = null; state.demo.inView = false;
-    state.demo.pos = [t.latitude, t.longitude];
+    state.demo.located = false; state.demo.autoAsked = false; state.demo.sight = null; state.demo.lastSpread = 0;
+    const start = simPose(f, 0); state.demo.pos = [start.lat, start.lon];
     state.demo.trail = L.polyline([], {color: '#4fd1c5', weight: 2.5, opacity: .85}).addTo(state.demo.layer);
-    state.demo.sight = L.polyline([state.demo.pos, [f.lat, f.lon]], {color: '#e66c43', weight: 1.5, dashArray: '3 4'}).addTo(state.demo.layer);
     state.demo.marker = droneMarker(state.demo.pos).addTo(state.demo.layer);
     const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'fire', lat: f.lat, lon: f.lon, windDeg: f.directionDeg, windKmh: f.drivers.windKmh});
     setDemoVideo(f);
-    $('incident-eyebrow').textContent = 'DEMO CASE · SIMULATED ANAFI-01'; $('incident-title').textContent = f.name; $('incident-tag').hidden = false; $('incident-dot').classList.add('alert');
+    $('incident-eyebrow').textContent = 'DEMO CASE · SIMULATED ANAFI-01'; $('incident-title').textContent = f.name; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
     $('incident-sub').textContent = `${f.region} · ignited ${f.startDate} · ${f.cause} · recorded ≈${f.areaHa.toLocaleString()} ha · ${f.drivers.fuel}`;
-    setBanner('demo', `<strong>Demo case: ${escapeHTML(f.name)}.</strong> Simulated ANAFI-01 detection (fire model, ${Math.round(d.confidence * 100)}%) ${d.fire.distance_m} m ahead, bearing ${d.fire.bearing_deg}°; it closes to a 500 m orbit with the camera locked on the fire. Recorded conditions: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%. Press <b>Analyze</b> or <b>Generate plan</b> for live Gemini.`);
+    setBanner('demo', `<strong>Demo case: ${escapeHTML(f.name)}.</strong> Simulated ANAFI-01, patrolling at ${SIM.alt0} m, has just spotted a possible fire about ${SIM.r0} m ahead. It confirms the detection, geolocates the fire and climbs to survey it; Gemini analyzes it automatically.`);
     $('telemetry-tag').textContent = 'DEMO'; $('drone-source').textContent = 'Simulated (demo)'; $('telemetry-note').classList.remove('error-text'); $('flight-progress').hidden = true;
     $('map-location').textContent = `${f.name} · ${f.region}`;
-    state.minute = 60;
+    state.minute = 0; state.playing = false; setPlayButton();
     fitToFire();
   }
   showDemoResults();
