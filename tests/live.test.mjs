@@ -265,6 +265,30 @@ test('demo fires are served from the examples dataset', async () => {
   } finally { await t.close(); }
 });
 
+test('demo cases get live Gemini analysis and plans that are never stored', async () => {
+  const t = await startApp({ replies: [analysisReply, planReply] });
+  const demoCase = { id: 'jasper-2024', name: 'Jasper townsite complex', drone: { telemetry: { provenance: 'demo-simulated' } } };
+  try {
+    const analysis = await (await t.req('POST', '/api/demo/analyze', { token: DASH, body: { case: demoCase, scenario: { wind: 50 } } })).json();
+    assert.equal(analysis.severity, 'extreme');
+    assert.equal(analysis.provenance, 'gemini-demo');
+    assert.equal(analysis.case_id, 'jasper-2024');
+    const prompt = t.calls[0].contents[0].parts.map((p) => p.text ?? '').join(' ');
+    assert.match(prompt, /DEMO REPLAY/);
+    assert.match(prompt, /Jasper townsite complex/);
+    assert.equal(t.calls[0].tools, undefined, 'demo analysis must not call tools that read live drone data');
+
+    // Rate limit: one demo Gemini request per 10 s.
+    assert.equal((await t.req('POST', '/api/demo/plan', { token: DASH, body: { case: demoCase } })).status, 429);
+
+    const nothingStored = await (await t.req('GET', '/api/analysis/latest', { token: DASH })).json();
+    assert.equal(nothingStored.analysis, null);
+    assert.equal((await t.req('GET', '/api/plan/latest', { token: DASH }).then((r) => r.json())).plan, null);
+    assert.equal((await t.req('POST', '/api/demo/analyze', { token: DASH, body: {} })).status, 400);
+    assert.equal((await t.req('POST', '/api/demo/analyze', { body: { case: demoCase } })).status, 401);
+  } finally { await t.close(); }
+});
+
 test('map tiles are fetched once, then served from the disk cache', async () => {
   let fetches = 0;
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
@@ -277,6 +301,17 @@ test('map tiles are fetched once, then served from the disk cache', async () => 
     }
     assert.equal(fetches, 1);
     assert.equal((await t.req('GET', '/tiles/osm/18/999999999/1.png')).status, 404);
+  } finally { await t.close(); }
+});
+
+test('satellite tiles use the imagery service z/y/x order', async () => {
+  const urls = [];
+  const t = await startApp({ noGemini: true, tileFetch: async (url) => { urls.push(url); return new Response(Buffer.from([0xff, 0xd8, 0xff])); } });
+  try {
+    const res = await t.req('GET', '/tiles/sat/16/18000/21000.png');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/jpeg');
+    assert.match(urls[0], /World_Imagery\/MapServer\/tile\/16\/21000\/18000$/);
   } finally { await t.close(); }
 });
 
