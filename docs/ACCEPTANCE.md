@@ -37,7 +37,7 @@ Checked by: __________  Date/time: __________  Commit: __________
 
 Start with `node --env-file=.env backend/server.mjs` and open http://127.0.0.1:8787.
 
-- [ ] `node --test tests/` passes.
+- [ ] `npm test` passes.
 - [ ] A live telemetry POST (ingest token) appears in the dashboard within ~2 s with its real timestamp.
 - [ ] A sample with `provenance` other than `live` is refused in connected mode.
 - [ ] Status panel shows storage mode (`memory only` or `postgres`) and Gemini configuration honestly.

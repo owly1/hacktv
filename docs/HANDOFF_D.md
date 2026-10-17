@@ -16,7 +16,7 @@ Backend (connected mode). Node 22+ required. **Use `--env-file`**: the server do
 cp .env.example .env
 # edit .env: INGEST_TOKEN and DASHBOARD_TOKEN, two different values, e.g. `openssl rand -hex 32`
 node --env-file=.env backend/server.mjs   # dashboard + API on http://127.0.0.1:8787
-node --test tests/                         # backend contract suite
+npm test                                   # backend contract suite
 ```
 
 In the browser at http://127.0.0.1:8787, open **Integrations** and paste the **dashboard** token.
