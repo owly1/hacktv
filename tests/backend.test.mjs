@@ -20,25 +20,40 @@ let base;
 let storage;
 let nowMs;
 let fakeGeminiCalls;
-let fakeGeminiReply;
+let fakeGeminiReplies;
+
+const geminiTextReply = (jsonText) => ({
+  candidates: [{ content: { parts: [{ text: jsonText }] } }],
+});
+
+const geminiCallReply = (name, args = {}) => ({
+  candidates: [{ content: { parts: [{ functionCall: { name, args } }] } }],
+});
 
 function makeApp() {
   nowMs = Date.now();
   fakeGeminiCalls = [];
-  fakeGeminiReply = JSON.stringify({
-    summary: 'A possible smoke plume above the tree canopy.',
-    unknowns: ['Fire perimeter and wind conditions cannot be established.'],
-    limitations: 'Single uncalibrated RGB frame; no thermal data.',
-  });
+  fakeGeminiReplies = [
+    geminiTextReply(JSON.stringify({
+      summary: 'A possible smoke plume above the tree canopy.',
+      unknowns: ['Fire perimeter and wind conditions cannot be established.'],
+      falsifiers: ['A clear view showing unburned canopy in the same sector.'],
+      limitations: 'Single uncalibrated RGB frame; no thermal data.',
+    })),
+  ];
   storage = new MemoryStorage();
   return createApp({
     ingestToken: INGEST,
     dashboardToken: DASH,
     allowedOrigins: [ORIGIN],
     storage,
-    geminiTransport: async (parts) => {
-      fakeGeminiCalls.push(parts);
-      return fakeGeminiReply;
+    geminiTransport: async (requestBody) => {
+      // deep-copy: the server keeps appending turns to contents between rounds
+      fakeGeminiCalls.push(structuredClone(requestBody));
+      if (fakeGeminiReplies.length === 0) {
+        throw new ApiError(502, 'fake transport: no queued reply');
+      }
+      return fakeGeminiReplies.shift();
     },
     geminiModel: 'fake-model',
     now: () => nowMs,
@@ -270,8 +285,10 @@ test('telemetry-only analysis records provenance and evidence kind', async () =>
   assert.equal(json.model, 'fake-model');
   assert.equal(Array.isArray(json.unknowns), true);
   assert.ok(json.id);
+  assert.equal(Array.isArray(json.falsifiers), true);
+  assert.deepEqual(json.tool_trace, []);
   // the instruction part must acknowledge absence of visual evidence
-  const promptText = fakeGeminiCalls.at(-1).map((p) => p.text ?? '').join(' ');
+  const promptText = JSON.stringify(fakeGeminiCalls.at(-1).contents);
   assert.match(promptText, /Telemetry-only/);
 });
 
@@ -290,9 +307,72 @@ test('stale evidence blocks analysis even after rate limit passes', async () => 
 test('non-JSON Gemini output surfaces as 502', async () => {
   nowMs += 31_000; // clear both the rate limit and prior evidence freshness
   await req('POST', '/api/ingest/telemetry', { token: INGEST, body: goodTelemetry() });
-  fakeGeminiReply = 'not json at all';
+  fakeGeminiReplies = [geminiTextReply('not json at all')];
   const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
   assert.equal(res.status, 502);
+});
+
+// ---- evidence-seeking agent loop ----
+
+test('agentic analyze executes declared tools and records the trace', async () => {
+  nowMs += 31_000;
+  await req('POST', '/api/ingest/telemetry', { token: INGEST, body: goodTelemetry() });
+  await req('POST', '/api/ingest/snapshot', {
+    token: INGEST,
+    body: { captured_at: new Date(nowMs).toISOString(), jpeg_base64: JPEG_B64 },
+  });
+  // model asks for history, then the camera, then answers
+  fakeGeminiReplies = [
+    geminiCallReply('get_telemetry_history', { limit: 5 }),
+    geminiCallReply('get_snapshot'),
+    geminiTextReply(JSON.stringify({
+      summary: 'Telemetry stable; frame shows possible smoke.',
+      unknowns: ['Wind speed unknown.'],
+      falsifiers: ['A follow-up frame with no smoke column.'],
+      limitations: 'Single frame, no thermal.',
+    })),
+  ];
+
+  const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+
+  assert.deepEqual(
+    json.tool_trace.map((t) => t.tool),
+    ['get_telemetry_history', 'get_snapshot'],
+  );
+  assert.equal(json.tool_trace.every((t) => t.ok), true);
+  assert.equal(json.evidence_kind, 'rgb-snapshot');
+  assert.equal(json.provenance, 'gemini-unverified');
+
+  // round 2 request must carry the functionResponse turn; snapshot tool's
+  // image must arrive as inline data in that same turn
+  const followUp = fakeGeminiCalls.at(-2).contents.at(-1).parts;
+  assert.equal(followUp[0].functionResponse.name, 'get_telemetry_history');
+  const imagePart = fakeGeminiCalls.at(-1).contents.at(-1).parts.find((p) => p.inline_data);
+  assert.equal(imagePart.inline_data.mime_type, 'image/jpeg');
+
+  // final round forbids further tool calls
+  assert.equal(
+    fakeGeminiCalls.at(-1).toolConfig.functionCallingConfig.mode,
+    'NONE',
+  );
+});
+
+test('telemetry history endpoint returns newest-first samples', async () => {
+  nowMs += 31_000;
+  for (const battery of [90, 80]) {
+    await req('POST', '/api/ingest/telemetry', {
+      token: INGEST,
+      body: { ...goodTelemetry(), battery_pct: battery, observed_at: new Date(nowMs).toISOString() },
+    });
+    nowMs += 1000;
+  }
+  const res = await req('GET', '/api/telemetry/history?limit=10', { token: DASH });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.count >= 2, true);
+  assert.equal(json.samples[0].battery_pct, 80);
 });
 
 // ---- configured-storage failure must not silently become memory ----

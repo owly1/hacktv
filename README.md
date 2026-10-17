@@ -26,6 +26,6 @@ provisioned service, set `DATABASE_URL`, then `npm start`.
 ## Status
 
 - `dist/` — static frontend, simulation mode works offline.
-- `backend/` — emberwatch.v1 API: token auth, origin allowlist, telemetry/snapshot ingest, Gemini adapter, TigerData/pg adapter, memory fallback mode. Verified by 22 contract tests; external services still unverified.
+- `backend/` — emberwatch.v1 API: token auth, origin allowlist, telemetry/snapshot ingest + history, TigerData/pg adapter, memory fallback mode. `/api/analyze` runs Gemini as an evidence-seeking agent: function-calling tools (`get_latest_telemetry`, `get_telemetry_history`, `get_snapshot`) let the model pull live evidence before writing a structured assessment whose `falsifiers` field states what would overturn it; every record carries `provenance: gemini-unverified` and a `tool_trace`. Verified by 24 contract tests + a real round-trip on gemini-3.8-flash.
 - `tests/` — `node --test` runs the backend contract suite.
 - `bridge/`, `docs/` — not yet in this repo.
