@@ -562,11 +562,12 @@ export function validatePlanContent(parsed) {
   };
 }
 
+// Incident replays run the same analysis as a live detection: the dashboard
+// sends the incident record, the drone's current telemetry and camera frame.
 export const DEMO_CONTEXT = [
-  'DEMO REPLAY: this is a recorded historical wildfire replayed in Emberwatch for demonstration.',
-  'Its drone telemetry and detection are SIMULATED (no drone flew this fire) and no camera image exists.',
-  'Treat the recorded conditions and the simulated drone position as the current situation, as if the fire had just been detected at ignition.',
-  'Do not describe the outcome (final area, impacts) as already known; use it only as context for how severe such fires can become.',
+  'This fire has just been detected by ANAFI-01. The incident record gives its location, the observed conditions and the drone\'s current telemetry and detection;',
+  'the attached image, when present, is the drone\'s current camera frame with its on-screen display.',
+  'Write the assessment for the incident commander exactly as for any live detection.',
 ].join(' ');
 
 const plainObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? JSON.parse(JSON.stringify(v)) : null);
@@ -1342,7 +1343,7 @@ export function createApp({
       if (!geminiTransport) throw new ApiError(503, 'Gemini is not configured on this backend');
       const nowMs = now();
       if (nowMs - state.lastDemoStart < PLAN_MIN_INTERVAL_MS) {
-        throw new ApiError(429, 'demo Gemini requests are limited to one per 10 seconds');
+        throw new ApiError(429, 'Gemini requests are limited to one per 10 seconds');
       }
       state.lastDemoStart = nowMs;
       const isPlan = pathname === '/api/demo/plan';
@@ -1350,9 +1351,12 @@ export function createApp({
       const parts = [
         { text: isPlan ? PLAN_INSTRUCTIONS : ANALYSIS_INSTRUCTIONS },
         { text: DEMO_CONTEXT },
-        { text: `Case record: ${JSON.stringify(demoCase)}` },
+        { text: `Incident record: ${JSON.stringify(demoCase)}` },
         { text: `Scenario conditions: ${JSON.stringify(scenario)}` },
       ];
+      // The drone camera frame, as a base64 JPEG (≤ 2 MB).
+      const image = typeof body.image === 'string' && /^[A-Za-z0-9+/=]+$/.test(body.image) && body.image.length <= 2_800_000 ? body.image : null;
+      if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
       if (isPlan) {
         const objective = typeof body.objective === 'string' ? body.objective.slice(0, 80) : 'initial-attack';
         const notes = typeof body.notes === 'string' ? body.notes.slice(0, 1500) : '';
@@ -1380,7 +1384,7 @@ export function createApp({
         model: geminiModel,
         case_id: typeof demoCase.id === 'string' ? demoCase.id : null,
         provenance: 'gemini-demo',
-        ...(isPlan ? { objective: body.objective ?? 'initial-attack', scenario, projection: plainObject(body.projection) } : { trigger: 'demo', evidence_kind: 'demo-case' }),
+        ...(isPlan ? { objective: body.objective ?? 'initial-attack', scenario, projection: plainObject(body.projection) } : { trigger: body.trigger === 'auto-detection' ? 'auto-detection' : 'manual', evidence_kind: image ? 'rgb-snapshot' : 'telemetry' }),
         ...content,
       });
       return;

@@ -269,13 +269,16 @@ test('demo cases get live Gemini analysis and plans that are never stored', asyn
   const t = await startApp({ replies: [analysisReply, planReply] });
   const demoCase = { id: 'jasper-2024', name: 'Jasper townsite complex', drone: { telemetry: { provenance: 'demo-simulated' } } };
   try {
-    const analysis = await (await t.req('POST', '/api/demo/analyze', { token: DASH, body: { case: demoCase, scenario: { wind: 50 } } })).json();
+    const analysis = await (await t.req('POST', '/api/demo/analyze', { token: DASH, body: { case: demoCase, scenario: { wind: 50 }, image: 'AAAA', trigger: 'auto-detection' } })).json();
     assert.equal(analysis.severity, 'extreme');
     assert.equal(analysis.provenance, 'gemini-demo');
     assert.equal(analysis.case_id, 'jasper-2024');
-    const prompt = t.calls[0].contents[0].parts.map((p) => p.text ?? '').join(' ');
-    assert.match(prompt, /DEMO REPLAY/);
+    assert.equal(analysis.trigger, 'auto-detection');
+    assert.equal(analysis.evidence_kind, 'rgb-snapshot');
+    const parts = t.calls[0].contents[0].parts, prompt = parts.map((p) => p.text ?? '').join(' ');
+    assert.match(prompt, /just been detected by ANAFI-01/);
     assert.match(prompt, /Jasper townsite complex/);
+    assert.equal(parts.at(-1).inline_data.data, 'AAAA', 'the drone camera frame goes to Gemini');
     assert.equal(t.calls[0].tools, undefined, 'demo analysis must not call tools that read live drone data');
 
     // Rate limit: one demo Gemini request per 10 s.
