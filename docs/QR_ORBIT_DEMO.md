@@ -6,6 +6,12 @@ confirmed an indoor cleared/netted demonstration area; the pilot landing/stop
 control has **not** been tested with the Pi connected. Do not switch to flight
 execution until that test and camera geometry checks have been completed.
 
+For the full cold-start, printed-board capture, measured calibration and staged
+checkout procedure, see [QR demo from everything off](QR_DEMO_FROM_OFF.md).
+`bridge/calibrate_camera.py` prepares intrinsics with flight verification false;
+`--checkout-one-segment` selects one chord and landing before the full orbit.
+That mode is armed with `ARM QR CHECKOUT`, using the same live execution gates.
+
 ## Try recognition now, with motors disabled
 
 On the laptop, from the repository, run:

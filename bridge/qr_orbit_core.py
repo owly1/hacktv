@@ -140,7 +140,8 @@ def polygon(limits):
              0.0, angle) for _ in range(limits.segments)]
 
 
-def fly_once(driver, limits, expected, sample, abort, report, clock=time.monotonic, sleep=time.sleep):
+def fly_once(driver, limits, expected, sample, abort, report, clock=time.monotonic, sleep=time.sleep,
+             one_segment=False):
     """Driver.move is cancellable and bounded; driver.land must confirm landed.
 
     No takeoff: the pilot supplies the initial hover. A watchdog failure lands
@@ -168,9 +169,10 @@ def fly_once(driver, limits, expected, sample, abort, report, clock=time.monoton
         reason = vehicle_reason(v, limits, clock(), starting=True) or marker_reason(m, expected, limits, clock())
         if reason:
             raise InterruptedError(reason)
-        for step, move in enumerate(polygon(limits), 1):
+        moves = polygon(limits)[:1] if one_segment else polygon(limits)
+        for step, move in enumerate(moves, 1):
             check()
-            report("circle", f"QR TEST: segment {step}/{limits.segments}", step, limits.segments)
+            report("circle", f"QR TEST: segment {step}/{len(moves)} of a {limits.segments}-sided path", step, len(moves))
             driver.move(move, limits.speed_mps, check)
             # Require a genuinely new frame captured after this move completed.
             completed, settle_until = clock(), clock() + 2.0

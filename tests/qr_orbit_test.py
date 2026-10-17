@@ -99,7 +99,7 @@ class FlightTests(unittest.TestCase):
         self.assertAlmostEqual(y, 0, places=10)
         self.assertAlmostEqual(yaw, 2*math.pi, places=10)
 
-    def fly(self, fail=None, confirmed=True):
+    def fly(self, fail=None, confirmed=True, one_segment=False):
         now, abort, reports, moves = [10.0], threading.Event(), [], []
         class Driver:
             def move(self, offset, speed, check):
@@ -121,7 +121,7 @@ class FlightTests(unittest.TestCase):
                 return vehicle(now[0]), marker(now[0], forward_m=2)
             return vehicle(now[0]), marker(now[0])
         fly_once(Driver(), LIMITS, TEXT, sample, abort, lambda *x: reports.append(x),
-                 clock=lambda: now[0], sleep=lambda n: now.__setitem__(0, now[0]+n))
+                 clock=lambda: now[0], sleep=lambda n: now.__setitem__(0, now[0]+n), one_segment=one_segment)
         return moves, reports
 
     def test_one_orbit_then_confirmed_land(self):
@@ -140,6 +140,13 @@ class FlightTests(unittest.TestCase):
         _, reports = self.fly("abort", confirmed=False)
         self.assertEqual(reports[-1][0], "error")
         self.assertFalse(any(r[0] == "landed" for r in reports))
+
+    def test_checkout_sends_one_chord_then_lands_without_further_segments(self):
+        moves, reports = self.fly(one_segment=True)
+        self.assertEqual(len(moves), 1)
+        self.assertAlmostEqual(math.hypot(moves[0][0], moves[0][1]), 2*math.sin(math.pi/12))
+        self.assertEqual(reports[0][2:], (1, 1))
+        self.assertEqual(reports[-1][0], "landed")
 
     def test_invalid_settings_rejected(self):
         for kw in ({"radius_m": 8}, {"height_m": 3}, {"speed_mps": 2}, {"radius_m": float("nan")}):

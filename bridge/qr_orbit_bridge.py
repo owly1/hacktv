@@ -296,9 +296,11 @@ class QROrbitBridge(AnafiBridge):
 
     def _orbit(self):
         fly_once(self.driver, self.limits, self.trigger.expected, self.sample,
-                 self.abort_flight, self.report)
+                 self.abort_flight, self.report,
+                 one_segment=getattr(self.args, "checkout_one_segment", False))
 
     def _terminal(self):
+        arm_phrase = "ARM QR CHECKOUT" if getattr(self.args, "checkout_one_segment", False) else "ARM QR ORBIT"
         try:
             for line in sys.stdin:
                 command = line.strip().upper()
@@ -306,7 +308,7 @@ class QROrbitBridge(AnafiBridge):
                     with self.trigger_lock:
                         self.trigger.cancel()
                     self._request_landing()
-                elif command == "ARM QR ORBIT":
+                elif command == arm_phrase:
                     if self.args.execute:
                         try:
                             read_preflight(self.args.preflight_file)
@@ -333,7 +335,10 @@ class QROrbitBridge(AnafiBridge):
 
     def run(self):
         print("REHEARSAL: motors disabled" if not self.args.execute else "LIVE EXPERIMENT: disarmed", flush=True)
-        print("Type ARM QR ORBIT once; LAND or X + Enter requests landing. No automatic takeoff.", flush=True)
+        checkout = getattr(self.args, "checkout_one_segment", False)
+        arm_phrase = "ARM QR CHECKOUT" if checkout else "ARM QR ORBIT"
+        print("ONE-SEGMENT CHECKOUT, THEN LAND" if checkout else "ONE TWELVE-SEGMENT ORBIT, THEN LAND", flush=True)
+        print(f"Type {arm_phrase} once; LAND or X + Enter requests landing. No automatic takeoff.", flush=True)
         threading.Thread(target=self._publish_status, daemon=True).start()
         threading.Thread(target=self._terminal, daemon=True).start()
 
@@ -348,7 +353,8 @@ class QROrbitBridge(AnafiBridge):
                         self.mission = threading.Thread(target=self._orbit)
                         self.mission.start()
                     else:
-                        self.report("circle", "selected QR recognized: WOULD fly 12 segments, then land (simulated)")
+                        count = 1 if checkout else 12
+                        self.report("circle", f"selected QR recognized: WOULD fly {count} segment(s), then land (simulated)")
                 if self.trigger.reason != last_reason:
                     last_reason = self.trigger.reason
                     print(f"[QR] {last_reason}", flush=True)
@@ -382,6 +388,8 @@ def main():
     parser = argument_parser()
     parser.description = __doc__
     parser.add_argument("--execute", action="store_true", help="opt in to hardware commands; still requires typed arming")
+    parser.add_argument("--checkout-one-segment", action="store_true",
+                        help="one chord then land, armed with ARM QR CHECKOUT; uses all the live-flight gates")
     parser.add_argument("--height", type=float, default=1.0, help="pilot-established hover height above launch floor")
     parser.add_argument("--marker-file", default=str(Path(__file__).with_name("orbit-marker.txt")))
     parser.add_argument("--camera-calibration", help="measured intrinsics/extrinsics JSON; required with --execute")

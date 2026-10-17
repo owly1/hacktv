@@ -50,6 +50,28 @@ def camera_fps(value):
     return rate
 
 
+def camera_width(value):
+    width = int(value)
+    if width != 0 and not 320 <= width <= 1920:
+        raise argparse.ArgumentTypeError("camera width must be 0 (native) or 320-1920 pixels")
+    return width
+
+
+def prepare_image(frame, cv2, sdk, width=640):
+    image = frame.as_ndarray()
+    fmt = frame.format()
+    if fmt == sdk.VDEF_I420:
+        image = cv2.cvtColor(image, cv2.COLOR_YUV2BGR_I420)
+    elif fmt == sdk.VDEF_NV12:
+        image = cv2.cvtColor(image, cv2.COLOR_YUV2BGR_NV12)
+    else:
+        raise ValueError("unsupported raw pixel format")
+    height, source_width = image.shape[:2]
+    if width and source_width != width:
+        image = cv2.resize(image, (width, max(1, round(height * width / source_width))))
+    return image
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ip", default="192.168.42.1")
@@ -61,6 +83,8 @@ def main():
                         help="frame sends raw JPEGs to the team's existing camera relay")
     parser.add_argument("--camera-fps", type=camera_fps, default=.5,
                         help="Maximum camera send rate, 0.5-15 FPS (default 0.5)")
+    parser.add_argument("--camera-width", type=camera_width, default=640,
+                        help="JPEG width; 0 preserves native decoded size for calibration (default 640)")
     args = parser.parse_args()
     token = os.environ.get("INGEST_TOKEN")
     if not token:
@@ -122,17 +146,7 @@ def main():
                 # Bound encoding/network attempts even if a backend request fails.
                 # The single-frame queue drops excess input instead of building lag.
                 last_attempt = attempted_at
-                image = frame.as_ndarray()
-                fmt = frame.format()
-                if fmt == olympe.VDEF_I420:
-                    image = cv2.cvtColor(image, cv2.COLOR_YUV2BGR_I420)
-                elif fmt == olympe.VDEF_NV12:
-                    image = cv2.cvtColor(image, cv2.COLOR_YUV2BGR_NV12)
-                else:
-                    print("Unsupported raw pixel format; snapshot omitted.")
-                    continue
-                height, width = image.shape[:2]
-                image = cv2.resize(image, (640, max(1, round(height * 640 / width))))
+                image = prepare_image(frame, cv2, olympe, args.camera_width)
                 ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 if ok:
                     if args.camera_transport == "frame":

@@ -85,6 +85,8 @@ on the laptop and open <http://127.0.0.1:8789/>. It reads the existing camera
 and animates a simulated orbit; it cannot command the aircraft.
 The separate opt-in flight experiment is **not flight-tested or installed as
 the Pi service**. See [QR orbit setup and physical checks](docs/QR_ORBIT_DEMO.md).
+The [step-by-step cold-start guide](docs/QR_DEMO_FROM_OFF.md) includes grounded
+calibration capture and a gated one-segment checkout before a full orbit.
 
 The **Demo** button replays recorded historical fires from
 `examples/historical-fires.mjs` and the drone's flight pattern. It is only

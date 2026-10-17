@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>BOSCO camera calibration board</title>
+<style>@page{size:A4 landscape;margin:15mm}body{font:12px Arial;color:#000;margin:0;background:#fff}h1{font-size:18px;margin:0 0 3mm}.board{width:200mm;height:140mm;display:grid;grid-template-columns:repeat(10,20mm);grid-template-rows:repeat(7,20mm);print-color-adjust:exact;-webkit-print-color-adjust:exact;margin:5mm 0}.black{background:#000}.white{background:#fff}.ruler{width:100mm;border-bottom:1mm solid #000;height:2mm}p{margin:2mm 0}@media print{button{display:none}}</style></head><body>
+<h1>BOSCO calibration — 9 × 6 inner corners</h1><p>Print at actual size / 100%, landscape. Each square is 20 mm. Measure the ruler after printing.</p>
+<div class="board" id="board" aria-label="Ten by seven squares, nine by six inner corners"></div>
+<div class="ruler"></div><p>This line must measure 100 mm. Keep the sheet flat on a rigid backing.</p>
+<button onclick="print()">Print calibration board</button>
+<script>for(let row=0;row<7;row++)for(let col=0;col<10;col++){const cell=document.createElement('div');cell.className=(row+col)%2?'white':'black';document.getElementById('board').appendChild(cell)}</script>
+</body></html>
