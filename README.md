@@ -17,7 +17,7 @@ then visit http://localhost:8000.
 
 ```
 cp .env.example .env        # set INGEST_TOKEN + DASHBOARD_TOKEN (must differ)
-node backend/server.mjs     # serves the dashboard + API on http://127.0.0.1:8787
+node --env-file=.env backend/server.mjs     # dashboard + API on http://127.0.0.1:8787
 ```
 
 Optional TigerData: `npm install` (for `pg`), apply `backend/schema.sql` to the
