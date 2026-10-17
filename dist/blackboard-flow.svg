@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1160" viewBox="0 0 1200 1160" role="img" aria-labelledby="title desc">
+<title id="title">Emberwatch system flow — observe, understand, review</title><desc id="desc">Read-only ANAFI data travels through a Linux bridge and authenticated API to TigerData, Gemini and the dashboard. A separate dashed simulation branch feeds the dashboard. Briefing drafts require human review before a local export. There are no flight or firefighting commands.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="m0 0 8 4-8 4" fill="none" stroke="#526a72" stroke-width="1.5"/></marker><marker id="orange-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="m0 0 8 4-8 4" fill="none" stroke="#bf7e4f" stroke-width="1.5"/></marker><style>text{font-family:Arial,sans-serif;fill:#2b434d}.box{fill:#fff;stroke:#9bafb7;stroke-width:1.5}.label{font-size:17px;font-weight:600}.sub{font-size:12px;fill:#83969e}.num{font-size:12px;fill:#83969e;font-weight:700}.line{fill:none;stroke:#526a72;stroke-width:1.7;marker-end:url(#arrow)}.caption{font-size:11px;fill:#7b9099}.section{font-size:10px;letter-spacing:2px;fill:#8ba0a6;font-weight:600}</style></defs>
+<rect width="1200" height="1160" fill="#f8fafb"/>
+<text x="65" y="56" class="section">EMBERWATCH / BLACKBOARD SYSTEM FLOW</text><text x="65" y="95" font-size="30" font-weight="600">Observe. Understand. Review.</text><text x="65" y="124" class="sub">Solid arrows = observed data / API results. Dashed arrow = synthetic demonstration inputs.</text>
+<text x="80" y="174" class="section">ACQUIRE &amp; VALIDATE</text>
+<rect x="75" y="195" width="210" height="80" rx="8" class="box"/><text x="91" y="216" class="num">01</text><text x="96" y="241" class="label">ANAFI</text><text x="96" y="259" class="sub">RGB + telemetry</text>
+<rect x="345" y="195" width="210" height="80" rx="8" class="box"/><text x="361" y="216" class="num">02</text><text x="366" y="241" class="label">Linux bridge</text><text x="366" y="259" class="sub">Olympe · read only</text>
+<rect x="615" y="195" width="210" height="80" rx="8" class="box"/><text x="631" y="216" class="num">03</text><text x="636" y="241" class="label">Authenticated API</text><text x="636" y="259" class="sub">Source / timestamp / units</text>
+<rect x="885" y="195" width="230" height="80" rx="8" class="box"/><text x="901" y="216" class="num">04</text><text x="906" y="241" class="label">TigerData</text><text x="906" y="259" class="sub">Telemetry + analysis records</text>
+<path d="M285 235H345" class="line"/><path d="M555 235H615" class="line"/><path d="M825 235H885" class="line"/>
+<text x="118" y="310" class="caption">Pilot flies manually.</text><text x="118" y="327" class="caption">No software flight commands.</text>
+<path d="M720 275V347" class="line"/><text x="736" y="315" class="caption">Fresh evidence only</text>
+<rect x="615" y="347" width="210" height="76" rx="8" class="box"/><text x="631" y="369" class="num">05</text><text x="636" y="391" class="label">Gemini analysis</text><text x="636" y="409" class="sub">Description + unknowns</text>
+<text x="80" y="465" class="section">DISPLAY WITH PROVENANCE</text>
+<rect x="75" y="490" width="265" height="108" rx="8" fill="#fff8f1" stroke="#d7ac8c" stroke-dasharray="5 4"/><text x="95" y="516" class="num">S · SIMULATION</text><text x="95" y="542" class="label">Synthetic scenario</text><text x="95" y="562" class="sub">Fictional map + spread + camera</text><text x="95" y="582" class="sub">Sample AI fixture; no API call</text>
+<rect x="470" y="490" width="380" height="108" rx="8" fill="#edf4f4" stroke="#7ca3aa" stroke-width="1.5"/><text x="490" y="516" class="num">06</text><text x="490" y="542" class="label">Dashboard + source / age labels</text><text x="490" y="562" class="sub">Connected mode hides fictional fire data.</text><text x="490" y="582" class="sub">Actual telemetry does not locate a fire.</text>
+<path d="M340 544H470" fill="none" stroke="#bf7e4f" stroke-width="1.7" stroke-dasharray="6 5" marker-end="url(#orange-arrow)"/>
+<path d="M720 423V490" class="line"/><path d="M1000 275V544H850" class="line"/><text x="1015" y="394" class="caption">Readback</text><text x="1015" y="411" class="caption">via API</text>
+<path d="M615 255H585V490" class="line"/><text x="429" y="383" class="caption">Latest telemetry</text><text x="429" y="400" class="caption">+ JPEG via API</text>
+<text x="80" y="655" class="section">HUMAN REVIEW GATE</text>
+<path d="M660 598V679" class="line"/>
+<rect x="470" y="679" width="380" height="82" rx="8" class="box"/><text x="490" y="702" class="num">07</text><text x="490" y="726" class="label">Briefing draft</text><text x="490" y="746" class="sub">Evidence / assumptions / gaps / questions</text>
+<path d="M660 761V801" class="line"/>
+<path d="m660 801 148 73-148 73-148-73Z" fill="#fff7ee" stroke="#c69d72" stroke-width="1.5"/><text x="660" y="860" text-anchor="middle" class="num">08</text><text x="660" y="882" text-anchor="middle" font-size="15" font-weight="600">Human review complete?</text><text x="660" y="902" text-anchor="middle" class="caption">Checks + name + evidence</text>
+<rect x="125" y="835" width="245" height="78" rx="8" class="box"/><text x="145" y="866" class="label">Verify / revise</text><text x="145" y="888" class="sub">Resolve evidence gaps</text>
+<path d="M512 874H370" class="line"/><path d="M247 835V720H470" class="line"/><text x="418" y="860" class="caption">No</text>
+<path d="M660 947V990" class="line"/><text x="676" y="973" class="caption">Yes</text>
+<rect x="470" y="990" width="380" height="76" rx="8" fill="#edf4f0" stroke="#91ab9c" stroke-width="1.5"/><text x="490" y="1012" class="num">09</text><text x="490" y="1035" class="label">Export local review record</text><text x="490" y="1054" class="sub">Self-reported review · not field authorization</text>
+<path d="M65 1103H1135" stroke="#dce4e8"/><text x="65" y="1128" font-size="12" font-weight="600">Human decisions remain outside the software.</text><text x="65" y="1147" class="caption">No autonomous flight, crew dispatch, suppression tactic, safe-route claim or evacuation order.</text>
+</svg>
