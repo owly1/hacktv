@@ -6,6 +6,11 @@ on the map, its spread is projected, Gemini analyzes the scene and writes an
 operational plan, and everything is stored in TigerData.
 Read [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md) for decisions, architecture and the API contract.
 
+**Restart the configured Windows laptop and Pi:** use the desktop
+`Start BOSCO.cmd` launcher or follow [the restart guide](docs/RESTART_CURRENT_LAPTOP.md).
+Its source is `scripts/Start-BOSCO.ps1`; it uses the saved backend
+configuration, SSH key and aircraft Wi-Fi profile. No API keys belong in Git.
+
 ## 1. Backend + dashboard (Windows or WSL, Node 22+)
 
 ```bash
