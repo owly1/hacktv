@@ -6,7 +6,7 @@
   <meta name="description" content="Emberwatch: a wildfire-monitoring hackathon prototype with a simulated fire-spread map and human-reviewed incident planning.">
   <title>Emberwatch · Incident workspace</title>
   <link rel="stylesheet" href="styles.css">
-  <script defer src="model.js"></script><script defer src="app.js"></script>
+  <script defer src="model.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script>
 </head>
 <body>
 <svg class="sprite" aria-hidden="true"><defs>
@@ -25,15 +25,16 @@
  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+ <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+ <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
 </defs></svg>
 <aside class="rail" aria-label="Workspace navigation">
  <a class="brand-mark" href="#overview" aria-label="Emberwatch home"><svg><use href="#i-flame"/></svg></a>
  <div class="rail-links">
-  <a href="#overview" class="rail-link active" title="Overview" aria-label="Overview"><svg><use href="#i-grid"/></svg></a>
-  <a href="#map-panel" class="rail-link" title="Spread explorer" aria-label="Spread explorer"><svg><use href="#i-flame"/></svg></a>
-  <a href="#drone-panel" class="rail-link" title="Drone telemetry" aria-label="Drone telemetry"><svg><use href="#i-drone"/></svg></a>
-  <a href="#response-panel" class="rail-link" title="Response planning" aria-label="Response planning"><svg><use href="#i-plan"/></svg></a>
-  <a href="#personnel-panel" class="rail-link" title="Incident personnel" aria-label="Incident personnel"><svg><use href="#i-users"/></svg></a>
+  <a href="#map-panel" class="rail-link" title="Spread explorer (full screen)" aria-label="Open spread explorer full screen"><svg><use href="#i-flame"/></svg></a>
+  <a href="#drone-panel" class="rail-link" title="Drone telemetry (full screen)" aria-label="Open drone telemetry full screen"><svg><use href="#i-drone"/></svg></a>
+  <a href="#response-panel" class="rail-link" title="Response planning (full screen)" aria-label="Open response planning full screen"><svg><use href="#i-plan"/></svg></a>
+  <a href="#personnel-panel" class="rail-link" title="Incident personnel (full screen)" aria-label="Open incident personnel full screen"><svg><use href="#i-users"/></svg></a>
  </div>
  <button class="rail-link" id="open-integrations" title="Integrations" aria-label="Open integrations"><svg><use href="#i-link"/></svg></button>
  <div class="avatar rail-avatar" title="Demo workspace">EW</div>
@@ -85,7 +86,7 @@
    </section>
    <div class="right-stack">
     <section class="panel" id="drone-panel"><div class="panel-header"><h2><svg><use href="#i-drone"/></svg>ANAFI-01</h2><span class="pill muted" id="drone-source">Simulated feed</span></div><div class="video-frame"><canvas id="camera" width="720" height="350" role="img" aria-label="Animated synthetic drone camera illustration, not a real camera feed"></canvas><img id="live-snapshot" alt="Latest ANAFI snapshot" hidden><div class="camera-overlay"><span id="camera-label"><i></i> SYNTHETIC CAMERA</span><span id="camera-clock">00:00</span></div><div class="camera-bottom"><span>RGB / illustrative</span><span id="video-status">No physical drone connected</span></div><div class="crosshair"></div></div><div class="telemetry-grid"><div><span>Altitude AGL</span><strong id="altitude">62.4 <small>m</small></strong></div><div><span>Ground speed</span><strong id="ground-speed">3.2 <small>m/s</small></strong></div><div><span>Link status</span><strong id="link-state">Demo <small>only</small></strong></div><div><span>Sample age</span><strong id="sample-age">Simulated</strong></div></div><div class="panel-foot"><span class="status-dot"></span><span id="telemetry-note">Synthetic telemetry · updates every 2 seconds</span></div></section>
-    <section class="panel analysis-panel"><div class="panel-header"><h2><svg class="purple"><use href="#i-spark"/></svg>Gemini analysis</h2><span class="tiny-tag purple-tag" id="analysis-source">DEMO FIXTURE</span></div><div class="analysis-content"><p class="analysis-eyebrow">SCENE SUMMARY</p><p id="analysis-summary">The exercise depicts a growing footprint northeast of the ignition. Wind and dry-fuel assumptions drive the illustration.</p><div class="insight"><span class="insight-icon">↗</span><div><strong id="analysis-title">Northeast expansion scenario</strong><p id="analysis-detail">No image has been sent to Gemini. This is a deterministic sample response.</p></div></div><div class="analysis-uncertainty"><svg><use href="#i-info"/></svg><span id="analysis-limit">No measured perimeter, fuel, terrain or weather. No calibrated confidence score.</span></div><button class="button full" id="analyze"><svg><use href="#i-spark"/></svg>Refresh sample analysis <span>↻</span></button></div></section>
+    <section class="panel analysis-panel" id="analysis-panel"><div class="panel-header"><h2><svg class="purple"><use href="#i-spark"/></svg>Gemini analysis</h2><span class="tiny-tag purple-tag" id="analysis-source">DEMO FIXTURE</span></div><div class="analysis-content"><p class="analysis-eyebrow">SCENE SUMMARY</p><p id="analysis-summary">The exercise depicts a growing footprint northeast of the ignition. Wind and dry-fuel assumptions drive the illustration.</p><div class="insight"><span class="insight-icon">↗</span><div><strong id="analysis-title">Northeast expansion scenario</strong><p id="analysis-detail">No image has been sent to Gemini. This is a deterministic sample response.</p></div></div><div class="analysis-uncertainty"><svg><use href="#i-info"/></svg><span id="analysis-limit">No measured perimeter, fuel, terrain or weather. No calibrated confidence score.</span></div><button class="button full" id="analyze"><svg><use href="#i-spark"/></svg>Refresh sample analysis <span>↻</span></button></div></section>
    </div>
   </div>
   <div class="secondary-grid">
