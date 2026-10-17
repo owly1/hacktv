@@ -4,6 +4,10 @@ Live wildfire monitoring from a Parrot ANAFI drone. The drone's camera feed is
 checked for fire several times a second; when it finds one, the fire is pinned
 on the map, its spread is projected, Gemini analyzes the scene and writes an
 operational plan, and everything is stored in TigerData.
+It also looks for **people who cannot ask for help**. Person detections are
+geolocated with an explicit error model, confirmed from several angles, and
+listed as rescue leads with a ±metres location for a responder to
+acknowledge. See [docs/PERSON_SEARCH.md](docs/PERSON_SEARCH.md).
 Read [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md) for decisions, architecture and the API contract.
 
 ## 1. Backend + dashboard (Windows or WSL, Node 22+)
@@ -40,10 +44,12 @@ drone reads it from up to ~2 m.
 
 ## Demo
 
-The **Demo** button replays recorded historical fires from
-`examples/historical-fires.mjs` and the drone's flight pattern. It is only
+The **Demo** button opens a simulated person search: multi-view revisits, a
+hot rock that never confirms, and a radio outage with delayed alerts. It also
+replays recorded historical fires from `examples/historical-fires.mjs` and the
+drone's flight pattern. It is only
 shown when requested.
 
 ## Tests
 
-`npm test` — 41 backend contract tests (Gemini, TigerData and the drone are faked).
+`npm test` — 54 tests: backend contract plus person search (Gemini, TigerData and the drone are faked).

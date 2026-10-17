@@ -2,7 +2,8 @@
 (function () {
   'use strict';
   const PANELS = {
-    'map-panel': 'Fire spread explorer',
+    'map-panel': 'Incident map',
+    'people-panel': 'People · rescue leads',
     'drone-panel': 'ANAFI-01 drone feed',
     'analysis-panel': 'Gemini analysis',
     'response-panel': 'Response planning assistant',

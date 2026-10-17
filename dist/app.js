@@ -83,6 +83,7 @@ function initMap() {
   state.layers.path = L.polyline([], {color: '#2F8F8A', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
   state.droneMarker = L.marker([state.site.latitude, state.site.longitude], {icon: L.divIcon({className: 'drone-icon-wrap', html: '<div class="drone-icon"><span>▲</span></div>', iconSize: [30, 30], iconAnchor: [15, 15]}), keyboard: false, opacity: 0}).addTo(state.layers.drone).bindTooltip('ANAFI-01');
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
+  peopleInitMap();
   window.addEventListener('resize', () => map.invalidateSize());
 }
 
@@ -105,7 +106,7 @@ function renderDrone() {
 }
 
 function origin() {
-  if (state.mode === 'demo') { const f = state.demo.selected; return f && f !== 'flight' ? [f.lat, f.lon] : null; }
+  if (state.mode === 'demo') { const f = state.demo.selected; return f && f !== 'flight' && f.lat != null ? [f.lat, f.lon] : null; }
   const inc = activeFire(); return inc ? [inc.latest.fire.latitude, inc.latest.fire.longitude] : null;
 }
 
@@ -149,6 +150,7 @@ function renderFirePin() {
 }
 
 function fitToFire() {
+  if (peopleDemoActive() && fitPeople()) return;
   const o = origin(); if (!o) { const t = state.telemetry; if (t?.latitude != null) state.map.setView([t.latitude, t.longitude], 19); else state.map.setView([state.site.latitude, state.site.longitude], 17); return; }
   state.map.invalidateSize();
   const pts = state.mode === 'demo' ? M.recordedPerimeter(state.demo.selected) : M.footprint(o, 30, state.scenario, activeFire().latest.details);
@@ -309,7 +311,9 @@ function renderPlan(offline) {
   if (!p) { if (offline) $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}</div>`; return; }
   const list = (title, items) => items?.length ? `<h4>${title}</h4><ul>${items.map(i => `<li>${escapeHTML(i)}</li>`).join('')}</ul>` : '';
   const approved = p.approvedBy && !state.planDirty;
-  $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}<div class="draft-heading"><h3>${escapeHTML(p.title)}</h3><span class="pill ${approved ? 'live-badge' : 'soft-orange'}">${approved ? 'Approved' : 'Draft'}</span></div><p class="draft-meta">GEMINI · ${escapeHTML(p.objective)} · ${escapeHTML(new Date(p.created_at).toLocaleTimeString())}${p.projection ? ` · spread at +${p.projection.minutes_ahead} min` : ''}</p>${state.planDirty ? '<div class="notice plan-dirty">Conditions changed since this plan. Regenerate to use the latest picture.</div>' : ''}<div class="advantage"><strong>Operational advantage</strong><p>${escapeHTML(p.advantage)}</p></div><h4>Situation</h4><p class="plan-text">${escapeHTML(p.situation)}</p>${list('Objectives', p.objectives)}<h4>Actions</h4><table class="plan-actions"><thead><tr><th>#</th><th>Action</th><th>Owner</th><th>Timing</th></tr></thead><tbody>${p.actions.map(a => `<tr><td>${a.priority}</td><td>${escapeHTML(a.action)}${a.rationale ? `<small>${escapeHTML(a.rationale)}</small>` : ''}</td><td>${escapeHTML(a.owner || '—')}</td><td>${escapeHTML(a.timing || '—')}</td></tr>`).join('')}</tbody></table>${list('Resources & staging', p.resources)}${list('Re-planning triggers', p.triggers)}${list('Risks', p.risks)}${p.next_update ? `<h4>Next update</h4><p class="plan-text">${escapeHTML(p.next_update)}</p>` : ''}<div class="reviewer-row"><input id="reviewer-name" aria-label="Approver name" maxlength="80" placeholder="Incident commander" value="${escapeHTML(p.approvedBy || '')}" ${approved ? 'disabled' : ''}><button class="button primary" id="approve-plan" ${approved || state.planDirty ? 'disabled' : ''}>Approve plan</button></div>${approved ? `<p class="microcopy">Approved by ${escapeHTML(p.approvedBy)} at ${escapeHTML(new Date(p.approvedAt).toLocaleString())}.</p>` : ''}<div class="draft-buttons"><span class="microcopy">Stored in TigerData with the detection it was built on.</span><button class="button" id="export-plan">Export plan ↓</button></div></div>`;
+  // The drone cannot certify ground as safe: point out any wording that claims it.
+  const wording = p.wording_flags?.length ? `<div class="gemini-offline"><strong>Check the wording before approving</strong><p>This plan describes ground as safe or cleared (${p.wording_flags.map(w => `“${escapeHTML(w)}”`).join(', ')}). BOSCO cannot verify that. Restate it as observed hazards and when they were seen.</p></div>` : '';
+  $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}${wording}<div class="draft-heading"><h3>${escapeHTML(p.title)}</h3><span class="pill ${approved ? 'live-badge' : 'soft-orange'}">${approved ? 'Approved' : 'Draft'}</span></div><p class="draft-meta">GEMINI · ${escapeHTML(p.objective)} · ${escapeHTML(new Date(p.created_at).toLocaleTimeString())}${p.projection ? ` · spread at +${p.projection.minutes_ahead} min` : ''}</p>${state.planDirty ? '<div class="notice plan-dirty">Conditions changed since this plan. Regenerate to use the latest picture.</div>' : ''}<div class="advantage"><strong>Operational advantage</strong><p>${escapeHTML(p.advantage)}</p></div><h4>Situation</h4><p class="plan-text">${escapeHTML(p.situation)}</p>${list('Objectives', p.objectives)}<h4>Actions</h4><table class="plan-actions"><thead><tr><th>#</th><th>Action</th><th>Owner</th><th>Timing</th></tr></thead><tbody>${p.actions.map(a => `<tr><td>${a.priority}</td><td>${escapeHTML(a.action)}${a.rationale ? `<small>${escapeHTML(a.rationale)}</small>` : ''}</td><td>${escapeHTML(a.owner || '—')}</td><td>${escapeHTML(a.timing || '—')}</td></tr>`).join('')}</tbody></table>${list('Resources & staging', p.resources)}${list('Re-planning triggers', p.triggers)}${list('Risks', p.risks)}${p.next_update ? `<h4>Next update</h4><p class="plan-text">${escapeHTML(p.next_update)}</p>` : ''}<div class="reviewer-row"><input id="reviewer-name" aria-label="Approver name" maxlength="80" placeholder="Incident commander" value="${escapeHTML(p.approvedBy || '')}" ${approved ? 'disabled' : ''}><button class="button primary" id="approve-plan" ${approved || state.planDirty ? 'disabled' : ''}>Approve plan</button></div>${approved ? `<p class="microcopy">Approved by ${escapeHTML(p.approvedBy)} at ${escapeHTML(new Date(p.approvedAt).toLocaleString())}.</p>` : ''}<div class="draft-buttons"><span class="microcopy">Stored in TigerData with the detection it was built on.</span><button class="button" id="export-plan">Export plan ↓</button></div></div>`;
   $('approve-plan').onclick = () => { const name = $('reviewer-name').value.trim(); if (!name) { toast('Enter the approving incident commander.'); return; } p.approvedBy = name; p.approvedAt = new Date().toISOString(); renderPlan(); toast('Plan approved.'); };
   $('export-plan').onclick = () => download(`bosco-plan-${p.id.slice(0, 8)}.json`, JSON.stringify(p, null, 2), 'application/json');
 }
@@ -338,15 +342,32 @@ async function toggleDemo() {
   $('incident-eyebrow').textContent = 'DEMO · HISTORICAL CASES'; $('incident-title').textContent = 'Demo replay'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
   $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'demo — live detection paused';
   const sel = $('demo-fire'); sel.hidden = false;
-  sel.innerHTML = '<option value="flight">ANAFI demo flight pattern · UTSC</option>' + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${escapeHTML(f.startDate.slice(0, 4))}</option>`).join('');
+  sel.innerHTML = '<option value="people">Person search · simulated multi-view</option><option value="flight">ANAFI demo flight pattern · UTSC</option>' + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${escapeHTML(f.startDate.slice(0, 4))}</option>`).join('');
   state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.path.setLatLngs([]);
   for (const f of state.demo.fires) L.circleMarker([f.lat, f.lon], {radius: 6, color: '#d9480f', weight: 2, fillColor: '#d9480f', fillOpacity: .85}).addTo(state.layers.demo).bindTooltip(f.name).on('click', () => { sel.value = f.id; selectDemo(f.id); });
-  selectDemo(state.demo.fires[0]?.id ?? 'flight'); sel.value = state.demo.selected?.id ?? 'flight';
+  selectDemo('people'); sel.value = 'people';
 }
 
 function selectDemo(id) {
   state.demo.layer?.remove();
   state.demo.layer = L.layerGroup().addTo(state.map);
+  stopPeopleDemo();
+  if (id === 'people') {
+    // Simulated search: a fire whose position arrives with the first snapshot; spread grows from it.
+    state.demo.selected = {id: 'people', lat: null, lon: null, areaHa: 3, directionDeg: 225};
+    state.scenario = {...M.BASE, wind: 24, direction: 225}; state.minute = 20;
+    setBanner('demo', '<strong>Demo mode · simulated person search.</strong> A seeded simulation runs through the real lead pipeline: survey, multi-angle revisits, a hot rock that never confirms, and a radio outage with delayed alerts. Nothing here is live.');
+    $('incident-eyebrow').textContent = 'DEMO · SIMULATED SEARCH'; $('incident-title').textContent = 'Person search replay';
+    $('incident-sub').textContent = 'Simulated wildfire person search · 70 m survey, multi-view revisits, a radio outage · seeded, the same every run';
+    $('map-subtitle').textContent = 'Simulated search: rescue leads, observed ground, next looks and the fire';
+    startPeopleDemo();
+    state.map.setView([state.site.latitude - .0012, state.site.longitude + .0018], 17);
+    setTimeout(() => { if (peopleDemoActive()) fitToFire(); }, 1500);
+    renderSpread(); return;
+  }
+  setBanner('demo', '<strong>Demo mode.</strong> Recorded historical fires from <code>examples/</code> and a replay of the ANAFI demo flight pattern. Live data resumes when you exit.');
+  $('incident-eyebrow').textContent = 'DEMO · HISTORICAL CASES'; $('incident-title').textContent = 'Demo replay';
+  $('map-subtitle').textContent = 'Recorded fires replayed from ignition, plus the drone flight pattern';
   if (id === 'flight') {
     state.demo.selected = 'flight'; state.demo.started = performance.now();
     const s = [state.site.latitude, state.site.longitude], side = 2 * Math.sin(Math.PI / 8);
@@ -373,11 +394,13 @@ function selectDemo(id) {
 }
 
 function exitDemo() {
+  stopPeopleDemo();
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.layers.demo.clearLayers(); state.map.closePopup();
   $('demo-toggle').innerHTML = 'Demo <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
   $('map-pill').textContent = 'Live'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
   state.scenario = state.detectedScenario ? {...state.detectedScenario} : {...M.BASE}; state.minute = 0; state.episodeSeen = null; state.centredOnDrone = false;
   renderIncident(); renderDrone(); renderSpread(); renderTelemetry(); renderFlight(); fitToFire();
+  pollPeople().catch(() => {});
 }
 
 function animateDemoFlight(now) {
@@ -473,6 +496,7 @@ function bindUi() {
 function exportBrief() {
   const inc = activeFire(), a = state.analysis, p = state.plan, proj = projection();
   const lines = ['# BOSCO incident brief', '', `Generated: ${new Date().toISOString()}`, `Site: ${state.site.name} (${state.site.latitude}, ${state.site.longitude})`, `Mode: ${state.mode}`, '',
+    '## People · rescue leads', peopleBrief(), '',
     '## Fire', inc ? [`Detected ${inc.first_detected_at} by ANAFI-01 (${inc.latest.source}, ${inc.latest.label}, max confidence ${Math.round(inc.max_confidence * 100)}%), ${inc.sightings} sightings.`, `Position: ${inc.latest.fire.latitude}, ${inc.latest.fire.longitude} — ${inc.latest.fire.distance_m} m from the drone, bearing ${inc.latest.fire.bearing_deg}° (${inc.latest.fire.position_source}).`, `Details: ${JSON.stringify(inc.latest.details)}`].join('\n') : 'No active fire.', '',
     '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
     '## Drone telemetry', state.telemetry ? '```json\n' + JSON.stringify(state.telemetry, null, 2) + '\n```' : 'No telemetry.', '',
@@ -493,7 +517,7 @@ async function connect() {
   if (started) return; started = true;
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
-  every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
+  every(2000, 'people', pollPeople); every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
   try { const {plan} = await getJson('/api/plan/latest'); if (plan) { state.plan = plan; renderPlan(); } } catch {}
   streamVideo();
 }
@@ -503,6 +527,7 @@ function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
   if (state.playing) { state.minute = (state.minute + delta * .002 * state.speed) % 60; if (now - lastSpread > 66) { lastSpread = now; renderSpread(); } }
   animateDemoFlight(now);
+  tickPeopleDemo(now);
   requestAnimationFrame(animate);
 }
 

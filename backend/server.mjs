@@ -10,11 +10,13 @@
 // writes operational plans.
 
 import http from 'node:http';
-import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { PersonSearch, validatePersonObservation, describeLeadsForPlan, MAX_CROP_BYTES } from './people.mjs';
+import { PersonSearchSim } from './people-sim.mjs';
 import {
   ApiError,
   MAX_FRAME_BYTES,
@@ -344,6 +346,9 @@ export const ANALYSIS_INSTRUCTIONS = [
   'Analyze the supplied drone evidence: describe the visible fire and smoke, then estimate fire size, intensity, severity and the most likely spread direction',
   'using the detection details, the estimated fire position, scenario conditions and drone telemetry.',
   'Set severity to one of: low, moderate, high, extreme.',
+  'People come first: if the data lists person-search rescue leads, the plan must address every unacknowledged lead (who goes, how they get there, what is still unknown), ahead of property and containment.',
+  'Never describe any route, road, area, zone or corridor as "safe" or "clear". Fire behaviour changes and the drone cannot verify ground conditions. Instead state the observed hazards, what was not observed, how recent the observation is, and the trigger that would close the route.',
+  'Treat lead positions as areas: quote the ±metres uncertainty, and never present a detector score or any percentage as the chance that a person is there.',
   'Direction convention: every direction in the data (wind_dir_deg, direction, toward_deg, bearing_deg) is the direction the fire spreads or the wind blows TOWARD, in degrees clockwise from north (60 = toward the east-northeast) — never the direction the wind comes from.',
   'List what this evidence cannot establish under "unknowns" and the specific observations that would overturn your assessment under "falsifiers".',
   'If only telemetry is supplied (no image), say plainly that this sample contains no visual fire evidence.',
@@ -518,6 +523,13 @@ const PLAN_SCHEMA = {
   },
   required: ['title', 'situation', 'objectives', 'actions', 'advantage'],
 };
+
+/** Phrases a plan must not contain: nothing the drone sees can certify ground as safe. */
+const UNSAFE_WORDING = /\b(safe|safer|clear|cleared|pre-cleared|secure|secured)(?:[\s/-]+(?!(?:the|a|an|this|that|all|any|of)\b)[a-z]+){0,2}?[\s/-]+(routes?|roads?|paths?|corridors?|zones?|areas?|passages?|exits?|ways? out)\b|\b(routes?|roads?|paths?|corridors?|zones?|areas?)\s+(is|are)\s+(now\s+)?(safe|clear|cleared)\b/gi;
+export function findUnsafeWording(plan) {
+  const text = JSON.stringify(plan);
+  return [...new Set((text.match(UNSAFE_WORDING) ?? []).map((m) => m.toLowerCase()))];
+}
 
 export function validatePlanContent(parsed) {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -721,6 +733,7 @@ export function createApp({
   demoFires = [],
   tileFetch = fetch,
   autoAnalyze = true,
+  personSearch = {},
 }) {
   if (!ingestToken || !dashboardToken || ingestToken === dashboardToken) {
     throw new Error('INGEST_TOKEN and DASHBOARD_TOKEN must be non-empty and different');
@@ -735,7 +748,52 @@ export function createApp({
     gemini: { lastError: null, lastErrorAt: null, lastOkAt: null, pending: false },
     flightEvents: [],
     autoTimer: null,
+    peopleSaveTimer: null,
+    demoSim: null,
   };
+  const peopleFile = dataDir ? path.join(dataDir, 'people', 'state.json') : null;
+  let people = new PersonSearch(personSearch);
+  // Leads survive a backend restart: they are written to data/people/state.json.
+  const peopleReady = peopleFile
+    ? readFile(peopleFile, 'utf8').then((text) => { people = PersonSearch.fromJSON(JSON.parse(text), personSearch); }).catch(() => {})
+    : Promise.resolve();
+
+  function savePeople() {
+    if (!peopleFile || state.peopleSaveTimer) return;
+    state.peopleSaveTimer = setTimeout(async () => {
+      state.peopleSaveTimer = null;
+      try {
+        await mkdir(path.dirname(peopleFile), { recursive: true });
+        await writeFile(`${peopleFile}.tmp`, JSON.stringify(people));
+        await rename(`${peopleFile}.tmp`, peopleFile);
+      } catch (err) {
+        console.error(`person search: could not save leads: ${err.message}`);
+      }
+    }, 150);
+    state.peopleSaveTimer.unref?.();
+  }
+
+  function cropPath(obsId) { return dataDir ? path.join(dataDir, 'people', 'crops', `${obsId.replace(/[^A-Za-z0-9._-]/g, '_')}.jpg`) : null; }
+  async function saveCrop(obsId, jpeg) {
+    const file = cropPath(obsId);
+    if (!file) return false;
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, jpeg);
+    return true;
+  }
+
+  async function fireContext() {
+    const incident = await activeIncident().catch(() => null);
+    const f = incident?.active ? incident.latest?.fire : null;
+    return f?.latitude != null ? { latitude: f.latitude, longitude: f.longitude } : null;
+  }
+
+  function demoSimAt(t) {
+    const nowMs = now();
+    if (!state.demoSim || t < state.demoSim.t) state.demoSim = new PersonSearchSim({ site, startMs: nowMs - t * 1000 });
+    state.demoSim.advanceTo(t);
+    return state.demoSim;
+  }
 
   function requireAuth(req, kind) {
     const token = tokenFrom(req);
@@ -1014,6 +1072,7 @@ export function createApp({
           ? { active: incident.active, episode_id: incident.episode_id, last_seen_at: incident.last_seen_at }
           : { active: false },
         flight: lastFlight,
+        people: (() => { const c = people.snapshot(nowMs).counts; return { open_leads: c.open, possible_people: c.possible_people, unacknowledged: c.unacknowledged }; })(),
       });
       return;
     }
@@ -1023,6 +1082,9 @@ export function createApp({
       const body = await readJson(req);
       const sample = validateTelemetry(body, now());
       await storage.insertTelemetry(sample);
+      await peopleReady;
+      people.observePose({ ...sample, heading_deg: sample.extra?.heading_deg ?? sample.attitude_deg?.yaw ?? null, gimbal_pitch_deg: sample.extra?.gimbal_pitch_deg ?? null }, Date.parse(sample.observed_at));
+      if (people.leads.size || people.cells.size) savePeople();
       sendJson(res, 200, { accepted: true, stored: storage.status() });
       return;
     }
@@ -1267,6 +1329,7 @@ export function createApp({
           : 'No fire is currently detected by the drone; plan for readiness and surveillance.' },
         { text: `Scenario conditions: ${JSON.stringify(scenario)}. Projected spread: ${JSON.stringify(projection)}.` },
         { text: `Latest drone telemetry: ${JSON.stringify(telemetry)}.` },
+        { text: describeLeadsForPlan(people.snapshot(nowMs, { fire: await fireContext() })) },
         { text: `Latest Gemini scene analysis: ${JSON.stringify(analyses[0] ? {
           summary: analyses[0].summary, severity: analyses[0].severity, spread_outlook: analyses[0].spread_outlook,
         } : null)}.` },
@@ -1280,6 +1343,7 @@ export function createApp({
           generationConfig: { responseMimeType: 'application/json', responseSchema: PLAN_SCHEMA },
         });
         content = validatePlanContent(parseGeminiJson(apiResponse));
+        content.wording_flags = findUnsafeWording(content);
         recordGeminiResult(null);
       } catch (err) {
         recordGeminiResult(err);
@@ -1306,6 +1370,79 @@ export function createApp({
       requireAuth(req, 'dashboard');
       const [plan] = await storage.latestPlans(1);
       sendJson(res, 200, { plan: plan ?? null });
+      return;
+    }
+
+    // ---- person search: rescue leads for people who cannot ask for help
+    if (req.method === 'POST' && pathname === '/api/ingest/person') {
+      requireAuth(req, 'ingest');
+      await peopleReady;
+      const nowMs = now();
+      const { obs, crop } = validatePersonObservation(await readJson(req), nowMs);
+      const result = people.addObservation(obs, nowMs);
+      if (!result.duplicate && crop && await saveCrop(result.observation.id, crop)) people.attachCrop(result.observation.id);
+      savePeople();
+      const summary = people.summarize(result.lead, nowMs, { fire: await fireContext() });
+      sendJson(res, 200, {
+        accepted: true, duplicate: result.duplicate, obs_id: result.observation?.id ?? obs.obs_id,
+        lead_id: summary.id, lead_number: summary.number, new_lead: Boolean(result.new_lead), status: summary.status,
+        delayed: Boolean(result.observation?.delayed),
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/ingest/person/crop') {
+      requireAuth(req, 'ingest');
+      await peopleReady;
+      const obsId = url.searchParams.get('obs_id') ?? '';
+      const jpeg = await readBody(req, MAX_CROP_BYTES);
+      if (jpeg.length < 3 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new ApiError(400, 'body must be a JPEG');
+      if (!people.obsIndex.has(obsId)) throw new ApiError(404, 'no observation with that obs_id');
+      if (await saveCrop(obsId, jpeg)) people.attachCrop(obsId);
+      savePeople();
+      res.writeHead(204); res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/people') {
+      requireAuth(req, 'dashboard');
+      await peopleReady;
+      sendJson(res, 200, { simulated: false, ...people.snapshot(now(), { fire: await fireContext() }) });
+      return;
+    }
+
+    if (req.method === 'POST' && (pathname === '/api/people/ack' || pathname === '/api/people/close')) {
+      requireAuth(req, 'dashboard');
+      await peopleReady;
+      const body = await readJson(req);
+      if (typeof body.lead_id !== 'string') throw new ApiError(400, 'lead_id is required');
+      const target = body.demo === true ? state.demoSim?.search : people;
+      if (!target) throw new ApiError(404, 'no demo search is running');
+      // The simulation keeps its own clock; stamp demo actions with it so times line up.
+      const atMs = target === people ? now() : state.demoSim.startMs + Math.max(0, state.demoSim.t) * 1000;
+      const lead = pathname.endsWith('/ack')
+        ? target.acknowledge(body.lead_id, { by: body.by, note: body.note }, atMs)
+        : target.close(body.lead_id, { by: body.by, outcome: body.outcome, note: body.note }, atMs);
+      if (target === people) savePeople();
+      sendJson(res, 200, { lead: target.summarize(lead, now(), { fire: body.demo ? state.demoSim.fireLL() : await fireContext() }) });
+      return;
+    }
+
+    const cropMatch = /^\/api\/people\/crop\/([A-Za-z0-9._:-]{1,64})$/.exec(pathname);
+    if (req.method === 'GET' && cropMatch) {
+      requireAuth(req, 'dashboard');
+      const file = cropPath(cropMatch[1]);
+      const jpeg = file ? await readFile(file).catch(() => null) : null;
+      if (!jpeg) throw new ApiError(404, 'no crop for that observation');
+      res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' });
+      res.end(jpeg);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/demo/people') {
+      requireAuth(req, 'dashboard');
+      const t = Math.max(0, Math.min(Number(url.searchParams.get('t')) || 0, 3600));
+      sendJson(res, 200, demoSimAt(t).snapshot());
       return;
     }
 
@@ -1390,7 +1527,15 @@ async function main() {
     ? makeGeminiTransport({ apiKey: geminiApiKey, model: geminiModel, fallbackModels })
     : null;
 
+  const sector = (process.env.SEARCH_SECTOR || '').split(',').map(Number);
+  const personSearch = {
+    hfovDeg: Number(process.env.CAMERA_HFOV_DEG) || 69,
+    cellM: Number(process.env.COVERAGE_CELL_M) || 5,
+    sector: sector.length === 4 && sector.every(Number.isFinite) ? sector : null,
+  };
+
   const handler = createApp({
+    personSearch,
     ingestToken,
     dashboardToken,
     allowedOrigins,
