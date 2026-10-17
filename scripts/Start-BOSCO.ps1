@@ -34,7 +34,9 @@ if (-not [System.Net.IPAddress]::TryParse($PiAddress, [ref]$parsedAddress)) {
 
 # Verify against the already trusted identity even if Windows changes the
 # adapter's interface number after a restart. No new host key is accepted.
-$sshBase = @('-6', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
+# Let OpenSSH select the family for the literal Pi address. Forcing -6 also
+# restricts reverse-forward destinations and breaks IPv4 loopback 127.0.0.1.
+$sshBase = @('-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
     '-o', 'StrictHostKeyChecking=yes', '-o', 'HostKeyAlias=fe80::2ecf:67ff:fe80:173e%38',
     '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
     '-i', $privateKey, '-o', ('UserKnownHostsFile=' + $knownHosts))

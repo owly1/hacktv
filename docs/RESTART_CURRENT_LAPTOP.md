@@ -49,7 +49,7 @@ npm start
 Leave it open. In a second PowerShell window, open SSH **with the tunnel**:
 
 ```powershell
-ssh -6 -t -i "$env:USERPROFILE\.ssh\emberwatch_pi_ed25519" -o "UserKnownHostsFile=$env:USERPROFILE\.ssh\emberwatch_pi_known_hosts" -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -R 127.0.0.1:8788:127.0.0.1:8787 -l pet 'fe80::2ecf:67ff:fe80:173e%38'
+ssh -t -i "$env:USERPROFILE\.ssh\emberwatch_pi_ed25519" -o "UserKnownHostsFile=$env:USERPROFILE\.ssh\emberwatch_pi_known_hosts" -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -R 127.0.0.1:8788:127.0.0.1:8787 -l pet 'fe80::2ecf:67ff:fe80:173e%38'
 ```
 
 At the Pi's Linux prompt, paste:
@@ -83,6 +83,10 @@ discard a host-key warning or overwrite the existing card.
 - **Pi unreachable:** check separate power, Ethernet and the boot wait.
 - **Tunnel/port already in use:** reuse the existing working windows. Do
   not launch multiple copies. No unrelated process is killed by the launcher.
+- **`connect_to 127.0.0.1: unknown host`:** do not add `-6` to the forwarding
+  command. The Pi's literal IPv6 address already selects IPv6 for SSH; the
+  laptop backend destination is IPv4. The corrected launcher leaves the
+  address family automatic.
 - **Aircraft Wi-Fi connection fails:** check aircraft power and that its
   SSID is visible. The saved profile is for this team's ANAFI only.
 - **Camera timestamp stops:** check the Pi connection window and receiver
@@ -107,5 +111,10 @@ Allow the Pi to finish shutting down before disconnecting its power, then
 power off the drone. Startup will still use the saved software, Wi-Fi
 profile, SSH key and backend configuration next time.
 
-The launcher was checked without mutations against the running setup.
-A complete all-power-off/cold-start rehearsal has not been performed.
+The initial readiness check reused an existing tunnel and missed the forced
+IPv6 bug in a new connection. After removing that setting, a fresh connection
+through the launcher's `-Mode Pi` reached the Pi shell and delivered camera
+frames and telemetry with ages under two seconds. The browser visibly
+displayed the recovered live camera. Gemini remained configured and storage
+reported PostgreSQL. A complete all-power-off/cold-start rehearsal has not
+been performed.
