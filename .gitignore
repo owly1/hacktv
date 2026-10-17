@@ -1,5 +1,6 @@
 # secrets
 .env
+*.local
 
 # runtime output
 anafi_out/
