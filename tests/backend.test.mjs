@@ -191,6 +191,40 @@ test('telemetry with no measurements is rejected', async () => {
   assert.equal(res.status, 400);
 });
 
+test('ANAFI flight-state fields survive ingest (bridge handoff shape)', async () => {
+  nowMs += 1_000; // avoid observed_at ties — latestTelemetry keeps the earlier row
+  const res = await req('POST', '/api/ingest/telemetry', {
+    token: INGEST,
+    body: {
+      ...goodTelemetry(),
+      state: 'landed',
+      gps_fix: false,
+      vertical_speed_mps: -0.4,
+      attitude_deg: { roll: -4, pitch: 20, yaw: -155 },
+      extra: { gimbal_pitch_deg: -12, link_quality: 'wifi' },
+      unknown_field_will_be_dropped: 'x',
+    },
+  });
+  assert.equal(res.status, 200);
+
+  const latest = await req('GET', '/api/telemetry/latest', { token: DASH });
+  const s = (await latest.json()).sample;
+  assert.equal(s.state, 'landed');
+  assert.equal(s.gps_fix, 'no fix');            // boolean normalized
+  assert.equal(s.vertical_speed_mps, -0.4);
+  assert.deepEqual(s.attitude_deg, { roll: -4, pitch: 20, yaw: -155 });
+  assert.deepEqual(s.extra, { gimbal_pitch_deg: -12, link_quality: 'wifi' });
+  assert.equal('unknown_field_will_be_dropped' in s, false);
+});
+
+test('malformed attitude_deg is rejected', async () => {
+  const res = await req('POST', '/api/ingest/telemetry', {
+    token: INGEST,
+    body: { ...goodTelemetry(), attitude_deg: { roll: 'steep' } },
+  });
+  assert.equal(res.status, 400);
+});
+
 // ---- snapshot ingest ----
 
 test('snapshot roundtrip serves JPEG with X-Captured-At', async () => {

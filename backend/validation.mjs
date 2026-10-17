@@ -92,8 +92,55 @@ export function validateTelemetry(body, nowMs) {
   checkNumberOrNull(sample.battery_pct, 'battery_pct', { min: 0, max: 100 });
   checkNumberOrNull(sample.altitude_m, 'altitude_m');
   checkNumberOrNull(sample.ground_speed_mps, 'ground_speed_mps', { min: 0 });
+  checkNumberOrNull(sample.vertical_speed_mps, 'vertical_speed_mps');
   checkNumberOrNull(sample.latitude, 'latitude', { min: -90, max: 90 });
   checkNumberOrNull(sample.longitude, 'longitude', { min: -180, max: 180 });
+
+  // Flight-state fields the ANAFI/Olympe feed reports. Optional; validated
+  // when present so a malformed bridge payload can't poison the record.
+  if (sample.state !== undefined && sample.state !== null
+      && (typeof sample.state !== 'string' || sample.state.length === 0)) {
+    throw new ApiError(400, 'state must be a non-empty string when present');
+  }
+
+  let gpsFix = null;
+  if (typeof sample.gps_fix === 'boolean') {
+    gpsFix = sample.gps_fix ? 'fix' : 'no fix';
+  } else if (typeof sample.gps_fix === 'string' && sample.gps_fix.length > 0) {
+    gpsFix = sample.gps_fix;
+  } else if (sample.gps_fix !== undefined && sample.gps_fix !== null) {
+    throw new ApiError(400, 'gps_fix must be a non-empty string or boolean when present');
+  }
+
+  let attitude = null;
+  if (sample.attitude_deg !== undefined && sample.attitude_deg !== null) {
+    const a = sample.attitude_deg;
+    if (typeof a !== 'object' || Array.isArray(a)) {
+      throw new ApiError(400, 'attitude_deg must be an object {roll, pitch, yaw}');
+    }
+    for (const axis of ['roll', 'pitch', 'yaw']) {
+      if (a[axis] !== undefined && a[axis] !== null
+          && (typeof a[axis] !== 'number' || !Number.isFinite(a[axis]))) {
+        throw new ApiError(400, `attitude_deg.${axis} must be a finite number or null`);
+      }
+    }
+    attitude = {
+      roll: a.roll ?? null,
+      pitch: a.pitch ?? null,
+      yaw: a.yaw ?? null,
+    };
+  }
+
+  // `extra` is a free-form JSON bag for fields the contract does not name
+  // yet (gimbal angles, link quality, ...). Unknown top-level keys are
+  // still dropped — `extra` is the deliberate pass-through.
+  let extra = null;
+  if (sample.extra !== undefined && sample.extra !== null) {
+    if (typeof sample.extra !== 'object' || Array.isArray(sample.extra)) {
+      throw new ApiError(400, 'extra must be a JSON object when present');
+    }
+    extra = JSON.parse(JSON.stringify(sample.extra));
+  }
 
   // GPS is a pair: unknown GPS must stay null on both axes, never (0, 0).
   const hasLat = sample.latitude !== null && sample.latitude !== undefined;
@@ -119,8 +166,13 @@ export function validateTelemetry(body, nowMs) {
     battery_pct: sample.battery_pct ?? null,
     altitude_m: sample.altitude_m ?? null,
     ground_speed_mps: sample.ground_speed_mps ?? null,
+    vertical_speed_mps: sample.vertical_speed_mps ?? null,
     latitude: sample.latitude ?? null,
     longitude: sample.longitude ?? null,
+    state: sample.state ?? null,
+    gps_fix: gpsFix,
+    attitude_deg: attitude,
+    extra,
   };
 }
 
