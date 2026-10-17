@@ -20,11 +20,14 @@ CREATE INDEX IF NOT EXISTS telemetry_observed_at_idx
 
 -- Gemini analysis records. payload holds the full record including
 -- summary/unknowns/limitations, model, evidence_kind and provenance.
+-- Timescale requires every unique index on a hypertable to include the
+-- partition column, so the PK is composite (id, created_at).
 CREATE TABLE IF NOT EXISTS analyses (
-  id           UUID PRIMARY KEY,
+  id           UUID NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL,
   evidence_at  TIMESTAMPTZ,
-  payload      JSONB NOT NULL
+  payload      JSONB NOT NULL,
+  PRIMARY KEY (id, created_at)
 );
 
 SELECT create_hypertable('analyses', 'created_at', if_not_exists => TRUE);
