@@ -75,6 +75,15 @@
     });
   }
 
+  // The logo and wordmark return to the dashboard overview from any full-screen feature.
+  for (const home of document.querySelectorAll('.brand-mark, .wordmark')) {
+    home.addEventListener('click', (event) => {
+      event.preventDefault();
+      close();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
   // Browser Esc leaves native full screen first; collapse the panel with it.
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement && current) close(true);
