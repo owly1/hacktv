@@ -29,6 +29,14 @@ function Test-Backend {
 }
 
 if (Test-Backend) {
+  # A backend started before the demo code existed has no /api/demo routes:
+  # an unauthenticated POST gets 401 from a current backend, 404 from an old one.
+  $status = 0
+  try { Invoke-WebRequest "http://127.0.0.1:$port/api/demo/analyze" -Method Post -UseBasicParsing -TimeoutSec 3 | Out-Null }
+  catch { if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode } }
+  if ($status -eq 404) {
+    throw "An older Emberwatch backend is running on port $port without the demo routes. Stop it (Ctrl+C in its window) and run this again, or use: .\demo.ps1 -Port 9000"
+  }
   Write-Host "Emberwatch is already running - opening $url"
   Start-Process $url
   exit 0
