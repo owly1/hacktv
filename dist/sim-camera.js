@@ -295,6 +295,7 @@ void main() {
       if (scene.kind === 'pad') { gl.uniform2f(U.uMarkerPos, scene.marker.e, scene.marker.n); gl.uniform1f(U.uMarkerSize, scene.marker.size); }
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       ctx.drawImage(cam.glCanvas, 0, 0);
+      if (opts.forest) drawForest(ctx, cam, pose, fire);
       if (scene.kind === 'fire' && fire) {
         if (!cam.smoke.length) prewarm(cam, fire);
         stepSmoke(cam, fire, t); drawSmoke(ctx, cam, pose);
@@ -319,6 +320,32 @@ void main() {
     if (!cam.video && opts.fleet) drawFleet(ctx, cam, pose, opts.fleet);
     hud(ctx, cam, pose, opts);
     return found;
+  }
+
+  /** Render a repeatable forest at fixed world positions, with perspective and depth sorting. */
+  function drawForest(ctx, cam, pose, fire) {
+    const trees = [], w = (cam.scene.windDeg ?? 0) * RAD;
+    for (let i = Math.floor((pose.e - 230) / 22); i <= Math.ceil((pose.e + 230) / 22); i++) {
+      for (let j = Math.floor((pose.n - 230) / 22); j <= Math.ceil((pose.n + 230) / 22); j++) {
+        const seed = Math.sin(i * 127.1 + j * 311.7) * 43758.5453, r = seed - Math.floor(seed);
+        const e = i * 22 + r * 12, n = j * 22 + (1 - r) * 12;
+        const u = e * Math.sin(w) + n * Math.cos(w) - (fire?.shift ?? 0), v = -e * Math.cos(w) + n * Math.sin(w);
+        if (fire && (u / fire.a) ** 2 + (v / fire.b) ** 2 < 1.1) continue;
+        const base = project(cam, pose, [e, n, 0]), top = project(cam, pose, [e, n, 10 + r * 7]);
+        if (!base || !top || base[2] < 8 || base[0] < -50 || base[0] > cam.w + 50) continue;
+        trees.push({base, top, r});
+      }
+    }
+    trees.sort((a, b) => b.base[2] - a.base[2]);
+    ctx.save();
+    for (const {base: [x, y, depth], top: [tx, ty], r} of trees) {
+      const width = cam.f * (4 + r * 2) / depth;
+      ctx.strokeStyle = '#514231'; ctx.lineWidth = Math.max(1, width * .16);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+      ctx.fillStyle = r > .5 ? '#284c35' : '#355f3d';
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x + width, y - (y - ty) * .18); ctx.lineTo(x - width, y - (y - ty) * .18); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
   }
 
   /** Project other simulated aircraft at their actual heights to give the view depth. */

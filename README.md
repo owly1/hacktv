@@ -46,8 +46,9 @@ Historical fire cases include a four-drone perimeter-search replay. Scroll
 the camera cards or click a map drone to choose its 3D POV and matching
 telemetry. Drones pace outside the evolving +20-minute forecast border; one at
 a time descends toward its exterior edge to find fictional people, then climbs
-back to observation. The map opens at +20 minutes and retains a teal patrol
-outline; solid red marks the current fire. Simulated sightings exclude people
+back to observation. The map opens at Now; solid red marks the current fire.
+Patrols include lateral movement and banking, with no dedicated +20-minute
+marker. Simulated sightings exclude people
 inside the current fire. “Follow
 searches” selects the active search drone automatically. The shared counter
 counts each fictional person once, retaining source drones and named review
@@ -55,6 +56,11 @@ actions. Switching cases preserves each case's clock, leads and review state.
 Replay defaults to 2×; choose 4× to see every drone search in about 50 seconds.
 Demo observations never enter live storage. See the [fleet demo testing
 guide](docs/FLEET_DEMO.md) for launch instructions and a walkthrough.
+The same dropdown includes **Forest patrol · press Detected**: four drones
+hold widely separated positions at 150–210 m without a fire until the presenter
+presses **Detected**. A fire then
+appears near ANAFI-01 and the fleet flies toward it before perimeter searches.
+Reselecting the case resets the exercise. All camera footage is rendered replay.
 If another checkout already serves port 8787, the launcher reports that
 mismatch; use port 9000 or stop the old backend before relaunching.
 

@@ -31,7 +31,7 @@ test('historical cases pace the actual +20-minute border with continuous coordin
         assert.ok((u / a) ** 2 + (v / (a / 2.4)) ** 2 > 1, 'flight remains outside the current burning footprint');
         assert.ok(S.clearance(scene, t, p) > 110, 'drones retain over 110 m of ground clearance from the fire');
         const distance = borderDistance(scene,t,p);
-        assert.ok(distance >= 40 && distance <= 107, `drone stays beside the +20-minute contour: ${distance}`);
+        assert.ok(distance >= 40 && distance <= 115, `drone stays beside the forecast contour while weaving: ${distance}`);
         assert.equal(globalThis.EmberModel.insidePolygon([p.lat,p.lon],S.outline(scene.fire,t,20)),false);
         assert.ok(Math.abs(p.climbRate) < 4, 'vertical speed is in simulation seconds');
         const next = S.pose(scene, t + .01, p.drone_id);
@@ -44,6 +44,44 @@ test('historical cases pace the actual +20-minute border with continuous coordin
     }
     assert.ok(descending && searching && ascending);
   }
+});
+
+test('forest exercise waits indefinitely, triggers once and flies continuously to the incident before searching', () => {
+  const f = S.forestCase(FIRES[0]), scene = S.create(f,42,1000), t = 90;
+  assert.equal(f.manualDetection,true);
+  assert.equal(S.snapshot(scene,t).leads.length,0);
+  assert.equal(S.fireTime(scene,9999),0);
+  const before=scene.drones.map(d=>S.pose(scene,t,d.id));
+  assert.ok(before.every(p=>p.phase==='Holding high' && p.depth===0 && p.alt>=150 && p.speed===0));
+  assert.equal(S.pose(scene,t+999).e,before[0].e);
+  for(const a of before) for(const b of before) if(a.drone_id!==b.drone_id) assert.ok(Math.hypot(a.e-b.e,a.n-b.n)>1500);
+  assert.equal(S.detect(scene,t),true);
+  assert.equal(S.detect(scene,t+10),false);
+  for(const d of scene.drones) {
+    const a=before[d.index], b=S.pose(scene,t,d.id), end=S.pose(scene,t+scene.transitDuration,d.id);
+    assert.ok(Math.hypot(a.e-b.e,a.n-b.n)<1e-8,'button does not teleport an aircraft');
+    assert.ok(Math.hypot(end.e,end.n)<Math.hypot(a.e,a.n),'each aircraft approaches the incident');
+    for(let u=0;u<scene.transitDuration;u+=.5) {
+      const p=S.pose(scene,t+u,d.id), next=S.pose(scene,t+u+.01,d.id);
+      assert.ok(p.speed<=12.01,'approach speed is bounded in metres per second');
+      assert.ok(Math.abs(p.climbRate)<=2.01,'approach descent is bounded');
+      assert.ok(Math.hypot(p.e-next.e,p.n-next.n)<.121);
+      assert.ok(S.clearance(scene,t+u,p)>100,'approach stays outside the actual fire');
+    }
+  }
+  assert.equal(S.snapshot(scene,t+scene.transitDuration).leads.length,0);
+  const snap=S.snapshot(scene,t+scene.transitDuration+210);
+  assert.equal(snap.leads.length,scene.targets.length);
+  assert.ok(snap.fleet.every(d=>d.people>0));
+  assert.ok(S.create(f,42).detectedAt==null,'a fresh exercise rearms detection');
+});
+
+test('patrol has visible lateral motion and banking while telemetry follows the same continuous pose', () => {
+  const scene=S.create(FIRES[0],42), d=scene.drones[3];
+  const a=S.pose(scene,0,d.id), b=S.pose(scene,8,d.id);
+  assert.ok(Math.hypot(a.e-b.e,a.n-b.n)>20);
+  assert.ok(Math.abs(a.roll-b.roll)>1);
+  for(let t=0;t<420;t+=.5) assert.ok(S.pose(scene,t,d.id).speed<15);
 });
 
 test('every drone finds people for varied seeds and headings, with camera-derived evidence', () => {

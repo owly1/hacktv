@@ -34,9 +34,11 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
    **Historical fleet perimeter search (simulated)** group contains all nine
    fleet cases. The older “Person search · fire first” fixtures and flight-pattern
    replay are separate demonstrations.
-2. Confirm four colored ANAFI markers around the **+20-minute forecast border**.
-   The replay opens at +20 minutes. A dashed teal patrol outline stays visible
-   when you change the forecast slider; solid red marks the current fire.
+2. Confirm four colored ANAFI markers patrolling outside the fire. The replay
+   opens at **Now**; solid red marks the current fire. The dedicated +20-minute
+   patrol marker and preset have been removed. Routes still use that forecast
+   as an internal exterior buffer, with lateral weaving and changing bank angles
+   instead of a rigid path. Map and camera movement use the same world pose.
    Their positions, heading cones and trails rotate with the same clock as
    the cameras. The forecast timeline changes the predicted fire horizon;
    it does not fast-forward the aircraft.
@@ -87,6 +89,24 @@ fleet case; the previous search camera must stop. Camera scene objects and
 thermal cues are fictional; standard ANAFI RGB is not thermal hardware. During
 the staged link outage the rendered onboard replay continues, labeled as such,
 while observations follow the existing delayed-delivery behavior.
+
+## Forest patrol with a presenter trigger
+
+In the same replay dropdown, choose **Forest patrol · press Detected** under
+**Interactive fleet exercise (simulated)**. Four aircraft hold stationary above
+the forest at 150, 170, 190 and 210 m, at least 1.5 km apart. There is no fire,
+smoke, fire box, predicted spread or
+person lead until you press **Detected**, next to the dropdown.
+
+Press the button to reveal a fictional fire near ANAFI-01. All four drones move
+continuously from their current positions toward the incident, with a bounded
+12 m/s approach and 2 m/s maximum descent; there is no teleport or camera swap. Select different aircraft
+to compare their terrain, tree perspective, heading and distance. Choose 4× to
+watch the whole approach in roughly 70 seconds, followed by exterior searches
+and the existing people counter/review controls. The forest geometry, fire,
+people and flight are simulated. The background satellite imagery is geographic
+context, not recorded drone footage. Reselect this case to reset and rearm the
+button; switching to another case or live mode hides the trigger.
 
 ## Implementation limits
 

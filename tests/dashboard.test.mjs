@@ -140,6 +140,45 @@ test('fleet briefs contain the selected telemetry, all aircraft and source-attri
   assert.equal(run('simCase(demoCase()).drone.telemetry.drone_id'), 'ANAFI-03');
 });
 
+test('forest UI has no incident or projection before Detected and rearms when selected again', async () => {
+  const {run,element}=await dashboard();
+  run("selectDemo('forest-detection'); state.demo.started=performance.now()-45000; setDronePose=()=>{}; animateDemoCase(performance.now());");
+  assert.equal(element('demo-detected').hidden,false);
+  assert.equal(element('demo-detected').disabled,false);
+  assert.equal(run('origin()'),null);
+  assert.equal(run('projection()'),null);
+  assert.equal(run('simCase(demoCase()).drone.detection'),null);
+  assert.equal(run('state.demo.located'),false);
+  assert.match(element('detect-context').textContent,/no fire/);
+  run('detectForestFire()');
+  assert.equal(element('demo-detected').disabled,true);
+  assert.equal(run('state.demo.located'),true);
+  assert.ok(run('projection().area_ha')>0);
+  assert.match(run('BoscoScout.pose(state.demo.scout,demoT()).phase'),/Responding/);
+  run("selectDemo(state.demo.fires[0].id)");
+  assert.equal(element('demo-detected').hidden,true);
+  run("selectDemo('forest-detection')");
+  assert.equal(run('forestWaiting()'),true);
+  assert.equal(element('demo-detected').disabled,false);
+});
+
+test('forest camera suppresses fire and smoke inputs until the button and uses matching detection coordinates', async () => {
+  const {run,context}=await dashboard();
+  const frames=[];
+  context.EmberCamera={render:(ctx,cam,pose,opts)=>frames.push({pose,opts})};
+  context.canvas={width:960,height:540,getContext:()=>({save(){},scale(){},restore(){}})};
+  run("selectDemo('forest-detection'); var p=BoscoScout.pose(state.demo.scout,0); renderFleetCamera(canvas,{w:960,h:540},p,[p],demoCase(),0,0)");
+  assert.equal(frames[0].opts.fire,null);
+  assert.equal(frames[0].opts.clearance,null);
+  assert.equal(frames[0].opts.people.length,0);
+  assert.equal(frames[0].opts.forest,true);
+  run('detectForestFire(); p=BoscoScout.pose(state.demo.scout,demoT()); renderFleetCamera(canvas,{w:960,h:540},p,[p],demoCase(),demoT(),.94)');
+  assert.ok(frames[1].opts.fire.a>0);
+  assert.equal(run('simCase(demoCase()).drone.detection.fire.latitude'),56.65);
+  assert.equal(run('simCase(demoCase()).drone.detection.fire.longitude'),-111.50);
+  assert.equal(run('state.minute'),0);
+});
+
 test('exterior fleet leads are not labeled at the fire merely because it could arrive soon', async () => {
   const {run} = await dashboard();
   run(`selectDemo(state.demo.fires[0].id); peopleState.snap = BoscoScout.snapshot(state.demo.scout, 210);
