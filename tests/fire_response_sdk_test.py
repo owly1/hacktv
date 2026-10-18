@@ -132,5 +132,23 @@ class ResponseTests(unittest.TestCase):
             if fault=='receiver':c['camera']['receiver_id']='old-receiver'
             b._preview_camera(c);b.drone.assert_not_called()
 
+    def test_low_battery_camera_preview_keeps_grounded_guards_and_flight_battery_limit(self):
+        b=self.bridge();b.telemetry['battery_pct']=21
+        command={'enabled':False,'camera':{'id':'shallow-preview','at':time.time()*1000,
+                 'pitch_deg':-30,'receiver_id':b.receiver_id}}
+        with patch.object(response.gimbal,'set_target',return_value='camera-only') as tilt:
+            b._preview_camera(command)
+        self.assertEqual(tilt.call_args.kwargs['pitch'],-30)
+        b.drone.assert_called_once_with('camera-only')
+        self.assertFalse(b.takeoff_used)
+        self.assertIn('40%',response.HoverCheckout.checkout_reason(b,starting=True))
+        for fault in ('airborne','moving','stale','tilted'):
+            b=self.bridge();b.telemetry['battery_pct']=21
+            if fault=='airborne':b.telemetry['state']='hovering'
+            if fault=='moving':b.telemetry['ground_speed_mps']=.15
+            if fault=='stale':b.sensor_ages.ages['altitude']-=3
+            if fault=='tilted':b.telemetry['attitude_deg']['pitch']=30
+            self.assertIsNotNone(response.HoverCheckout.checkout_reason(b,camera_only=True))
+
 
 if __name__=='__main__':unittest.main()

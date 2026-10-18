@@ -141,10 +141,10 @@ from a located target. Smoke, other QR codes, replay, old detections and a
 single unconfirmed frame cannot authorize flight.
 
 For a floor target while the drone is resting on a table, use **Down 45°**
-or **Down 70°** in the camera-only controls. **Level** restores the horizontal
+or **Down 70°** in the camera-only controls. **Down 30°** brings farther or raised targets into view. **Level** restores the horizontal
 view. These controls work before flight calibration is complete, require a
 connected stationary grounded aircraft and autonomous response OFF, and never
-authorize takeoff. The displayed camera angle comes from aircraft telemetry.
+authorize takeoff. The flight battery threshold does not block these grounded camera-only adjustments. The displayed camera angle comes from aircraft telemetry.
 
 The receiver locates the approved QR in 3D using its measured black-square width,
 four image corners, calibrated intrinsics and actual camera attitude. Its height

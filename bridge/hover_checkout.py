@@ -56,7 +56,11 @@ class HoverCheckout(QROrbitBridge):
     def minimum_battery_pct(self,starting=False):
         return 40
 
-    def checkout_reason(self, starting=False):
+    def checkout_reason(self, starting=False, *, camera_only=False):
+        # Grounded gimbal positioning does not need the takeoff battery reserve.
+        # Camera-only checks always require a stationary landed aircraft.
+        if camera_only:
+            starting = True
         if not self.connected or not self._aircraft_link() or self.input_closed.is_set():
             return "aircraft or operator terminal is disconnected"
         if self.abort_flight.is_set():
@@ -75,7 +79,7 @@ class HoverCheckout(QROrbitBridge):
             return "required aircraft telemetry is unknown"
         battery, height, speed, roll, pitch = values
         minimum=self.minimum_battery_pct(starting)
-        if battery < minimum:
+        if not camera_only and battery < minimum:
             return f"battery is below {minimum}%"
         if height < -.2 or height > 1.5:
             return f"measured altitude {height:.2f} m is outside the checkout limit"

@@ -49,7 +49,7 @@ function renderAutonomy() {
   $('autonomy-enable').disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.ready;
   $('autonomy-enable').textContent=enabled?'Response enabled':'Enable this session';
   $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
-  for(const id of ['camera-level','camera-down','camera-steep'])
+  for(const id of ['camera-level','camera-shallow','camera-down','camera-steep'])
     $(id).disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.camera_ready;
   const pitch=state.telemetry?.extra?.gimbal_pitch_deg;
   $('camera-pitch-status').textContent=Number.isFinite(pitch)&&a?.receiver?`Camera ${Math.round(pitch)}°`:'';
@@ -928,6 +928,7 @@ async function connect() {
   $('autonomy-enable').onclick=()=>setAutonomy('enable');
   $('autonomy-land').onclick=()=>setAutonomy('land');
   $('camera-level').onclick=()=>setAutonomy('camera',{pitch_deg:0});
+  $('camera-shallow').onclick=()=>setAutonomy('camera',{pitch_deg:-30});
   $('camera-down').onclick=()=>setAutonomy('camera',{pitch_deg:-45});
   $('camera-steep').onclick=()=>setAutonomy('camera',{pitch_deg:-70});
   every(250,'autonomy',pollAutonomy);

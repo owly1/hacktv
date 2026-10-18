@@ -127,9 +127,11 @@ test('camera tilt stays available with missing flight calibration but never in a
   context.fetch=async(url,options)=>{calls.push(JSON.parse(options.body));return {ok:true,json:async()=>({enabled:false,receiver:{ready:false,camera_ready:true}})};};
   run("state.mode='live';state.autonomy={enabled:false,receiver:{ready:false,camera_ready:true}};renderAutonomy()");
   assert.equal(element('autonomy-enable').disabled,true);assert.equal(element('camera-down').disabled,false);
+  assert.equal(element('camera-shallow').disabled,false);
   await run("setAutonomy('camera',{pitch_deg:-45})");
   assert.equal(calls[0].action,'camera');assert.equal(calls[0].pitch_deg,-45);
   assert.equal(run('autonomousSession'),null);
   run('state.autonomy.enabled=true;renderAutonomy()');assert.equal(element('camera-down').disabled,true);
+  assert.equal(element('camera-shallow').disabled,true);
   await run("setAutonomy('camera',{pitch_deg:-45})");assert.equal(calls.length,1);
 });

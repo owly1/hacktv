@@ -100,9 +100,9 @@ class FireResponse(QRAutoPreset):
         command=control.get('camera')
         if (not command or command.get('id')==self.preview_command_id or control.get('enabled')
                 or command.get('receiver_id')!=self.receiver_id or self.takeoff_used
-                or not self.running or HoverCheckout.checkout_reason(self,starting=True)):
+                or not self.running or HoverCheckout.checkout_reason(self,starting=True,camera_only=True)):
             return
-        if command.get('pitch_deg') not in (0,-45,-70) or not 0<=time.time()-command.get('at',0)/1000<=5:
+        if command.get('pitch_deg') not in (0,-30,-45,-70) or not 0<=time.time()-command.get('at',0)/1000<=5:
             return
         self.preview_command_id=command['id']
         # Camera only. This path never creates a flight worker or sends TakeOff.
@@ -122,7 +122,7 @@ class FireResponse(QRAutoPreset):
                 control=self._request('/api/ingest/autonomy/status',{
                     'receiver_id':self.receiver_id,'ready':not reason and not self.takeoff_used,
                     'short_test':bool(getattr(self.args,'short_test',False)),
-                    'camera_ready':not self.takeoff_used and not HoverCheckout.checkout_reason(self,starting=True),
+                    'camera_ready':not self.takeoff_used and not HoverCheckout.checkout_reason(self,starting=True,camera_only=True),
                     'reason':(self.target_error or 'Tracking measured fire') if self.takeoff_used else reason or 'Ready for a new session',
                     'phase':self.flight_phase or 'waiting','position':position})
                 with self.takeoff_lock:

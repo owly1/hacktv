@@ -45,7 +45,7 @@ export class AutonomousResponse {
     } else if (body?.action === 'camera') {
       if (this.session || !this.receiverFresh() || !this.receiver.camera_ready)
         throw new ApiError(409,'Camera preview requires a connected, stationary drone with autonomous response OFF');
-      if (![0,-45,-70].includes(body.pitch_deg)) throw new ApiError(400,'Select level, down 45°, or down 70°');
+      if (![0,-30,-45,-70].includes(body.pitch_deg)) throw new ApiError(400,'Select level, down 30°, down 45°, or down 70°');
       this.camera={id:crypto.randomUUID(),pitch_deg:body.pitch_deg,at:this.now(),receiver_id:this.receiver.receiver_id};
     } else if (body?.action === 'enable') {
       if (this.session) throw new ApiError(409,'An autonomous session is already enabled');

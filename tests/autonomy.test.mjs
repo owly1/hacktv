@@ -77,6 +77,7 @@ test('camera-only requests work without flight calibration and expire without en
   const s=a.control({action:'camera',pitch_deg:-45});
   assert.equal(s.enabled,false);assert.equal(s.camera.pitch_deg,-45);
   assert.equal(s.camera.receiver_id,'receiver-123');assert.equal(s.mission,null);
+  assert.equal(a.control({action:'camera',pitch_deg:-30}).camera.pitch_deg,-30);
   assert.throws(()=>a.control({action:'camera',pitch_deg:80}),/Select/);
   advance(6000);assert.equal(a.snapshot().camera,null);
   a.status({receiver_id:'receiver-123',ready:true,camera_ready:true,reason:'Ready'});
