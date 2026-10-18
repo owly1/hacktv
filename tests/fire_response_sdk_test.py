@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import Mock,patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'bridge'))
 HAS_SDK=importlib.util.find_spec('olympe') is not None
-if HAS_SDK: import fire_response as response
+if HAS_SDK:
+    import fire_response as response
+    from fire_tracking import FireTarget
 
 
 @unittest.skipUnless(HAS_SDK,'Requires Pi SDK; aircraft is mocked')
@@ -39,8 +41,8 @@ class ResponseTests(unittest.TestCase):
         thread.assert_not_called();b.drone.assert_not_called()
     def test_enabled_confirmed_fire_claim_starts_once_and_land_can_win_claim_race(self):
         for cancel in (False,True):
-            b=self.bridge();b.geometry=Mock();b.geometry_error=None
-            target={'at':time.time()*1000,'episode_id':'fire','incident_id':'incident'}
+            b=self.bridge();b.geometry=Mock(models={'yolo':Mock()});b.geometry_error=None
+            target={'at':time.time()*1000,'episode_id':'fire','incident_id':'incident','source':'yolo'}
             control={'enabled':True,'session_id':'session','target':target,'mission':{'episode_id':'fire'}}
             def request(path,body):
                 if path.endswith('/claim'):
@@ -61,12 +63,53 @@ class ResponseTests(unittest.TestCase):
         b.control_at=time.monotonic()-2
         b._sample_fire();self.assertTrue(b.abort_flight.is_set())
 
+    def test_actual_multi_instance_camera_state_is_unwrapped_for_localization(self):
+        b=self.bridge();b.geometry=Mock();b.geometry_error=None
+        now=time.time()*1000
+        b.control={'observed_target':{'at':now,'first':now-1000,'hits':6,'source':'qr-test','episode_id':'fire'}}
+        camera={'roll_absolute':0,'pitch_absolute':-45,'yaw_absolute':0}
+        with patch.object(b,'_state',return_value={0:camera}):b._update_target()
+        b.geometry.estimate.assert_called_once();self.assertEqual(b.geometry.estimate.call_args.args[2],camera)
+
+    def test_battery_test_is_explicit_and_keeps_a_landing_reserve(self):
+        b=self.bridge();b.telemetry['battery_pct']=32
+        self.assertIn('40%',response.HoverCheckout.checkout_reason(b,starting=True))
+        b.args.short_test=True
+        self.assertIsNone(response.HoverCheckout.checkout_reason(b,starting=True))
+        b.telemetry['battery_pct']=29
+        self.assertIn('30%',response.HoverCheckout.checkout_reason(b,starting=True))
+        b.telemetry['state']='hovering';b.telemetry['altitude_m']=1;b.telemetry['battery_pct']=24
+        self.assertIn('25%',response.HoverCheckout.checkout_reason(b))
+
     def test_lost_fire_between_claim_and_takeoff_blocks_motor_command(self):
         b=self.bridge();b.geometry=Mock();b.geometry_error=None;b.takeoff_used=True
         b.control={'enabled':True,'session_id':'session','target':None}
         b.claimed_session='session';b.episode='fire';b.control_at=time.monotonic()
         self.assertIn('lost before takeoff',b.checkout_reason(starting=True))
         b.drone.assert_not_called()
+
+    def test_qr_claim_requires_current_measured_position_and_rechecks_before_takeoff(self):
+        for fault in ('missing','stale','wrong-episode','valid'):
+            b=self.bridge();b.geometry=Mock(models={'qr-test':Mock()});b.geometry_error=None
+            target={'at':time.time()*1000,'episode_id':'fire','incident_id':'incident','source':'qr-test'}
+            control={'enabled':True,'session_id':'session','target':target,'mission':{'episode_id':'fire'}}
+            if fault!='missing':
+                b.target=FireTarget(
+                    time.monotonic()-(2 if fault=='stale' else 0),
+                    'other' if fault=='wrong-episode' else 'fire',1,0,1.8,.13)
+            paths=[]
+            def request(path,body):
+                paths.append(path);b.control_stop.set();return control
+            with patch.object(b,'_load_geometry'),patch.object(b,'_update_target'), \
+                 patch.object(b,'_request',side_effect=request),patch.object(response.threading,'Thread') as thread:
+                b._control_loop()
+            self.assertEqual(any(p.endswith('/claim') for p in paths),fault=='valid')
+            if fault=='valid':
+                thread.assert_called_once();self.assertIsNone(b.checkout_reason(starting=True))
+                b.target=None
+                self.assertIn('Measured QR position was lost',b.checkout_reason(starting=True))
+            else:thread.assert_not_called()
+            b.drone.assert_not_called()
     def test_rectangles_follow_the_current_fire_and_clear_when_stale(self):
         b=self.bridge();observation={'source':'yolo','bbox':[.2,.3,.4,.6],'confidence':.9,'at':time.time()*1000}
         b.control={'observed_target':observation};b._detect_step(None,0)

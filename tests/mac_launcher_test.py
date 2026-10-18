@@ -117,6 +117,9 @@ class MacLauncherTests(unittest.TestCase):
         self.assertIn('fire_response',mac.prepare_command(mac.DEFAULTS))
         with self.assertRaisesRegex(ValueError,'dashboard session'):
             mac.runtime_command(mac.DEFAULTS,'fire-response',True)
+        self.assertNotIn('--short-test',command)
+        self.assertIn('--short-test',mac.runtime_command(mac.DEFAULTS,'fire-response',False,short_test=True))
+        with self.assertRaises(ValueError):mac.runtime_command(mac.DEFAULTS,'qr-demo',True,short_test=True)
 
     def test_fire_supervisor_restarts_monitor_and_receiver_without_enabling(self):
         child=Mock(wait=Mock(side_effect=[subprocess.TimeoutExpired('receiver',1),0]))

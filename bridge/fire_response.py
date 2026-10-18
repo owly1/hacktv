@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from anafi_bridge import AnafiBridge, FireDetector, Publisher, argument_parser, gimbal
 from fire_detection import FIRE_MARKER_PAYLOAD
-from fire_tracking import GroundFirePose, orbit_fire
+from fire_tracking import FirePose, orbit_fire
 from hover_checkout import HoverCheckout
 from qr_auto_circle import QRAutoPreset
 
@@ -29,6 +29,7 @@ class FireResponse(QRAutoPreset):
         args.execute=False
         super().__init__(args,publisher,FireDetector('',use_yolo=False),FIRE_MARKER_PAYLOAD)
         args.execute=True
+        self.flight_seconds=60 if getattr(args,'short_test',False) else 300
         self.receiver_id=secrets.token_hex(16)
         self.control=None; self.control_at=float('-inf'); self.target=None
         self.claimed_session=None; self.episode=None; self.projected_at=None
@@ -41,9 +42,11 @@ class FireResponse(QRAutoPreset):
         try:
             stamp=Path(self.args.camera_calibration).stat().st_mtime_ns
             if stamp!=self.geometry_stamp:
-                self.geometry=GroundFirePose(self.args.camera_calibration)
+                self.target=None; self.projected_at=None
+                self.geometry=FirePose(self.args.camera_calibration)
                 self.geometry_stamp=stamp; self.geometry_error=None
         except (OSError,ValueError,KeyError,TypeError) as error:
+            self.target=None; self.projected_at=None
             self.geometry=None; self.geometry_error=str(error)[:250]
 
     def _request(self,path,body=None):
@@ -69,7 +72,8 @@ class FireResponse(QRAutoPreset):
         self.overlay_time=time.time()
 
     def _update_target(self):
-        observation=(self.control or {}).get('target')
+        observation=(self.control or {}).get('target') if self.takeoff_used else (self.control or {}).get('observed_target')
+        if observation and (observation.get('hits',0)<5 or observation['at']-observation['first']<800):observation=None
         if not observation:
             if self.target is not None and time.monotonic()-self.target.at>1: self.target=None
             self.target_error='Waiting for a fresh, confirmed fire rectangle'; return
@@ -85,8 +89,9 @@ class FireResponse(QRAutoPreset):
             captured_mono=time.monotonic()-(time.time()-at)
             if any(abs(ages.get(k,float('-inf'))-captured_mono)>.5 for k in ('altitude','attitude','camera')):
                 raise ValueError('Fire frame and aircraft/camera pose are not synchronized')
-            self.target=self.geometry.estimate(observation,self.telemetry or {},
-                                              self._state(gimbal.attitude) or {},captured_mono)
+            camera=self._state(gimbal.attitude) or {}
+            if 0 in camera:camera=camera[0]
+            self.target=self.geometry.estimate(observation,self.telemetry or {},camera,captured_mono)
             self.target_error=None
         except (ValueError,KeyError,TypeError) as error:
             self.target=None; self.target_error=str(error)
@@ -112,10 +117,11 @@ class FireResponse(QRAutoPreset):
                 reason=self.geometry_error or HoverCheckout.checkout_reason(self,starting=True)
                 position=None if self.target is None or time.monotonic()-self.target.at>1 else {
                     'forward_m':self.target.forward_m,'right_m':self.target.right_m,
-                    'width_m':self.target.width_m,'episode_id':self.target.episode,
-                    'source':'calibrated-ground-plane'}
+                    'width_m':self.target.width_m,'down_m':self.target.down_m,'episode_id':self.target.episode,
+                    'source':self.target.position_source}
                 control=self._request('/api/ingest/autonomy/status',{
                     'receiver_id':self.receiver_id,'ready':not reason and not self.takeoff_used,
+                    'short_test':bool(getattr(self.args,'short_test',False)),
                     'camera_ready':not self.takeoff_used and not HoverCheckout.checkout_reason(self,starting=True),
                     'reason':(self.target_error or 'Tracking measured fire') if self.takeoff_used else reason or 'Ready for a new session',
                     'phase':self.flight_phase or 'waiting','position':position})
@@ -126,7 +132,11 @@ class FireResponse(QRAutoPreset):
                         self._request_landing(force=False)
                     self._update_target()
                     can_start=(control.get('enabled') and control.get('target') and not self.takeoff_used
-                               and not self.abort_flight.is_set() and not reason)
+                               and not self.abort_flight.is_set() and not reason
+                               and self.geometry is not None and control['target']['source'] in self.geometry.models)
+                    if can_start and control['target']['source']=='qr-test':
+                        can_start=(self.target is not None and self.target.episode==control['target']['episode_id']
+                                   and 0<=time.monotonic()-self.target.at<=.8)
                 if can_start:
                     # Network runs outside the flight lock; local LAND can win.
                     claim=self._request('/api/ingest/autonomy/claim',{
@@ -147,6 +157,9 @@ class FireResponse(QRAutoPreset):
                 if self.takeoff_used: self._request_landing(force=False)
             self.control_stop.wait(.15)
 
+    def minimum_battery_pct(self,starting=False):
+        return (30 if starting else 25) if getattr(self.args,'short_test',False) else 40
+
     def checkout_reason(self,starting=False):
         reason=HoverCheckout.checkout_reason(self,starting)
         if reason: return reason
@@ -159,6 +172,9 @@ class FireResponse(QRAutoPreset):
             if (not observation or observation.get('episode_id')!=self.episode
                     or not 0<=time.time()-observation['at']/1000<=.8):
                 return 'Confirmed fire was lost before takeoff'
+            if observation['source']=='qr-test' and (self.target is None
+                    or self.target.episode!=self.episode or not 0<=time.monotonic()-self.target.at<=.8):
+                return 'Measured QR position was lost before takeoff'
         return None
 
     def _sample_fire(self):
@@ -172,7 +188,7 @@ class FireResponse(QRAutoPreset):
 
     def _after_hover(self):
         orbit_fire(self.driver,self.limits,self._sample_fire,self.abort_flight,self.report,self.episode,
-                   started=self.started_at)
+                   started=self.started_at,min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds)
 
     def _camera_pitch(self):
         target=self.target
@@ -208,6 +224,7 @@ def main():
     import os
     parser=argument_parser(); parser.description=__doc__
     parser.add_argument('--camera-calibration',default='camera.local.json')
+    parser.add_argument('--short-test',action='store_true',help='60-second flight cap, minimum 30%% to start, landing below 25%%')
     args=parser.parse_args()
     if args.controller!='direct' or args.demo_flight or args.gimbal_pitch is not None or not args.backend:
         parser.error('Use direct control and a backend; no other flight/gimbal mode')

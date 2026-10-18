@@ -162,9 +162,10 @@ print(f'Requested graceful stop for {count} LABEL receiver(s).')
     return 'python3 -c ' + shlex.quote(code)
 
 
-def runtime_command(config, mode, execute, native=False):
+def runtime_command(config, mode, execute, native=False,short_test=False):
     if mode not in ("observe", "qr-preset", "hover", "qr-circle", "qr-demo", "fire-response"):
         raise ValueError("Unknown receiver mode")
+    if short_test and mode!='fire-response':raise ValueError('Short test applies only to fire response')
     directory = shlex.quote(config['directory'])
     common = ['--controller', 'direct', '--ip', config['drone_ip'], '--drone-id', config['drone_id'],
               '--backend', f"http://127.0.0.1:{config['pi_port']}"]
@@ -183,6 +184,7 @@ def runtime_command(config, mode, execute, native=False):
         if mode == 'fire-response':
             if execute: raise ValueError('Fire response is enabled by the dashboard session control, not --execute')
             program += ['--video-fps','30','--camera-calibration','camera.local.json']
+            if short_test:program+=['--short-test']
         if mode == 'qr-circle' and execute:
             program += ['--camera-calibration', 'camera.local.json',
                         '--preflight-file', 'current-preflight.local.json']
@@ -371,6 +373,7 @@ def main():
     pi.add_argument('--execute', action='store_true', help='Enable flight: qr-demo and qr-circle start after QR/incident confirmation; other modes require typed arming')
     pi.add_argument('--native-video', action='store_true')
     pi.add_argument('--headless',action='store_true',help='Dashboard-controlled fire response without an operator terminal')
+    pi.add_argument('--short-test',action='store_true',help='Bound fire response to 60 seconds; start at 30%%, request landing below 25%%')
     args = parser.parse_args()
     os.chdir(ROOT)
     config = settings()
@@ -448,7 +451,7 @@ def main():
             raise ValueError('Only dashboard-controlled fire response can run headless')
         if not sys.stdin.isatty() and not args.headless:
             raise ValueError('Start the Pi receiver in an interactive operator terminal.')
-        command = runtime_command(config, args.mode, args.execute, args.native_video)
+        command = runtime_command(config, args.mode, args.execute, args.native_video,args.short_test)
         print('Keep the Skycontroller off and FreeFlight closed for this direct Pi connection.', flush=True)
         if args.mode=='fire-response':
             print('Flight starts OFF. Enable autonomous response in the live dashboard.',flush=True)

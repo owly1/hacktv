@@ -83,3 +83,21 @@ test('camera-only requests work without flight calibration and expire without en
   a.control({action:'enable'});
   assert.throws(()=>a.control({action:'camera',pitch_deg:-45}),/OFF/);
 });
+
+test('metric QR corners stay attached to their exact captured frame and malformed geometry is rejected',()=>{
+  const {a,frame,advance}=harness();
+  const corners=[[400,200],[500,200],[500,300],[400,300]];
+  const hit={source:'qr-test',label:'fire',confidence:1,bbox:[.3,.2,.5,.5],qr_text:FIRE_MARKER_PAYLOAD,qr_corners:corners};
+  frame({hit});assert.deepEqual(a.snapshot().observed_target.qr_corners,corners);
+  corners[0][0]=99;assert.equal(a.snapshot().observed_target.qr_corners[0][0],400);
+  advance(200);
+  assert.throws(()=>frame({hit:{...hit,qr_corners:[[0,0],[2000,0],[2,2],[0,2]]}}),/corners/);
+  frame({hit});assert.deepEqual(a.snapshot().observed_target.qr_corners,corners);
+});
+
+test('short-test receiver exposes bounded limits while normal mode keeps 40 percent',()=>{
+  const {a}=harness();assert.equal(a.snapshot().min_start_battery_pct,40);
+  a.status({receiver_id:'receiver-123',ready:false,reason:'Calibration missing',short_test:true});
+  const s=a.snapshot();assert.equal(s.flight_seconds,60);assert.equal(s.min_start_battery_pct,30);
+  assert.equal(s.min_flight_battery_pct,25);assert.equal(s.enabled,false);
+});

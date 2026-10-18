@@ -25,7 +25,8 @@ if(process.platform==='darwin' && existsSync(path.join(root,'.pi.local')) && exi
     if(code!==0||stopping)return;
     const observer=start(python,['scripts/mac.py','stop-observer']);
     observer.on('exit',code=>{
-      if(code===0&&!stopping)start(python,['scripts/mac.py','pi','--mode','fire-response','--headless']);
+      if(code===0&&!stopping)start(python,['scripts/mac.py','pi','--mode','fire-response','--headless',
+        ...(process.env.EMBERWATCH_FIRE_TEST==='1'?['--short-test']:[])]);
     });
   });
 }

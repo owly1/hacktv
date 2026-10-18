@@ -48,7 +48,7 @@ class Marker:
     reprojection_px: float
 
 
-def vehicle_reason(v, limits, now, starting=False):
+def vehicle_reason(v, limits, now, starting=False,*,min_battery_pct=40):
     if v is None or not v.connected or not 0 <= now - v.at <= 1.0:
         return "aircraft link or received sensor samples are stale"
     if v.controller_source_ok is not True:
@@ -56,8 +56,8 @@ def vehicle_reason(v, limits, now, starting=False):
     values = (v.battery_pct, v.altitude_m, v.speed_mps, v.tilt_deg)
     if any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in values):
         return "required aircraft state is unknown"
-    if v.battery_pct < 40:
-        return "battery below 40%"
+    if v.battery_pct < min_battery_pct:
+        return f"battery below {min_battery_pct}%"
     if v.state not in (("hovering",) if starting else ("hovering", "flying")):
         return "a pilot-established hover is required" if starting else "unexpected flight state"
     if abs(v.altitude_m - limits.height_m) > .2:

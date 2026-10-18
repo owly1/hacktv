@@ -142,7 +142,7 @@ class Monitor:
         self.post('/api/ingest/autonomy/target', {
             'captured_at': iso(captured), 'width': image.shape[1], 'height': image.shape[0],
             'episode_id': self.episodes.episode,
-            'hit': {k: hit[k] for k in ('source','label','confidence','bbox','qr_text') if k in hit}
+            'hit': {k: hit[k] for k in ('source','label','confidence','bbox','qr_text','qr_corners') if k in hit}
                    if hit and hit['label']=='fire' else None})
 
     def run(self):

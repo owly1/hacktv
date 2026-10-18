@@ -53,6 +53,9 @@ class HoverCheckout(QROrbitBridge):
     def _hover_observed_message(self):
         return "hover observed; landing after the short checkout"
 
+    def minimum_battery_pct(self,starting=False):
+        return 40
+
     def checkout_reason(self, starting=False):
         if not self.connected or not self._aircraft_link() or self.input_closed.is_set():
             return "aircraft or operator terminal is disconnected"
@@ -71,8 +74,9 @@ class HoverCheckout(QROrbitBridge):
         if any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in values):
             return "required aircraft telemetry is unknown"
         battery, height, speed, roll, pitch = values
-        if battery < 40:
-            return "battery is below 40%"
+        minimum=self.minimum_battery_pct(starting)
+        if battery < minimum:
+            return f"battery is below {minimum}%"
         if height < -.2 or height > 1.5:
             return f"measured altitude {height:.2f} m is outside the checkout limit"
         if speed > .3:

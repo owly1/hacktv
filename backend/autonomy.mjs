@@ -27,13 +27,14 @@ export class AutonomousResponse {
       throw new ApiError(400, 'Invalid response receiver status');
     }
     if (body.position!=null && (typeof body.position!=='object' ||
-        !['forward_m','right_m','width_m'].every(k=>Number.isFinite(body.position[k])&&Math.abs(body.position[k])<=10))) {
+        !['forward_m','right_m','width_m'].every(k=>Number.isFinite(body.position[k])&&Math.abs(body.position[k])<=10)
+        || (body.position.down_m!=null&&(!Number.isFinite(body.position.down_m)||Math.abs(body.position.down_m)>10)))) {
       throw new ApiError(400,'Invalid tracked fire position');
     }
     if (this.receiver && this.receiver.receiver_id !== body.receiver_id) this.disable('Receiver restarted; enable a new session');
     this.receiver = {receiver_id: body.receiver_id, ready: body.ready, reason: body.reason,
       phase: String(body.phase ?? 'waiting').slice(0,40), at: this.now(), position: body.position ?? null,
-      camera_ready: body.camera_ready === true};
+      camera_ready: body.camera_ready === true,short_test:body.short_test===true};
     if (this.session?.mission && ['landed','error'].includes(this.receiver.phase)) this.disable('Flight finished; enable a new session when ready');
     this.tick(); return this.snapshot();
   }
@@ -75,12 +76,20 @@ export class AutonomousResponse {
         || !Array.isArray(h.bbox) || h.bbox.length!==4 || !h.bbox.every(x=>Number.isFinite(x)&&x>=0&&x<=1)
         || h.bbox[2]<=h.bbox[0] || h.bbox[3]<=h.bbox[1]
         || (body.episode_id!=null && !/^[A-Za-z0-9_-]{4,64}$/.test(body.episode_id))) throw new ApiError(400,'Invalid fire target');
+    let corners;
+    if (h.qr_corners!=null) {
+      if (h.source!=='qr-test' || !Array.isArray(h.qr_corners) || h.qr_corners.length!==4 ||
+          !h.qr_corners.every(p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)
+            &&p[0]>=0&&p[0]<body.width&&p[1]>=0&&p[1]<body.height))
+        throw new ApiError(400,'Invalid QR image corners');
+      corners=h.qr_corners.map(p=>[...p]);
+    }
     this.lastFrameAt=at;
     const previous=this.target;
     const continuous=previous && previous.source===h.source && previous.episode_id===body.episode_id
       && fresh(previous.at,at,600) && overlap(previous.bbox,h.bbox)>=.1;
     this.target={at,captured_at:body.captured_at,width:body.width,height:body.height,
-      source:h.source,bbox:h.bbox,confidence:h.confidence,episode_id:body.episode_id,
+      source:h.source,bbox:h.bbox,confidence:h.confidence,episode_id:body.episode_id,qr_corners:corners,
       hits:continuous?previous.hits+1:1, first:continuous?previous.first:at};
   }
   candidate() {
@@ -103,6 +112,8 @@ export class AutonomousResponse {
       receiver:this.receiverFresh()?this.receiver:null,target:this.candidate(),
       observed_target:this.target && fresh(this.target.at,this.now(),1000)?this.target:null,
       camera:!s && this.receiverFresh() && this.camera && fresh(this.camera.at,this.now(),5000)?this.camera:null,
-      radius_m:1,height_m:1,flight_seconds:300};
+      radius_m:1,height_m:1,flight_seconds:this.receiverFresh()&&this.receiver.short_test?60:300,
+      min_start_battery_pct:this.receiverFresh()&&this.receiver.short_test?30:40,
+      min_flight_battery_pct:this.receiverFresh()&&this.receiver.short_test?25:40};
   }
 }

@@ -156,11 +156,13 @@ flight geometry does not block these camera-only previews.
 Ingest-token endpoints:
 
 - `POST /api/ingest/autonomy/status`: receiver ID, ready boolean, reason,
-  phase and optional measured body-relative position (forward/right/width in
-  metres, episode ID). Status expires after two seconds. A different receiver
+  phase, optional `short_test` boolean, and measured heading-relative position
+  (forward/right/down/width in metres, episode ID, position source). Status expires after two seconds. A different receiver
   ID disables the old session.
 - `POST /api/ingest/autonomy/target`: captured_at, image width/height, episode_id,
-  and hit `{source, label, confidence, bbox, qr_text?}` or null to clear it.
+  and hit `{source, label, confidence, bbox, qr_text?, qr_corners?}` or null to clear it.
+  QR corners are four finite pixel pairs in decoder TL/TR/BR/BL order within
+  the supplied frame; metric QR flight requires these corners.
   Boxes are normalized `[left, top, right, bottom]`. Frames must be fresh and
   strictly increasing. Only RGB fire or the exact approved QR qualifies.
 - `POST /api/ingest/autonomy/claim`: receiver_id, session_id, episode_id.
@@ -172,12 +174,24 @@ required. A receiver must be ready before enabling, and a consumed episode
 cannot authorize another takeoff. Restarts, lease expiry, LAND and completed
 flights disable the session. Receivers request landing on control loss.
 
-The receiver projects the fire's visible ground contact onto a physically
-verified launch ground plane; it does not use simulated map coordinates for
-flight. Camera intrinsics, measured camera offset and verification are
-required. Localization is limited to small targets on that plane. Missing,
-stale or inconsistent geometry prevents horizontal movement and requests
-landing. Geographic fire coordinates remain unavailable indoors.
+Approved QR targets use square pose estimation with measured physical size,
+calibrated intrinsics and actual camera attitude. Forward/right/down are measured
+independently of launch altitude, allowing a target below a table launch. Fresh
+QR position is required before takeoff and stable 3D tracking before movement.
+The orbit uses a 1 m horizontal radius at approximately 1 m above takeoff;
+camera pitch follows the target's measured vertical position. `qr_pose_verified`
+and measured camera offsets are required. There is no QR ground-plane fallback.
+
+RGB fire still projects its visible ground contact onto a physically verified
+launch ground plane (`fire_ground_plane_verified`). Neither method uses the
+simulated map coordinates for flight. Missing, stale, ambiguous or inconsistent
+geometry prevents movement and requests landing during flight. Geographic fire
+coordinates remain unavailable indoors.
+
+Status reports the explicitly selected short-test profile. Snapshot limits are
+normally 40% battery to start/continue and 300 seconds; short-test limits are
+30% to start, landing below 25%, and 60 seconds. The receiver independently
+enforces them. Backend restarts do not enable either profile's flight session.
 
 ## Verify it landed
 

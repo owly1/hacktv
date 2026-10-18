@@ -48,6 +48,7 @@ function renderAutonomy() {
   $('autonomy-state').className='pill '+(enabled?'soft-orange':'muted');
   $('autonomy-enable').disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.ready;
   $('autonomy-enable').textContent=enabled?'Response enabled':'Enable this session';
+  $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
   for(const id of ['camera-level','camera-down','camera-steep'])
     $(id).disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.camera_ready;
   const pitch=state.telemetry?.extra?.gimbal_pitch_deg;
@@ -56,7 +57,7 @@ function renderAutonomy() {
   const position=a?.receiver?.position;
   $('autonomy-detail').textContent=state.mode!=='live'?'Enable is available in Live mode only. LAND remains available.':
     !a?'Flight control unavailable.':!a.receiver?'Flight receiver offline. Start the fire-response receiver.':
-    enabled?(position?`Tracking fire: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right · ${phase}`:
+    enabled?(position?`Tracking fire: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right${Number.isFinite(position.down_m)?`, ${position.down_m.toFixed(2)} m below drone`:''} · ${phase}`:
       a.mission?`Locating fire · ${a.receiver.reason}`:a.reason):a.receiver.reason||a.reason;
   document.querySelector?.('.autonomy-panel')?.setAttribute('data-enabled',String(enabled));
 }

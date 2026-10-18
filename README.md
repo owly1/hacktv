@@ -146,22 +146,26 @@ view. These controls work before flight calibration is complete, require a
 connected stationary grounded aircraft and autonomous response OFF, and never
 authorize takeoff. The displayed camera angle comes from aircraft telemetry.
 
-The receiver locates the fire's ground contact using calibrated video pixels,
-the actual gimbal attitude and aircraft height. After a stable position is
-acquired, it aligns to a one-metre radius and repeatedly circles the measured
-target, updating the camera aim and path from fresh observations. It never
-substitutes the old launch-relative circle when position is unavailable.
+The receiver locates the approved QR in 3D using its measured black-square width,
+four image corners, calibrated intrinsics and actual camera attitude. Its height
+is measured separately from its horizontal distance: a QR on the floor below a
+table launch no longer gets projected onto the tabletop. It aligns to a **1 m
+horizontal radius**, repeatedly circles the measured target, and updates camera
+aim from its measured height. Flight height remains approximately **1 m above
+takeoff**, not 1 m above the QR. Initial QR range is 0.25–3 m horizontally, with
+up to 4 m below the camera. The entire QR must stay visible.
 
-This mode supports a small, fully visible target on the **verified launch ground
-plane**: initial range 0.5–3 m, observed ground-contact width at most 0.6 m,
-approximately 1 m flight height. It does not infer arbitrary terrain, elevated
-fires or depth behind an obstruction. The saved `camera.local.json` must include
-measured `camera_offset_body_m`, camera intrinsics at the streamed resolution,
-`ground_plane_offset_m` (ground-plane offset from the altitude reference), and
-`fire_ground_plane_verified: true` only after physical validation at known
-positions. No QR size is required for this ground-plane method. The current Mac
-calibration still lacks measured camera offsets and this physical verification;
-the dashboard consequently keeps Enable unavailable and explains why.
+`camera.local.json` needs measured `qr_black_square_side_m`,
+`camera_offset_body_m`, intrinsics at the streamed resolution, and
+`qr_pose_verified: true` only after independent physical checks. Keep the QR
+screen size fixed. A failed or ambiguous QR pose never falls back to an assumed
+floor height. The dashboard rectangle can appear before flight geometry is ready.
+
+RGB fire localization still uses the visible ground contact on a **verified
+launch ground plane**. It requires `ground_plane_offset_m` and
+`fire_ground_plane_verified: true`, supports an initial range of 0.5–3 m and a
+visible base at most 0.6 m wide. RGB classification alone cannot locate an
+arbitrary fire above or below that plane. QR and RGB verification are independent.
 
 **LAND & disable**, closing the controlling live page, stale control/telemetry,
 lost or inconsistent target position, low battery, and the five-minute limit
@@ -169,6 +173,13 @@ request landing. A completed flight disables the session; enable again for a
 new fire episode. The same episode cannot trigger repeated takeoffs. Backend
 and receiver restarts always return to OFF. Video and movement diagnostics are
 recorded and copied back to the Mac after flight.
+
+Normal flight requires at least 40% battery and has a five-minute limit. For
+an explicitly selected short test, launch `EMBERWATCH_FIRE_TEST=1 npm start`
+(or add `--short-test` to the fire-response receiver command). This profile
+requires at least 30% to start, requests landing below 25%, and caps the entire
+flight at 60 seconds. The dashboard displays the active limits. This does not
+change firmware protections, calibration requirements, or the session control.
 
 To run the backend without automatically starting the Pi receiver:
 `EMBERWATCH_RECEIVER=off npm start`. To start the receiver separately, use
