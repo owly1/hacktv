@@ -100,6 +100,8 @@ dashboard startup and observation do not start a flight.
 | Short hover and terminal landing | [Hover checkout](docs/TERMINAL_FLIGHT_TEST.md) |
 | Automatic QR-triggered preset | [Automatic demo](docs/QR_AUTO_DEMO.md) |
 | Automatic orbit around a measured QR | [Measured circle](docs/QR_AUTO_CIRCLE.md) |
+| Fire-area-scaled indoor QR retreat and orbit | [Fire size](docs/QR_FIRE_SIZE.md) |
+| Experimental physical real-fire 100 m edge buffer | [Real-fire controller](docs/REAL_FIRE_FLIGHT.md) |
 | Older typed-arm preset | [Preset](docs/QR_PRESET_DEMO.md) |
 | Calibration and staged orbit test | [Cold start](docs/QR_DEMO_FROM_OFF.md), [checkout](docs/QR_FLIGHT_CHECKOUT.md) |
 | Recognition-only browser preview | [Rehearsal](docs/QR_ORBIT_DEMO.md) |
@@ -108,6 +110,14 @@ Print the selected fire QR from <http://127.0.0.1:8787/test-marker.html>.
 Only the exact payload in `bridge/orbit-marker.txt` is accepted as a test fire.
 For flight modes, read the selected guide before enabling `--execute`:
 automatic modes can take off as soon as the marker is recognized.
+
+For real camera-detected fires, the live conditions panel shows a
+[distance advisory](docs/REAL_FIRE_STANDOFF.md): estimated fire radius plus
+a 100 m buffer from the estimated edge. It uses fresh camera/GPS evidence,
+remains display-only, and is separate from the indoor QR flight modes.
+Physical real-fire retreat is implemented in a separate, explicitly armed
+[terminal runtime](docs/REAL_FIRE_FLIGHT.md); it does not change the QR demo's
+scaled radius or grant the dashboard piloting control.
 
 ## Test
 

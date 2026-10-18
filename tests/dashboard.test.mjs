@@ -28,7 +28,7 @@ async function dashboard() {
     L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, /* Preserve icon options without constructing a real map icon. */ divIcon: value => value},
     window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
   });
-  for (const name of ['model.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'app.js']) {
+  for (const name of ['model.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'fire-standoff.js', 'app.js']) {
     let source = await readFile(new URL(`../dist/${name}`, import.meta.url), 'utf8');
     if (name === 'app.js') source = source.replace(/\nboot\(\);\s*$/, '\n');
     vm.runInContext(source, context, {filename: name});
@@ -197,6 +197,37 @@ const liveIncident = (over = {}) => ({
     details: {name: 'Alpha', area_ha: 120, spread_m_per_min: 35, wind_kmh: 30,
       wind_dir_deg: 60, temp_c: 31, rh_pct: 18, position_simulated: true}},
   ...over,
+});
+
+test('real-fire advice renders, follows observed size, exports and expires independently of polling', async () => {
+  const {run, context, element} = await dashboard();
+  context.incident = liveIncident();
+  Object.assign(context.incident.latest, {
+    source: 'yolo', details: {area_ha: Math.PI, area_source: 'camera-box-estimate'},
+    fire: {latitude: 43.78, longitude: -79.19, distance_m: 150, position_source: 'gps+camera-ray-flat-ground'},
+    drone: {observed_at: new Date().toISOString(), provenance: 'live', gps_fix: true, extra: {position_source: 'gps'}},
+  });
+  run("state.mode = 'live'; state.incident = incident; renderDetectionDetails()");
+  assert.equal(element('fire-standoff').hidden, false);
+  assert.match(element('fire-standoff').textContent, /200 m from estimated fire centre/);
+  assert.match(element('fire-standoff').textContent, /shortfall 50 m/);
+  run('state.minute = 60; state.scenario.wind = 90; renderFireStandoff()');
+  assert.match(element('fire-standoff').textContent, /200 m from estimated fire centre/);
+  run('state.incident.latest.details.area_ha *= 4; renderFireStandoff()');
+  assert.match(element('fire-standoff').textContent, /300 m from estimated fire centre/);
+  run("var savedAdviceBrief = ''; download = (name, body) => { savedAdviceBrief = body; }; exportBrief()");
+  assert.match(run('savedAdviceBrief'), /## Fire standoff advisory/);
+  assert.match(run('savedAdviceBrief'), /Evidence captured:/);
+  run('state.incident.latest.detected_at = new Date(Date.now()-11000).toISOString(); renderFireStandoff()');
+  assert.match(element('fire-standoff').textContent, /Waiting for a fresh fire observation/);
+  assert.doesNotMatch(element('fire-standoff').textContent, /300 m/);
+  for (const action of ["state.mode = 'demo'", "state.mode = 'live'; state.incident.active = false",
+    "state.incident.active = true; state.incident.latest.source = 'qr-test'",
+    "state.incident.latest.source = 'yolo'; state.incident.latest.label = 'smoke'"]) {
+    run(action + '; renderFireStandoff()');
+    assert.equal(element('fire-standoff').hidden, true);
+    assert.equal(element('fire-standoff').textContent, '');
+  }
 });
 
 test('confirmed live QR populates conditions and an interactive projection using its payload', async () => {

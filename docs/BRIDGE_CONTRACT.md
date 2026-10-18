@@ -81,8 +81,21 @@ Other QR text, including other `EW1:` payloads, is rejected/ignored. Keep
 validation and tests synchronized. Regenerate with `python3 bridge/make_test_marker.py`.
 The backend checks the exact Alpha fields above. Allowed scenario additions
 are `position_simulated` and `location_note`. Flight annotations must include
-all of `flight_protocol`, `orbit_radius_m: 1`, `path_reference`, using only
-`qr-auto-preset`/`launch-heading` or `qr-auto-circle`/`measured-marker` pairs.
+all of `flight_protocol`, `orbit_radius_m`, `path_reference`. Supported pairs
+are `qr-auto-preset`/`launch-heading` and `qr-auto-circle`/`measured-marker`,
+both with radius 1 m, plus `qr-fire-size`/`measured-marker` with radius 1.25 m
+for the selected 120 ha QR. The latter uses the indoor scaling rule
+`min(1.5, 1 + 0.25 * sqrt(area_ha / 120))`; the backend checks the result
+against the pinned marker area, not an arbitrary requested flight radius.
+The exact QR identity and permitted fire details remain unchanged.
+
+RGB detections from both current detection paths carry `details.area_source:
+camera-box-estimate` when physical area can be estimated, and retain the full
+captured `drone` telemetry (including `observed_at`, provenance and GPS state).
+The shared estimator requires pose/frame timestamps within two seconds and
+rejects incomplete frame-edge boxes. The dashboard's [real-fire distance
+advisory](REAL_FIRE_STANDOFF.md) consumes these existing fields; it is not a
+flight API and adds no command endpoint.
 
 Legacy bridge geolocation uses camera rays/printed size. The laptop monitor
 can instead label a configured QR scenario site as

@@ -423,8 +423,8 @@ test('yolo detections are not held to the fire marker details', async () => {
 test('automatic QR flights retain exact fire details and accept only matching flight annotations', async () => {
   const t = await startApp({ noGemini: true });
   try {
-    for (const [protocol, reference] of [['qr-auto-preset', 'launch-heading'], ['qr-auto-circle', 'measured-marker']]) {
-      const details = { ...FIRE_MARKER_DETAILS, flight_protocol: protocol, orbit_radius_m: 1, path_reference: reference };
+    for (const [protocol, reference, radius] of [['qr-auto-preset', 'launch-heading', 1], ['qr-auto-circle', 'measured-marker', 1], ['qr-fire-size', 'measured-marker', 1.25]]) {
+      const details = { ...FIRE_MARKER_DETAILS, flight_protocol: protocol, orbit_radius_m: radius, path_reference: reference };
       const response = await t.req('POST', '/api/ingest/detection', {
         token: INGEST, body: detection({ episode_id: protocol, details }),
       });
@@ -435,6 +435,8 @@ test('automatic QR flights retain exact fire details and accept only matching fl
       for (const invalid of [
         { ...details, name: 'Ravine' }, { ...details, marker_size_m: 0.19 },
         { ...details, flight_protocol: 'arbitrary-flight' }, { ...details, orbit_radius_m: 2 },
+        { ...details, orbit_radius_m: radius === 1 ? 1.25 : 1 },
+        { ...details, area_ha: 480 },
         { ...details, path_reference: reference === 'launch-heading' ? 'measured-marker' : 'launch-heading' },
         { ...details, orbit_radius_m: undefined }, { ...details, extra: true },
         { ...details, constructor: 'not-a-marker-field' },

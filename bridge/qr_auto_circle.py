@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Opt-in autonomous QR fire -> takeoff -> 1 m-radius circle -> land.
+"""Opt-in autonomous QR fire -> takeoff -> measured or preset circle -> land.
 
 --execute enables one automatic flight per process after a stable selected QR
 creates a backend incident. Without it, detection works but motors stay disabled.
 --preset uses the fixed launch-relative demo instead of a measured-marker orbit.
+--fire-size backs away to a scaled indoor radius derived from QR fire hectares.
 """
 import os
 import math
@@ -20,7 +21,7 @@ from anafi_bridge import FireDetector, Publisher, argument_parser, gimbal
 from fire_detection import parse_marker
 from fire_monitor import detection_payload
 from hover_checkout import HoverCheckout
-from qr_circle_core import ScanGate, camera_pitch, circle
+from qr_circle_core import ScanGate, camera_pitch, circle, fire_size_radius
 from qr_orbit_bridge import read_preflight
 from qr_orbit_core import Limits, Trigger, Vehicle
 from qr_orbit_pose import CalibratedPose
@@ -36,7 +37,17 @@ class QRAutoCircle(HoverCheckout):
         """Initialize the one-shot measured-marker mission, incident queue and camera tracker."""
         super().__init__(args, publisher, detector)
         self.pose = pose
-        self.limits = Limits(radius_m=1., height_m=1., segments=24, mission_seconds=90)
+        self.fire_size = bool(getattr(args, 'fire_size', False))
+        if self.fire_size and getattr(args, 'preset', False):
+            raise ValueError('Fire-size mode requires a measured marker, not the fixed preset')
+        details = parse_marker(marker)
+        if details is None:
+            raise ValueError('Select the pinned fire marker')
+        self.area_ha = details['area_ha']
+        radius = fire_size_radius(self.area_ha) if self.fire_size else 1.
+        if self.fire_size:
+            self.flight_protocol = 'qr-fire-size'
+        self.limits = Limits(radius_m=radius, height_m=1., segments=24, mission_seconds=90)
         self.trigger = Trigger(marker, self.limits)
         self.scan = ScanGate(marker)
         self.episode_id = self.flight_protocol + '-' + secrets.token_hex(8)
@@ -55,14 +66,16 @@ class QRAutoCircle(HoverCheckout):
     def _print_instructions(self):
         """Print measured-circle geometry, recognition trigger and landing controls."""
         print(self._ready_message(), flush=True)
-        print('One metre RADIUS, two metre diameter; 24 measured chords, then land.', flush=True)
+        print(f'Radius {self.limits.radius_m:g} m; 24 measured chords, then land.', flush=True)
+        if self.fire_size:
+            print(f'QR scenario: {self.area_ha:g} ha; retreat in <=20 cm steps before orbiting. Indoor scale only.', flush=True)
         print('Place the measured QR flat on the launch floor about 1 m ahead. Keep the terminal open.', flush=True)
         print('X, Esc, LAND or Ctrl+C requests landing. Restart deliberately for another flight.', flush=True)
 
     def _overlay_lines(self):
-        """Show scan count, accepted incident and current one-metre flight phase."""
+        """Show scan count, accepted incident, selected radius and flight phase."""
         return [self._ready_message(), f'QR scans: {self.scan.hits}; incident: {self.incident_id or "waiting"}',
-                f'Flight: {self.flight_phase or "waiting"}; radius: 1 m; X requests landing']
+                f'Flight: {self.flight_phase or "waiting"}; radius: {self.limits.radius_m:g} m; X requests landing']
 
     def _detect_step(self, image, captured):
         """Process each fresh selected-QR frame and queue its incident before considering takeoff."""
@@ -86,7 +99,7 @@ class QRAutoCircle(HoverCheckout):
                     payload = detection_payload(hit, jpeg.tobytes(), captured, self.episode_id, self.telemetry)
                     # The map has no measured geographic position indoors. The
                     # relative orbit is deliberately independent of scenario GPS.
-                    payload['details'].update(flight_protocol=self.flight_protocol, orbit_radius_m=1.,
+                    payload['details'].update(flight_protocol=self.flight_protocol, orbit_radius_m=self.limits.radius_m,
                                               path_reference=self.path_reference)
                     self.incident_pending = True
                     self.incident_queue.put_nowait(payload)
@@ -159,7 +172,7 @@ class QRAutoCircle(HoverCheckout):
 
     def _hover_observed_message(self):
         """Describe post-takeoff acquisition of the measured marker centre."""
-        return 'hover established; acquiring measured QR center for a one-metre-radius circle'
+        return f'hover established; acquiring measured QR center for a {self.limits.radius_m:g} m radius circle'
 
     def checkout_reason(self, starting=False):
         """Extend hover guards with selected-QR freshness and the whole-mission deadline."""
@@ -183,7 +196,7 @@ class QRAutoCircle(HoverCheckout):
         # During vertical takeoff, aim at the planned floor point. This
         # estimate only aims the camera; it never supplies a measured XY pose.
         height = (self.telemetry or {}).get('altitude_m') or 0
-        return -math.degrees(math.atan2(max(0., height), self.limits.radius_m))
+        return -math.degrees(math.atan2(max(0., height), 1. if self.fire_size else self.limits.radius_m))
 
     def _camera_loop(self):
         """Update gimbal pitch without blocking and request landing if aiming fails."""
@@ -216,7 +229,7 @@ class QRAutoCircle(HoverCheckout):
     def _after_hover(self):
         """Fly one measured circle, then hand back to guaranteed landing cleanup."""
         circle(self.driver, self.limits, self.scan.expected, self.sample,
-               self.abort_flight, self.report, started=self.started_at)
+               self.abort_flight, self.report, started=self.started_at, fire_size=self.fire_size)
         self.report('landing', 'one circle complete; landing at the current position')
 
     def _terminal(self):
@@ -313,9 +326,12 @@ def main():
     parser.add_argument('--camera-calibration')
     parser.add_argument('--preflight-file')
     parser.add_argument('--preset', action='store_true', help='QR selects a fixed launch-relative demo; no camera calibration or QR-size measurement')
+    parser.add_argument('--fire-size', action='store_true', help='measured QR: retreat to a 1–1.5 m indoor radius scaled from fire area, then orbit once')
     args = parser.parse_args()
+    if args.fire_size and args.preset:
+        parser.error('--fire-size cannot be combined with --preset')
     if args.controller != 'direct' or args.demo_flight or args.gimbal_pitch is not None or args.radius != 1:
-        parser.error('Use direct control, a one-metre radius, and no other flight/gimbal mode')
+        parser.error('Use direct control, leave --radius at 1 (fire-size derives its own target), and disable other flight/gimbal modes')
     if not sys.stdin.isatty():
         parser.error('Keep an interactive Pi terminal open for immediate landing')
     if not args.backend or not os.environ.get('INGEST_TOKEN'):

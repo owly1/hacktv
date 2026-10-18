@@ -115,6 +115,18 @@ class MacLauncherTests(unittest.TestCase):
             self.assertNotIn('--preflight-file',text)
             self.assertNotIn('ARM QR PRESET',text)
 
+    def test_fire_size_requires_explicit_calibrated_execution(self):
+        """Keep scaled QR flight opt-in and separate from uncalibrated presets."""
+        for execute in (False, True):
+            command = mac.runtime_command(mac.DEFAULTS, 'qr-fire-size', execute)
+            self.assertIn('qr_auto_circle.py', command)
+            self.assertIn('--fire-size', command)
+            self.assertIn('--video-width 0', command)
+            self.assertNotIn('--preset', command)
+            self.assertEqual('--execute' in command, execute)
+            self.assertEqual('--camera-calibration camera.local.json' in command, execute)
+            self.assertEqual('--preflight-file current-preflight.local.json' in command, execute)
+
     def test_connection_guards_precede_runtime_start(self):
         """Verify connection guards precede runtime start."""
         preparation = mac.prepare_command(mac.DEFAULTS)

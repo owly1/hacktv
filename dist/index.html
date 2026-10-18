@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="styles.css">
+  <script defer src="fire-standoff.js"></script>
   <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="site-fuels.js"></script><script defer src="fleet.js"></script><script defer src="demo-cases.js"></script><script defer src="sim-camera.js"></script><script defer src="demo-scout.js"></script><script defer src="people.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script><script defer src="bosco.js"></script>
 </head>
 <body data-mode="idle">
@@ -75,6 +76,7 @@
   <section class="detection-details" id="detection-details" aria-label="Detected fire conditions" hidden>
    <div class="detection-summary"><span class="tiny-tag" id="detection-source"></span><strong id="detection-conditions"></strong></div>
    <p id="detection-location"></p><p id="detection-model-note"></p>
+   <p id="fire-standoff" role="status" hidden></p>
   </section>
   <div class="primary-grid">
    <section class="panel map-panel" id="map-panel">

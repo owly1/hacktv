@@ -88,9 +88,17 @@ function setLiveDemo(on) {
   renderIncident(); renderSpread(); fitToFire(); refreshFireTiming();
 }
 
+/** Refresh advisory freshness independently of successful backend polling. */
+function renderFireStandoff() {
+  const advice = FireStandoff.advisory(activeFire()?.latest);
+  $('fire-standoff').hidden = !advice;
+  $('fire-standoff').textContent = FireStandoff.describe(advice);
+}
+
 function renderDetectionDetails() {
   const inc = activeFire();
   $('detection-details').hidden = !inc;
+  renderFireStandoff();
   if (!inc) return;
   const d = inc.latest, det = d.details || {}, loc = fireLocation();
   $('detection-source').textContent = d.source === 'qr-test' ? 'QR FIRE SCENARIO' : `CAMERA · ${d.label.toUpperCase()}`;
@@ -1153,6 +1161,7 @@ function exportBrief() {
     '## People · rescue leads', peopleBrief(), '',
     '## Fire', forestWaiting() ? 'No fire detected. Forest patrol exercise awaiting the presenter button.' : simulatedCase ? `SIMULATED SCOUT: ${simulatedCase.name} at ${simulatedCase.latitude}, ${simulatedCase.longitude}; replay context with fictional people and flight.` : inc ? [`Detected ${inc.first_detected_at} by ANAFI-01 (${inc.latest.source}, ${inc.latest.label}, max confidence ${Math.round(inc.max_confidence * 100)}%), ${inc.sightings} sightings.`, `Position: ${inc.latest.fire.latitude}, ${inc.latest.fire.longitude} — ${inc.latest.fire.distance_m} m from the drone, bearing ${inc.latest.fire.bearing_deg}° (${inc.latest.fire.position_source}).`, `Details: ${JSON.stringify(inc.latest.details)}`].join('\n') : 'No active fire.', '',
     '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nProjection origin: ${JSON.stringify(proj.origin)}\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
+    ...(FireStandoff.advisory(inc?.latest) ? ['## Fire standoff advisory', FireStandoff.describe(FireStandoff.advisory(inc.latest)), `Evidence captured: ${inc.latest.detected_at}`, ''] : []),
     '## Drone telemetry', telemetry ? '```json\n' + JSON.stringify(telemetry, null, 2) + '\n```' : 'No telemetry.', '',
     ...(simulatedCase?.fleet.length ? ['## Simulated fleet', '```json\n' + JSON.stringify(simulatedCase.fleet, null, 2) + '\n```', ''] : []),
   ];
@@ -1173,6 +1182,7 @@ async function connect() {
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
   every(2000, 'people', pollPeople); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
+  setInterval(renderFireStandoff, 1000);
   // Explorer refresh: recompute the zone from the latest conditions every 30 s.
   setInterval(renderSpread, 30000);
   streamVideo();

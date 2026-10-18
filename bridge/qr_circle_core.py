@@ -1,9 +1,22 @@
 """QR-circle decisions and geometry; no SDK, network, or motor commands."""
 import math
 import time
+from dataclasses import replace
 
 from fire_detection import FIRE_MARKER_PAYLOAD
 from qr_orbit_core import marker_reason, vehicle_reason
+
+
+def fire_size_radius(area_ha):
+    """Scale scenario hectares to 1–1.5 indoor metres, not real fire clearance.
+
+    Radius grows with the square root of area: 120 ha gives 1.25 m and
+    480 ha reaches the 1.5 m cap. Physical QR print size is unrelated.
+    """
+    if (isinstance(area_ha, bool) or not isinstance(area_ha, (int, float))
+            or not math.isfinite(area_ha) or not 0 < area_ha <= 1e7):
+        raise ValueError('Fire area must be finite, positive hectares, at most 10000000')
+    return min(1.5, 1.0 + .25 * math.sqrt(area_ha / 120.0))
 
 
 class ScanGate:
@@ -96,13 +109,16 @@ def camera_pitch(marker, offset=(0, 0, 0)):
 
 
 def circle(driver, limits, expected, sample, abort, report, *, started=None,
-           clock=time.monotonic, sleep=time.sleep):
+           clock=time.monotonic, sleep=time.sleep, fire_size=False):
     """Acquire measured QR, correct a short offset, then one 24-chord circle.
 
     The caller owns takeoff and guaranteed landing in its finally block.
     Each chord is recalculated from the measured target, not fictitious GPS.
+    fire_size acquires at the original 1 m launch spacing, then retreats to
+    limits.radius_m with fresh pose checks before beginning the orbit.
     """
     started = clock() if started is None else started
+    acquisition_limits = replace(limits, radius_m=1.) if fire_size else limits
     def check(require_marker=True):
         """Poll cancellation, mission deadline, aircraft health and optional marker freshness."""
         if abort.is_set():
@@ -121,7 +137,7 @@ def circle(driver, limits, expected, sample, abort, report, *, started=None,
     deadline, last, first, hits = clock()+5, None, None, 0
     while True:
         v, m = check(False)
-        reason = vehicle_reason(v, limits, clock(), starting=True) or acquisition_reason(m, expected, limits, clock())
+        reason = vehicle_reason(v, limits, clock(), starting=True) or acquisition_reason(m, expected, acquisition_limits, clock())
         if reason:
             hits, first = 0, None
         elif last is None or m.at > last:
@@ -134,30 +150,57 @@ def circle(driver, limits, expected, sample, abort, report, *, started=None,
             raise InterruptedError(reason or 'QR pose did not stabilize after takeoff')
         sleep(.05)
 
-    def settle(completed):
+    def settle(completed, target_limits=limits, retreat=False):
         """Require a fresh centred marker and stable hover after the last move, with a timeout."""
         until = clock()+2
         while True:
             v, m = check()
             if (m.at > completed and vehicle_reason(v, limits, clock(), starting=True) is None
-                    and marker_reason(m, expected, limits, clock()) is None):
+                    and marker_reason(m, expected, target_limits, clock()) is None
+                    and (not retreat or abs(math.hypot(m.forward_m, m.right_m)-target_limits.radius_m) <= .05)):
                 return m
             if clock() >= until:
                 raise InterruptedError('fresh centered QR pose did not recover after movement')
             sleep(.05)
 
-    correction = centered_move(m, limits.radius_m)
-    if math.hypot(*correction[:2]) > .35:
-        raise InterruptedError('initial correction exceeds 35 cm')
-    if math.hypot(*correction[:2]) > .03 or abs(correction[3]) > math.radians(2):
-        report('climb', 'aligning to the measured one-metre radius', None, None)
-        driver.move(correction, .15, check)
+    if fire_size:
+        # Never approach a QR to meet a smaller target. Each retreat uses new
+        # calibrated feedback; cap both attempts and total commanded travel.
+        travel = 0.
+        for attempt in range(5):
+            check()
+            radius = math.hypot(m.forward_m, m.right_m)
+            remaining = limits.radius_m-radius
+            if remaining < -.05:
+                raise InterruptedError('already beyond fire-size radius; refusing an approach')
+            if remaining <= .03:
+                break
+            if attempt == 4:
+                raise InterruptedError('fire-size retreat did not converge')
+            target = replace(limits, radius_m=min(limits.radius_m, radius+.2))
+            correction = centered_move(m, target.radius_m)
+            distance = math.hypot(*correction[:2])
+            travel += distance
+            if distance > .201 or travel > .65 or abs(correction[3]) > math.radians(20):
+                raise InterruptedError('fire-size retreat exceeds bounded movement')
+            report('climb', f'QR TEST: backing away to {limits.radius_m:.3f} m for encoded fire area', None, None)
+            driver.move(correction, .15, check)
+            m = settle(clock(), target, retreat=True)
+        # Even a no-move start must be centred before the first orbit chord.
         m = settle(clock())
+    else:
+        correction = centered_move(m, limits.radius_m)
+        if math.hypot(*correction[:2]) > .35:
+            raise InterruptedError('initial correction exceeds 35 cm')
+        if math.hypot(*correction[:2]) > .03 or abs(correction[3]) > math.radians(2):
+            report('climb', 'aligning to the measured one-metre radius', None, None)
+            driver.move(correction, .15, check)
+            m = settle(clock())
     for step in range(1, limits.segments+1):
         check()
         move = centered_move(m, limits.radius_m, 2*math.pi/limits.segments)
         if math.hypot(*move[:2]) > .5 or abs(move[3]) > math.radians(30):
             raise InterruptedError('measured correction exceeds the orbit envelope')
-        report('circle', 'one-metre radius around the measured QR; camera tracking', step, limits.segments)
+        report('circle', f'{limits.radius_m:g} m radius around the measured QR; camera tracking', step, limits.segments)
         driver.move(move, limits.speed_mps, check)
         m = settle(clock())

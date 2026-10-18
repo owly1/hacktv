@@ -2,6 +2,8 @@
 
 This opt-in mode flies once around the **measured floor marker**. For a
 calibration-free fixed preset, use [QR_AUTO_DEMO.md](QR_AUTO_DEMO.md).
+For an indoor retreat and orbit scaled from the QR's fire area, select the
+separate [fire-size mode](QR_FIRE_SIZE.md). Ordinary `qr-circle` stays at 1 m.
 
 With `--execute`, five distinct fresh selected-QR frames spanning ≥0.8 seconds
 and backend incident acceptance can start takeoff without a typed arm phrase.

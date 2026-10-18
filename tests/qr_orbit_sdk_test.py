@@ -26,6 +26,19 @@ if HAS_SDK:
 
 @unittest.skipUnless(HAS_SDK, "Run inside the Pi's Olympe environment")
 class AdapterTests(unittest.TestCase):
+    def test_direct_rgb_location_uses_shared_estimator_and_full_capture_pose(self):
+        """Exercise the bridge's RGB adapter without constructing an aircraft."""
+        pose = {'latitude': 43., 'longitude': -79., 'altitude_m': 30.,
+                'observed_at': '1970-01-01T00:01:40Z', 'gps_fix': True, 'provenance': 'live',
+                'extra': {'heading_deg': 90., 'gimbal_pitch_deg': -45., 'position_source': 'gps'}}
+        bridge = SimpleNamespace(telemetry=pose, args=SimpleNamespace(hfov=69))
+        hit = {'source': 'yolo', 'bbox': [.4, .4, .6, .6]}
+        result = AnafiBridge._locate(bridge, hit, (540, 960), captured=100.)
+        self.assertEqual(result['drone'], pose)
+        self.assertGreater(result['est_area_ha'], 0)
+        self.assertEqual(result['fire']['position_source'], 'gps+camera-ray-flat-ground')
+        self.assertIsNone(AnafiBridge._locate(bridge, hit, (540, 960), captured=110.)['est_area_ha'])
+
     def controller_args(self, mode="skycontroller3"):
         """Build explicit controller-route arguments for SDK adapter checks."""
         return SimpleNamespace(ip=None, controller=mode, home_lat=0, home_lon=0,
