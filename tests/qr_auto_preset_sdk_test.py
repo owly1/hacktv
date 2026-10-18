@@ -100,16 +100,17 @@ class AutoPresetTests(unittest.TestCase):
                 if failure=='cancel':b.abort_flight.set()
                 if failure=='stale':b.last_frame_time-=3
                 if failure=='move-error':raise RuntimeError('move rejected')
+                if failure is None and len(moves)==49:b.abort_flight.set()
                 check()
         b.driver=Driver()
         with patch.object(auto.time,'monotonic',side_effect=lambda:now[0]),patch.object(auto.time,'sleep',side_effect=advance):
             b._hover()
         return b,moves,lands,sends
 
-    def test_one_takeoff_24_preset_segments_land_with_no_visible_qr(self):
+    def test_one_takeoff_repeated_laps_until_land_with_no_visible_qr(self):
         b,moves,lands,sends=self.fly()
         self.assertEqual(len(sends),1);self.assertIn('TakeOff',sends[0])
-        self.assertEqual(len(moves),24);self.assertEqual(lands,['confirmed'])
+        self.assertEqual(len(moves),49);self.assertEqual(lands,['confirmed'])
         self.assertTrue(b.land_confirmed);self.assertFalse(b.running)
 
     def test_cancel_stale_video_and_move_rejection_land(self):

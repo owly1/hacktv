@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tarfile
@@ -87,6 +88,16 @@ def ssh_args(config, interactive=False):
 def remote(config, command, data=None, interactive=False):
     return subprocess.run(ssh_args(config, interactive) + ['-T', '-l', config['user'],
                           config['host'], command], input=data, check=True, timeout=60 if not interactive else None)
+
+
+def fetch_flights(config):
+    destination = ROOT/'anafi_out'/'flights'
+    destination.mkdir(parents=True, exist_ok=True)
+    host = '['+config['host']+']' if ':' in config['host'] else config['host']
+    source = config['user']+'@'+host+':'+config['directory']+'/anafi_out/flights/.'
+    subprocess.run(['scp', '-r']+ssh_args(config)[1:]+[source, str(destination)], check=True, timeout=300)
+    print('Flight recordings saved to', destination, flush=True)
+    subprocess.run([sys.executable, str(ROOT/'scripts'/'review_flights.py'), str(destination)], check=True)
 
 
 def bundle(config, env):
@@ -288,6 +299,7 @@ def main():
     install.add_argument('--preflight-file', help='Completed physical checks to copy as current-preflight.local.json')
     commands.add_parser('check-pi', help='Check remote SDK imports without connecting to the drone')
     commands.add_parser('stop-observer', help='Stop only this Mac’s read-only Pi observer')
+    commands.add_parser('fetch-flights', help='Copy saved flight video/diagnostics from the Pi and generate review reports')
     rehearsal = commands.add_parser('rehearsal', help='Local QR recognition; no aircraft commands')
     rehearsal.add_argument('--test-image', action='store_true')
     rehearsal.add_argument('--port', type=int, default=8789)
@@ -318,6 +330,9 @@ def main():
                'chmod 600 ~/.ssh/authorized_keys', public_key, interactive=True)
         return
     env = local_env()
+    if args.command == 'fetch-flights':
+        fetch_flights(config)
+        return
     if args.command == 'doctor':
         print('Python:', sys.version.split()[0])
         for module in ['cv2', 'numpy', 'segno']:
@@ -380,7 +395,23 @@ def main():
         # clock alignment between preparation and the first camera frame.
         sync_clock(config)
         # Never reuse an unknown tunnel: bind failure stops the receiver startup.
-        os.execvp('ssh', receiver_ssh(config, env, command))
+        try:
+            child = subprocess.Popen(receiver_ssh(config, env, command))
+            # SSH owns operator input/signals. Keep the parent alive until its
+            # remote landing/cleanup finishes, then collect the recording.
+            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                result = child.wait()
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            if result:
+                raise subprocess.CalledProcessError(result, child.args)
+        finally:
+            if args.execute:
+                try:
+                    fetch_flights(config)
+                except (OSError, subprocess.SubprocessError) as error:
+                    print('Flight files remain on the Pi. Retry: python scripts/mac.py fetch-flights', flush=True)
 
 
 if __name__ == '__main__':

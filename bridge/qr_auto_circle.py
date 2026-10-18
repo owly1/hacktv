@@ -159,7 +159,7 @@ class QRAutoCircle(HoverCheckout):
             return None
         if starting and (self.scan.last_at is None or not 0 <= time.monotonic()-self.scan.last_at <= .8):
             return 'QR became stale before takeoff'
-        if self.started_at is not None and time.monotonic()-self.started_at > self.limits.mission_seconds:
+        if self.started_at is not None and time.monotonic()-self.started_at > getattr(self, 'flight_seconds', self.limits.mission_seconds):
             return 'mission time limit'
         return None
 
@@ -236,6 +236,7 @@ class QRAutoPreset(QRAutoCircle):
 
     def __init__(self, args, publisher, detector, marker):
         super().__init__(args, publisher, detector, None, marker)
+        self.flight_seconds = 300
 
     def _validate_flight_setup(self):
         # This path uses the aircraft's relative movement commands. There is
@@ -243,12 +244,13 @@ class QRAutoPreset(QRAutoCircle):
         pass
 
     def _ready_message(self):
-        return ('AUTONOMOUS PRESET: selected QR + fire incident starts one circle' if self.args.execute
+        return ('AUTONOMOUS PRESET: selected QR + fire incident starts repeated circles' if self.args.execute
                 else 'PRESET REHEARSAL: QR creates a fire incident; no flight commands')
 
     def _print_instructions(self):
         print(self._ready_message(), flush=True)
-        print('One metre radius, centre 1 m ahead of launch heading; one circle, then land.', flush=True)
+        print('One metre radius, centre 1 m ahead of launch heading; repeat until LAND or a protection limit.', flush=True)
+        print('Flight cap: 5 minutes including takeoff; landing below 40% battery.', flush=True)
         print('QR is only the demo trigger. Camera aims toward the planned centre; no visual position tracking.', flush=True)
         print('X, Esc, LAND or Ctrl+C requests landing. Keep this terminal open. Restart for another flight.', flush=True)
 
@@ -273,7 +275,8 @@ class QRAutoPreset(QRAutoCircle):
 
     def _after_hover(self):
         fly_preset(self.driver, self.limits, self._preset_vehicle, self.abort_flight, self.report,
-                   hold_seconds=1, flight_started=self.started_at, clock=time.monotonic, sleep=time.sleep)
+                   hold_seconds=1, flight_started=self.started_at, clock=time.monotonic, sleep=time.sleep,
+                   circles=0, flight_seconds=self.flight_seconds)
 
 
 def main():

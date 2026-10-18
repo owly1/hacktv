@@ -63,7 +63,12 @@ class OlympeOrbitDriver:
         # cannot acknowledge a new move. No unbounded wait blocks the watchdog.
         dx, dy, dz, yaw = offset
         check()
-        event = moveByEnd(error="ok", _policy="wait", _timeout=8)
+        # Capture errors too, so a rejected/interrupted command is diagnosed
+        # immediately instead of disappearing into an eight-second timeout.
+        event = moveByEnd(_policy="wait", _timeout=8)
+        diagnostic = {"requested": dict(zip(("dX", "dY", "dZ", "dPsi"), offset)),
+                      "speed_mps": speed}
+        self._diagnostic("move_requested", diagnostic)
         pending = self.bridge.drone(extended_move_by(
             dx, dy, dz, yaw, speed, .2, 25, _timeout=8, _no_expect=True) >> event)
         deadline = time.monotonic() + 8
@@ -76,14 +81,36 @@ class OlympeOrbitDriver:
             check()
             if not pending.success():
                 raise RuntimeError("aircraft did not acknowledge a successful relative move")
-            result = self.bridge.drone.get_state(moveByEnd)
-            if (getattr(result["error"], "name", str(result["error"])) != "ok"
-                    or any(abs(result[k]-wanted) > tolerance for k, wanted, tolerance in
-                           (("dX", dx, .08), ("dY", dy, .08), ("dZ", dz, .08), ("dPsi", yaw, .1)))):
-                raise RuntimeError("aircraft-reported displacement differs from the segment")
-        except BaseException:
+            matched = pending.matched_events().last(moveByEnd)
+            if matched is None:
+                raise RuntimeError("relative move completed without its displacement event")
+            result = matched.args
+            error = getattr(result["error"], "name", str(result["error"]))
+            actual = tuple(float(result[k]) for k in ("dX", "dY", "dZ", "dPsi"))
+            diagnostic.update(actual=dict(zip(("dX", "dY", "dZ", "dPsi"), actual)), error=error)
+            self._diagnostic("move_completed", diagnostic)
+            if error != "ok" or not all(math.isfinite(x) for x in actual):
+                raise RuntimeError(f"relative move failed: {error}; actual={actual}")
+            # Real short moves do not land exactly on their requested endpoint.
+            # Permit bounded error; the preset feeds the measured result into
+            # its next waypoint, rather than accumulating identical chords.
+            horizontal_error = math.hypot(actual[0]-dx, actual[1]-dy)
+            corrected_preset = getattr(self.bridge, 'path_reference', None) == 'launch-heading'
+            horizontal_bad = (horizontal_error > .15 if corrected_preset else
+                              abs(actual[0]-dx) > .08 or abs(actual[1]-dy) > .08)
+            if horizontal_bad or abs(actual[2]-dz) > (.10 if corrected_preset else .08) or abs(actual[3]-yaw) > (.15 if corrected_preset else .1):
+                raise RuntimeError(f"movement outside tolerance: requested={offset}, actual={actual}, "
+                                   f"horizontal_error={horizontal_error:.3f} m")
+            return actual
+        except BaseException as error:
+            self._diagnostic("move_failed", {**diagnostic, "reason": str(error)})
             pending.cancel()  # Cancels expectation only; Landing below interrupts flight.
             raise
+
+    def _diagnostic(self, kind, data):
+        publisher = getattr(self.bridge, "publisher", None)
+        if publisher is not None and hasattr(publisher, "diagnostic"):
+            publisher.diagnostic(kind, data)
 
     def request_land(self):
         if self.bridge.drone is not None:
@@ -266,6 +293,11 @@ class QROrbitBridge(AnafiBridge):
         if self.args.execute:
             self.flight_phase = phase
             self.land_confirmed = phase == "landed"
+        # Preserve the actual control-thread timestamp even if HTTP delivery is
+        # delayed, the status queue fills, or shutdown follows landing at once.
+        if hasattr(self.publisher, 'diagnostic'):
+            self.publisher.diagnostic('flight_control', {
+                'phase': phase, 'message': message, 'step': step, 'steps': steps})
         # Neither a stalled terminal nor a backend outage may block the flight
         # worker. The status thread owns all report output and HTTP delivery.
         try:

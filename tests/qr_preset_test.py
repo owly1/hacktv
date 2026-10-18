@@ -52,7 +52,7 @@ class RecognitionTests(unittest.TestCase):
 
 
 class PresetFlightTests(unittest.TestCase):
-    def fly(self, fault=None, confirmed=True, hold=30, started=10):
+    def fly(self, fault=None, confirmed=True, hold=30, started=10, circles=1):
         now, abort, moves, reports, lands = [10.0], threading.Event(), [], [], []
         hold_started = [None]
         class Driver:
@@ -62,6 +62,8 @@ class PresetFlightTests(unittest.TestCase):
                 if fault == "move":
                     raise RuntimeError("SDK move failure")
                 if fault == "during-circle":
+                    abort.set()
+                if fault == "after-two-laps" and len(moves) == 25:
                     abort.set()
                 check()
             def land(self):
@@ -85,7 +87,7 @@ class PresetFlightTests(unittest.TestCase):
             if fault == "during-hover" and hold_started[0] is not None and now[0]-hold_started[0] >= .2:
                 abort.set()
         fly_preset(Driver(), LIMITS, sample, abort, report, hold_seconds=hold, flight_started=started,
-                   clock=lambda: now[0], sleep=advance)
+                   clock=lambda: now[0], sleep=advance, circles=circles)
         return moves, reports, lands, hold_started[0]
 
     def test_one_complete_circle_then_hover_timeout_and_landing(self):
@@ -126,6 +128,38 @@ class PresetFlightTests(unittest.TestCase):
         _, reports, _, _ = self.fly(confirmed=False)
         self.assertEqual(reports[-1][0], "error")
         self.assertFalse(any(entry[0] == "landed" for entry in reports))
+
+    def test_repeated_laps_only_end_when_operator_stops_or_time_limit_is_reached(self):
+        moves, reports, lands, _ = self.fly(fault='after-two-laps', circles=0)
+        self.assertEqual(len(moves), 25)
+        self.assertEqual(len(lands), 1)
+        self.assertTrue(any('lap 3' in r[1] for r in reports))
+        self.assertTrue(any('operator requested' in r[1] for r in reports))
+        moves, reports, lands, _ = self.fly(circles=0)
+        self.assertGreater(len(moves), 24)
+        self.assertTrue(any('time limit' in r[1] for r in reports))
+        self.assertEqual(len(lands), 1)
+
+    def test_measured_endpoint_errors_are_corrected_in_next_waypoint(self):
+        now, commands, reports = [0.], [], []
+        class Driver:
+            def move(self, offset, speed, check):
+                commands.append(offset)
+                now[0] += .5
+                if len(commands) == 1:
+                    return (offset[0]+.1, offset[1], 0., offset[3])
+                return offset
+            def land(self):
+                return True
+        fly_preset(Driver(), LIMITS, lambda: Vehicle(now[0],True,'hovering',70,1,0,0),
+                   threading.Event(), lambda *x: reports.append(x), hold_seconds=1,
+                   clock=lambda:now[0], sleep=lambda s:now.__setitem__(0,now[0]+s))
+        from qr_orbit_core import polygon
+        base = polygon(LIMITS)[1]
+        self.assertAlmostEqual(commands[1][0], base[0]-.1*math.cos(math.pi/6))
+        self.assertAlmostEqual(commands[1][1], base[1]+.1*math.sin(math.pi/6))
+        self.assertEqual(len(commands),12)
+        self.assertEqual(reports[-1][0],'landed')
 
 
 if __name__ == "__main__":
