@@ -74,7 +74,7 @@
   }
   /* Fire outline after `minutes`, as [lat, lon] points. scale < 1 gives the
      hotter inner bands, which sit toward the head of the fire. */
-  function footprint(origin, minutes, sc, details, scale=1) {
+  function footprint(origin, minutes, sc, details, scale=1, options={}) {
     const r0 = startRadius(details), t = Math.max(0, minutes);
     const rate = effectiveRate(sc, details, t);
     const lw = Math.min(4, 1 + sc.wind/35);                // length-to-width ratio
@@ -92,7 +92,10 @@
       // exact; only projected growth past r0 is scaled by the cover under the
       // vertex — the zone pinches around buildings and lots, widens in fuel.
       const probe = destPoint(centre[0], centre[1], brg, dRaw);
-      const dEff = dRaw <= r0 ? dRaw : r0 + (dRaw - r0)*fuelFactorAt(probe[0], probe[1]);
+      // GPS contour missions freeze the marker's uniform fuel assumption; the
+      // normal explorer still applies its optional approximate site cover.
+      const fuel = options.uniformFuel ? 1 : fuelFactorAt(probe[0], probe[1]);
+      const dEff = dRaw <= r0 ? dRaw : r0 + (dRaw - r0)*fuel;
       pts.push(destPoint(centre[0], centre[1], brg, dEff));
     }
     return pts;

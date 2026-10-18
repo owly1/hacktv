@@ -26,6 +26,7 @@ def iso(at):
 class Episodes:
     """Confirm 3 fresh QR frames or 5 same-spot YOLO frames; retry failed posts in one episode."""
     def __init__(self):
+        """Keep confirmation and publication state for one exact observation identity."""
         self.last_capture = None
         self.identity = None
         self.last_bbox = None
@@ -35,6 +36,7 @@ class Episodes:
         self.last_post = float('-inf')
 
     def observe(self, hit, captured, now):
+        """Confirm fresh decodes; never share an episode between marker identities."""
         if self.episode and now - self.last_seen > 15:
             self.episode = None
         if not 0 <= now - captured < 2:
@@ -48,17 +50,18 @@ class Episodes:
         if hit is None:
             self.hits = 0
             return None
+        identity = (hit['source'], hit['label'], hit.get('qr_text'))
+        if identity != self.identity:
+            self.hits = 0
+            self.episode = None
+            self.last_bbox = None
+            self.identity = identity
         if hit.get('qr_tracking') in ('optical-flow','visual-template'):
             # Tracking can maintain an existing episode, never create or
             # reconfirm one, or publish a new incident from cached payload text.
             if self.episode and self.identity==('qr-test','fire',hit.get('qr_text')):
                 self.last_seen=now
             return None
-        identity = (hit['source'], hit['label'], hit.get('qr_text'))
-        if identity != self.identity:
-            self.hits = 0
-            self.episode = None
-            self.identity = identity
         if self.hits and not same_spot(hit, self.last_bbox):
             self.hits = 0
         self.last_bbox = hit['bbox']

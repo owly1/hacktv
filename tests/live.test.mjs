@@ -9,7 +9,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp, MemoryStorage, makeGeminiTransport, buildAnalysisParts } from '../backend/server.mjs';
-import { FIRE_MARKER_DETAILS, FIRE_MARKER_PAYLOAD } from '../backend/validation.mjs';
+import { FIRE_MARKER_DETAILS, FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_DETAILS, TINY_FIRE_MARKER_PAYLOAD,
+  FIRE_MARKER_PAYLOADS } from '../backend/validation.mjs';
 
 const INGEST = 'ingest-token-aaa';
 const DASH = 'dashboard-token-bbb';
@@ -378,10 +379,12 @@ test('malformed detections are rejected', async () => {
       detection({ confidence: 1.5 }),
       detection({ detected_at: new Date(Date.now() - 120_000).toISOString() }),
       detection({ frame_jpeg_base64: Buffer.from('png?').toString('base64') }),
-      // Only the FireSimulationDemo marker counts as a qr-test fire.
+      // Only complete Alpha or Tiny scenarios count as qr-test fire details.
       detection({ details: { ...FIRE_MARKER_DETAILS, name: 'Ravine' } }),
       detection({ details: { ...FIRE_MARKER_DETAILS, area_ha: 300 } }),
       detection({ details: { ...FIRE_MARKER_DETAILS, extra: 1 } }),
+      detection({ details: { ...TINY_FIRE_MARKER_DETAILS, name: 'Alpha' } }),
+      detection({ details: { ...TINY_FIRE_MARKER_DETAILS, area_ha: 0.001 } }),
       detection({ details: null }),
     ]) {
       const res = await t.req('POST', '/api/ingest/detection', { token: INGEST, body });
@@ -390,14 +393,41 @@ test('malformed detections are rejected', async () => {
   } finally { await t.close(); }
 });
 
-test('bridge, marker generator and backend agree on the single fire QR payload', async () => {
+test('bridge, marker generator and backend agree on both exact fire QR payloads', async () => {
   assert.equal(FIRE_MARKER_PAYLOAD, 'EW1:Alpha|120|X|35|M|30|60|31|18|18');
+  assert.equal(TINY_FIRE_MARKER_PAYLOAD, 'EW1:Tiny|0.0001|L|0.01|G|0.2|60|22|45|18');
+  assert.deepEqual(FIRE_MARKER_PAYLOADS, [FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_PAYLOAD]);
   for (const file of ['bridge/fire_detection.py', 'bridge/make_test_marker.py']) {
     const src = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
     assert.ok(src.includes(`FIRE_MARKER_PAYLOAD = "${FIRE_MARKER_PAYLOAD}"`), file);
+    assert.ok(src.includes(`TINY_FIRE_MARKER_PAYLOAD = "${TINY_FIRE_MARKER_PAYLOAD}"`), file);
   }
   const selected = await readFile(new URL('../bridge/orbit-marker.txt', import.meta.url), 'utf8');
   assert.equal(selected.trim(), FIRE_MARKER_PAYLOAD);
+  const tiny = await readFile(new URL('../bridge/tiny-marker.txt', import.meta.url), 'utf8');
+  assert.equal(tiny.trim(), TINY_FIRE_MARKER_PAYLOAD);
+});
+
+test('Tiny ingestion preserves one-square-metre size and slow spread without inheriting Alpha flight annotations', async () => {
+  const t = await startApp({ noGemini: true });
+  try {
+    const details = {...TINY_FIRE_MARKER_DETAILS, position_simulated: true, location_note: 'Configured scenario site'};
+    const res = await t.req('POST', '/api/ingest/detection', {
+      token: INGEST, body: detection({episode_id: 'tiny-fire-1', details}),
+    });
+    assert.equal(res.status, 200);
+    const {incident} = await (await t.req('GET', '/api/incident', {token: DASH})).json();
+    assert.equal(incident.latest.details.name, 'Tiny');
+    assert.equal(incident.latest.details.area_ha * 10000, 1);
+    assert.equal(incident.latest.details.spread_m_per_min, .01);
+    assert.equal(incident.latest.details.wind_kmh, .2);
+    for (const [flight_protocol, path_reference] of [['qr-auto-circle', 'measured-marker'], ['qr-auto-preset', 'launch-heading']]) {
+      const rejected = await t.req('POST', '/api/ingest/detection', {
+        token: INGEST, body: detection({details: {...details, flight_protocol, path_reference, orbit_radius_m: 1}}),
+      });
+      assert.equal(rejected.status, 400);
+    }
+  } finally { await t.close(); }
 });
 
 test('the fire marker may carry the scenario-site notes from fire_monitor', async () => {
@@ -462,6 +492,22 @@ test('flight events and the flight path are served together', async () => {
     assert.equal(flight.path[0].latitude, 43.7866);
     const status = await (await t.req('GET', '/api/status', { token: DASH })).json();
     assert.equal(status.flight.phase, 'circle');
+  } finally { await t.close(); }
+});
+
+test('GPS contour flight phases reach the reporting API without changing circular flight phases', async () => {
+  const t = await startApp({ noGemini: true });
+  try {
+    for (const phase of ['circle', 'contour']) {
+      const response = await t.req('POST', '/api/ingest/flight', {
+        token: INGEST, body: {at: now(), phase, step: 1, message: 'Following forecast boundary'},
+      });
+      assert.equal(response.status, 200);
+    }
+    const response = await t.req('GET', '/api/flight', {token: DASH});
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.events.some(event => event.phase === 'contour'));
   } finally { await t.close(); }
 });
 

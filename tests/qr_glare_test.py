@@ -10,7 +10,7 @@ import numpy as np
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT/'bridge'))
-from fire_detection import FIRE_MARKER_PAYLOAD, FireDetector
+from fire_detection import FIRE_MARKER_PAYLOAD, FIRE_MARKER_PAYLOADS, FireDetector
 from qr_contrast import decode_candidate_crop
 
 
@@ -94,6 +94,18 @@ class QRGlareTests(unittest.TestCase):
             np.full((200, 300), 180, np.uint8), [expected], reader, FIRE_MARKER_PAYLOAD)
         np.testing.assert_allclose(recovered, expected, atol=1e-10)
         reader.detectAndDecode.assert_called_once()
+
+    def test_candidate_crop_accepts_both_pinned_payloads_without_calling_tiny_wrong(self):
+        """The glare path applies the same exact allowlist as the full-frame readers."""
+        points = np.array([[[40., 50.], [90., 50.], [90., 100.], [40., 100.]]])
+        enlarged = (points-[24., 34.]+.5)*3-.5
+        for payload in FIRE_MARKER_PAYLOADS:
+            reader = Mock(detectAndDecode=Mock(return_value=(payload, enlarged, None)))
+            text, recovered, _, wrong = decode_candidate_crop(
+                np.full((200, 300), 180, np.uint8), [points], reader, FIRE_MARKER_PAYLOADS)
+            self.assertEqual(text, payload)
+            np.testing.assert_allclose(recovered, points)
+            self.assertFalse(wrong)
 
     def test_crop_work_is_bounded_and_clipped_quadrilaterals_are_rejected(self):
         image = np.full((400, 500), 180, np.uint8)

@@ -17,7 +17,7 @@ import numpy as np
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT/'bridge'))
-from fire_detection import FireDetector, parse_marker
+from fire_detection import FireDetector, parse_marker, TINY_FIRE_MARKER_PAYLOAD
 from fire_monitor import Episodes, Monitor, detection_payload
 
 MARKER = 'EW1:Alpha|120|X|35|M|30|60|31|18|18'
@@ -143,6 +143,37 @@ class FireMonitorTests(unittest.TestCase):
         self.assertEqual(hit['label'], 'fire')
         self.assertEqual(hit['qr_text'], MARKER)
         self.assertEqual(hit['details']['area_ha'], 120)
+
+    def test_two_markers_require_independent_confirmation_and_episodes(self):
+        """Alternating scenarios never combine hits or reuse the first incident identity."""
+        tiny = {**HIT, 'qr_text': TINY_FIRE_MARKER_PAYLOAD, 'details': parse_marker(TINY_FIRE_MARKER_PAYLOAD)}
+        episodes = Episodes()
+        for index, hit in enumerate((HIT, HIT, tiny, tiny, HIT)):
+            at = 100 + index * .2
+            self.assertIsNone(episodes.observe(hit, at, at + .01))
+        episodes.observe(HIT, 101., 101.01)
+        alpha_episode = episodes.observe(HIT, 101.2, 101.21)
+        self.assertTrue(alpha_episode)
+        for at in (101.4, 101.6):
+            self.assertIsNone(episodes.observe(tiny, at, at + .01))
+            self.assertIsNone(episodes.episode)
+        tiny_episode = episodes.observe(tiny, 101.8, 101.81)
+        self.assertTrue(tiny_episode)
+        self.assertNotEqual(alpha_episode, tiny_episode)
+        payload = detection_payload(tiny, b'jpeg', 101.8, tiny_episode)
+        self.assertEqual(payload['details'], parse_marker(TINY_FIRE_MARKER_PAYLOAD))
+
+    def test_tracked_marker_switch_cannot_publish_another_markers_episode(self):
+        """Even cached hits of a new identity clear the previous episode without confirming one."""
+        for method in ('optical-flow', 'visual-template'):
+            episodes = Episodes()
+            for at in (100., 100.2, 100.4):
+                alpha_episode = episodes.observe(HIT, at, at + .01)
+            self.assertTrue(alpha_episode)
+            tracked = {**HIT, 'qr_text': TINY_FIRE_MARKER_PAYLOAD, 'qr_tracking': method}
+            self.assertIsNone(episodes.observe(tracked, 100.6, 100.61))
+            self.assertIsNone(episodes.episode)
+            self.assertEqual(episodes.hits, 0)
 
     def test_invalid_marker_does_not_create_fire(self):
         """Verify invalid marker does not create fire."""

@@ -17,19 +17,58 @@ import time
 from urllib.parse import urlsplit
 
 from anafi_bridge import (AnafiBridge, FireDetector, Publisher, argument_parser, gimbal,
-                          AltitudeChanged, SpeedChanged, AttitudeChanged, FlyingStateChanged)
+                          AltitudeChanged, SpeedChanged, AttitudeChanged, FlyingStateChanged,
+                          GpsLocationChanged, GPSFixStateChanged, olympe)
 from olympe.enums.gimbal import axis as GimbalAxis
 from olympe.messages.ardrone3.SpeedSettings import MaxVerticalSpeed
 from olympe.messages.ardrone3.SpeedSettingsState import MaxVerticalSpeedChanged
 from olympe.messages import camera as camera_messages
 from camera_search import CameraSearch, AcquisitionAim, image_bearing_pitch, image_bearing_ray
 from continuous_orbit import Bearing
-from fire_detection import FIRE_MARKER_PAYLOAD
+from fire_detection import FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_PAYLOAD, parse_marker
+from fire_contour import (GPSFix, ContourPlan, gps_reason, geographic_offset,
+                          validate_scenario, run_contour)
 from fire_tracking import FirePose, GroundTargetLock, orbit_fire
 from hover_checkout import HoverCheckout
 from qr_auto_circle import QRAutoPreset
 from qr_orbit_bridge import OlympeOrbitDriver
 from qr_scale import AdaptiveQRScale
+
+
+class ContourGPS(olympe.EventListener):
+    """Receive actual GPS event ages and precision without changing the circle driver."""
+
+    def __init__(self, drone):
+        """Keep immutable location snapshots and the most recently received fix flag."""
+        super().__init__(drone)
+        self.location = None
+        # Fix is an edge-triggered flag, unlike recurring location samples.
+        # An aircraft already fixed on connection need not emit another edge.
+        # This cached flag never supplies location or its freshness timestamp.
+        try:self.fixed = drone.get_state(GPSFixStateChanged).get('fixed') == 1
+        except (KeyError, AttributeError, TypeError):self.fixed = False
+
+    @olympe.listen_event(GpsLocationChanged(_policy='wait'))
+    def location_changed(self, event, scheduler):
+        """Latch SDK latitude/longitude accuracy in metres with its receipt time."""
+        values = event.args
+        try:
+            north = float(values['latitude_accuracy'])
+            east = float(values['longitude_accuracy'])
+            accuracy = math.hypot(north, east) if north >= 0 and east >= 0 else float('nan')
+            self.location = (time.monotonic(), float(values['latitude']), float(values['longitude']), accuracy)
+        except (KeyError, TypeError, ValueError):
+            self.location = None
+
+    @olympe.listen_event(GPSFixStateChanged(_policy='wait'))
+    def fix_changed(self, event, scheduler):
+        """Latch genuine fix changes; SDK location events provide continuous freshness."""
+        self.fixed = event.args.get('fixed') == 1
+
+    def snapshot(self):
+        """Return a received GPS fix, never a telemetry fallback or cache timestamp."""
+        location = self.location
+        return GPSFix(*location, self.fixed) if location is not None else None
 
 
 class FireResponse(QRAutoPreset):
@@ -69,7 +108,101 @@ class FireResponse(QRAutoPreset):
         self.geometry=None; self.geometry_stamp=None; self.geometry_error='Calibration not loaded'
         self.geometry_snapshot=None;self.geometry_sha256=None
         self.target_error='Waiting for confirmed fire'; self.control_stop=threading.Event()
+        self.contour_gps=None;self.contour_plan=None;self.contour_initial_yaw=None
+        self.contour_gps_error=None
+        self.response_mode='circle'
         self._load_geometry()
+
+    def _connect(self):
+        """Subscribe a read-only GPS listener on the same aircraft connection."""
+        connected=super()._connect()
+        if connected:
+            try:
+                self.contour_gps=ContourGPS(self.drone)
+                self.contour_gps.subscribe()
+                self.contour_gps_error=None
+            except Exception as error:
+                if self.contour_gps is not None:
+                    try:self.contour_gps.unsubscribe()
+                    except Exception:pass
+                self.contour_gps=None
+                self.contour_gps_error=f'Contour GPS subscription unavailable: {type(error).__name__}'
+        return connected
+
+    def _disconnect(self):
+        """Keep GPS checks alive through landing, then detach the listener."""
+        listener=self.contour_gps
+        try:super()._disconnect()
+        finally:
+            if listener is not None:
+                try:listener.unsubscribe()
+                except Exception:pass
+            self.contour_gps=None
+
+    def _is_contour(self):
+        """Latch mode after claim so later control changes cannot switch an airborne path."""
+        return (self.response_mode if self.takeoff_used else (self.control or {}).get('mode','circle'))=='contour'
+
+    def _contour_reason(self):
+        """Report independent contour readiness without weakening circle preflight."""
+        reason=HoverCheckout.checkout_reason(self,starting=not self.takeoff_used)
+        if reason:return reason
+        if self.contour_gps_error:return self.contour_gps_error
+        if self.geometry is None or 'qr-test' not in self.geometry.models:
+            return 'Contour requires physically verified QR geometry for its initial GPS anchor'
+        fix=self.contour_gps.snapshot() if self.contour_gps is not None else None
+        return gps_reason(fix,time.monotonic())
+
+    def _build_contour_plan(self,control):
+        """Validate the claim and freeze a measured GPS/QR general-area anchor before takeoff."""
+        mission=control.get('mission') or {};contour=mission.get('contour') or {}
+        target=control.get('target') or {};details=parse_marker(target.get('qr_text'))
+        if (control.get('mode')!='contour' or mission.get('mode')!='contour'
+                or mission.get('qr_text')!=TINY_FIRE_MARKER_PAYLOAD
+                or target.get('qr_text')!=TINY_FIRE_MARKER_PAYLOAD or details is None
+                or target.get('source')!='qr-test' or contour.get('forecast_minutes')!=5
+                or contour.get('details')!=details):
+            raise ValueError('Contour requires the exact Tiny scenario and a five-minute claimed forecast')
+        started=contour.get('started_at')
+        if (not isinstance(started,(int,float)) or isinstance(started,bool) or not math.isfinite(started)
+                or not -1<=time.time()-started/1000<=10):
+            raise ValueError('Contour model start time is missing or stale')
+        reason=self._contour_reason()
+        if reason:raise ValueError(reason)
+        measured=self.target
+        if (measured is None or measured.position_source!='measured-qr-3d'
+                or measured.episode!=mission.get('episode_id') or not 0<=time.monotonic()-measured.at<=.8
+                or not self.ground_target_lock.ready(time.monotonic(),measured.episode)):
+            raise ValueError('Contour requires five stable measured QR positions before anchoring')
+        yaw=self.contour_initial_yaw
+        if not isinstance(yaw,(int,float)) or not math.isfinite(yaw):
+            raise ValueError('Contour anchor needs capture-time aircraft heading')
+        fix=self.contour_gps.snapshot()
+        if abs(fix.at-measured.at)>1:
+            raise ValueError('Contour initial GPS and marker timestamps are not synchronized')
+        launch=(fix.latitude,fix.longitude)
+        north=measured.forward_m*math.cos(yaw)-measured.right_m*math.sin(yaw)
+        east=measured.forward_m*math.sin(yaw)+measured.right_m*math.cos(yaw)
+        if math.hypot(north,east)>3:raise ValueError('Contour fire anchor exceeds the 3 m launch offset')
+        elapsed=max(0.,time.time()-started/1000)
+        validate_scenario(details,minutes=5+elapsed/60,flight_seconds=self.flight_seconds)
+        return ContourPlan(geographic_offset(launch,north,east),launch,dict(details),
+                           time.monotonic()-elapsed,started)
+
+    def _sample_contour(self):
+        """Supply received GPS and motion while enforcing the claimed control session."""
+        if self.checkout_reason_control():
+            self.abort_flight.set()
+            raise InterruptedError('Autonomous session ended or control connection is stale')
+        control=self.control or {};mission=control.get('mission') or {}
+        if (control.get('mode')!='contour' or mission.get('mode')!='contour' or mission.get('episode_id')!=self.episode
+                or mission.get('qr_text')!=TINY_FIRE_MARKER_PAYLOAD or self.contour_plan is None
+                or (mission.get('contour') or {}).get('started_at')!=self.contour_plan.started_at):
+            self.abort_flight.set()
+            raise InterruptedError('Claimed contour mission changed')
+        attitude=self._state(AttitudeChanged) or {}
+        fix=self.contour_gps.snapshot() if self.contour_gps is not None else None
+        return self._preset_vehicle(),fix,attitude.get('yaw')
 
     def _load_geometry(self):
         # A calibration file edit must never change an airborne target's scale.
@@ -117,7 +250,7 @@ class FireResponse(QRAutoPreset):
                     or math.sqrt(sum(v*v for v in offset))>.3 or len(size)!=2
                     or any(type(v)!=int for v in size) or not 32<=size[0]<=3840 or not 32<=size[1]<=2160):
                 return None
-            if self.adaptive_qr:side=self.qr_scale_fit.side_m if self.qr_scale_fit is not None else None
+            if self.adaptive_qr and not self._is_contour():side=self.qr_scale_fit.side_m if self.qr_scale_fit is not None else None
             return {'qr_side_m':side,'offset_body_m':offset,'image_size':size,'rms_px':rms,
                     'qr_verified':c.get('qr_pose_verified') is True,'profile_verified':None}
         except (KeyError,TypeError,ValueError):return None
@@ -131,6 +264,8 @@ class FireResponse(QRAutoPreset):
         if self.adaptive_qr:self.target=None;self.camera_aim_sample=None
 
     def _qr_candidate(self,observation,pose,camera,captured_mono):
+        if self._is_contour():
+            return self.geometry.estimate(observation,pose,camera,captured_mono)
         if not self.adaptive_qr or observation['source']!='qr-test':
             return self.geometry.estimate(observation,pose,camera,captured_mono)
         if self.qr_scale_episode!=observation['episode_id']:
@@ -192,6 +327,9 @@ class FireResponse(QRAutoPreset):
         self.overlay_time=time.time()
 
     def _update_target(self):
+        # Contour navigation owns a frozen ground-area anchor after claim; new
+        # rectangles must not move it or reintroduce a visual reacquisition gate.
+        if self.takeoff_used and self._is_contour():return
         observation=(self.control or {}).get('target') if self.takeoff_used else (self.control or {}).get('observed_target')
         if observation and not self.takeoff_used and (observation.get('hits',0)<5 or observation['at']-observation['first']<800
                 or observation.get('qr_tracking','decoded')!='decoded'):observation=None
@@ -239,6 +377,7 @@ class FireResponse(QRAutoPreset):
                     float(ray[0]),float(ray[1]),
                     float(c*origin[0]-s*origin[1]),float(s*origin[0]+c*origin[1]))
             candidate=self._qr_candidate(observation,pose,camera,captured_mono)
+            if self._is_contour():self.contour_initial_yaw=capture_pose['attitude']['yaw']
             if candidate is not None and self.takeoff_used and self.target_vertical_anchor is not None:
                 vertical_residual=candidate.down_m-pose['altitude_m']-self.target_vertical_anchor
                 if abs(vertical_residual)>.35:
@@ -246,7 +385,8 @@ class FireResponse(QRAutoPreset):
                                      'target movement, camera profile or acquired scale is inconsistent')
             self.target=candidate
             if not self.takeoff_used:
-                grounded=self.bearing_target if self.adaptive_qr and observation['source']=='qr-test' else candidate
+                grounded=(self.bearing_target if self.adaptive_qr and observation['source']=='qr-test'
+                          and not self._is_contour() else candidate)
                 if grounded is not None:self.ground_target_lock.observe(grounded,pose['altitude_m'])
             # Use every freshly synchronized measurement during ascent. Keeping
             # only the grounded ray ignored real drift visible in the recording.
@@ -337,7 +477,7 @@ class FireResponse(QRAutoPreset):
         command=self.search.step(now,pitch,bounds,seen)
         # A rectangle at the frame edge is detection, not camera alignment.
         # Centre the freshly localized bearing before permitting takeoff.
-        aim=self.bearing_target if self.adaptive_qr else self.target
+        aim=self.bearing_target if self.adaptive_qr and not self._is_contour() else self.target
         visual=self.bearing_aim.predict(now)
         if seen and (visual is not None or (aim is not None and 0<=now-aim.at<=.8)):
             from qr_circle_core import camera_pitch
@@ -373,7 +513,7 @@ class FireResponse(QRAutoPreset):
                 source_reason=self.geometry.errors.get(blocked_source) if blocked_source else None
                 if (not blocked_source and observed.get('source') and self.target is None
                         and observed.get('hits',0)>=5 and 0<=time.time()-observed.get('at',0)/1000<=1):
-                    if self.adaptive_qr and observed['source']=='qr-test':
+                    if self.adaptive_qr and observed['source']=='qr-test' and not self._is_contour():
                         source_reason='QR bearing acquisition; metric scale is measured during vertical ascent'
                     else:
                         blocked_source=observed['source']
@@ -385,12 +525,18 @@ class FireResponse(QRAutoPreset):
                     'forward_m':self.target.forward_m,'right_m':self.target.right_m,
                     'width_m':self.target.width_m,'down_m':self.target.down_m,'episode_id':self.target.episode,
                     'source':self.target.position_source}
+                contour_reason=self._contour_reason()
                 control=self._request('/api/ingest/autonomy/status',{
                     'receiver_id':self.receiver_id,'ready':not reason and not self.takeoff_used,
                     'aircraft_connected':bool(self.connected and self._aircraft_link()),
                     'short_test':bool(getattr(self.args,'short_test',False)),
-                    'qr_scale_mode':'adaptive' if self.adaptive_qr else 'measured',
+                    'qr_scale_mode':'adaptive' if self.adaptive_qr and not self._is_contour() else 'measured',
                     'camera_search_supported':self._search_bounds() is not None,
+                    'contour_supported':True,
+                    'contour_ready':not contour_reason and not self.takeoff_used,
+                    'contour_reason':contour_reason or ('GPS contour mission active' if self.takeoff_used and self._is_contour()
+                                                       else 'Ready for Tiny marker GPS contour'),
+                    'contour':self.contour_plan.status(time.monotonic()) if self.contour_plan is not None else None,
                     'lap_seconds':self.limits.lap_seconds,
                     'localization_sources':list(self.geometry.models) if self.geometry is not None else [],
                     'calibration':self._calibration_status(),
@@ -415,8 +561,11 @@ class FireResponse(QRAutoPreset):
                     can_start=(control.get('enabled') and control.get('target') and not self.takeoff_used
                                and not self.abort_flight.is_set() and not reason
                                and self.geometry is not None and control['target']['source'] in self.geometry.models)
+                    if can_start and self._is_contour():
+                        can_start=(not self._contour_reason() and control['target'].get('qr_text')==TINY_FIRE_MARKER_PAYLOAD)
                     if can_start:
-                        initial=self.bearing_target if self.adaptive_qr and control['target']['source']=='qr-test' else self.target
+                        initial=(self.bearing_target if self.adaptive_qr and control['target']['source']=='qr-test'
+                                 and not self._is_contour() else self.target)
                         can_start=(initial is not None and initial.episode==control['target']['episode_id']
                                    and 0<=time.monotonic()-initial.at<=.8
                                    and self.ground_target_lock.ready(time.monotonic(),initial.episode))
@@ -435,7 +584,12 @@ class FireResponse(QRAutoPreset):
                         'episode_id':control['target']['episode_id']})
                     with self.takeoff_lock:
                         if self.abort_flight.is_set() or not self.running or not claim.get('enabled'): continue
+                        if claim.get('mode','circle')!=control.get('mode','circle'):
+                            raise ValueError('Response mode changed while claiming mission')
                         self.control=claim; self.control_at=time.monotonic()
+                        if claim.get('mode')=='contour':
+                            self.contour_plan=self._build_contour_plan(claim)
+                        self.response_mode=claim.get('mode','circle')
                         self.claimed_session=claim['session_id']; self.episode=claim['mission']['episode_id']
                         self.incident_id=claim['target']['incident_id']
                         self.camera_profile=self._read_camera_profile()
@@ -443,6 +597,8 @@ class FireResponse(QRAutoPreset):
                             self.target_vertical_anchor=self.ground_target_lock.vertical_anchor()
                         self.takeoff_used=self.hold_connection=True
                         self.publisher.start_recording()
+                        if self.contour_plan is not None:
+                            self.publisher.diagnostic('contour_plan',self.contour_plan.status(time.monotonic()))
                         self.publisher.diagnostic('mission_calibration',{
                             'sha256':self.geometry_sha256,'calibration':self.geometry_snapshot,
                             'vertical_anchor_m':self.target_vertical_anchor,
@@ -475,6 +631,13 @@ class FireResponse(QRAutoPreset):
         if self.takeoff_used and (time.monotonic()-self.control_at>3 or not (self.control or {}).get('enabled')
                                  or self.control.get('session_id')!=self.claimed_session):
             return 'Autonomous session ended or control connection is stale'
+        if self._is_contour():
+            contour_reason=self._contour_reason()
+            if contour_reason:return contour_reason
+            if self.takeoff_used and self.contour_plan is None:return 'Claimed GPS contour plan is unavailable'
+            # The initial measured anchor is already frozen. QR visibility does
+            # not gate takeoff/ascent or navigation after the accepted claim.
+            return None
         if starting and self.takeoff_used:
             observation=(self.control or {}).get('target')
             if (not observation or observation.get('episode_id')!=self.episode
@@ -499,6 +662,11 @@ class FireResponse(QRAutoPreset):
                 or self.control.get('session_id')!=self.claimed_session)
 
     def _after_hover(self):
+        if self._is_contour():
+            run_contour(self.driver,replace(self.limits,speed_mps=.2,lap_seconds=None),self.contour_plan,
+                        self._sample_contour,self.abort_flight,self.report,started=self.started_at,
+                        min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds)
+            return
         orbit_fire(self.driver,self.limits,self._sample_fire,self.abort_flight,self.report,self.episode,
                    started=self.started_at,min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds,
                    last_seen=self._fire_seen_at,remember=self._remember_orbit_target)
@@ -550,6 +718,10 @@ class FireResponse(QRAutoPreset):
                 self.running=False
 
     def _camera_pitch(self):
+        if self._is_contour() and self.contour_plan is not None:
+            # Fixed area observation; the contour path has no marker lock or
+            # independent visual-loss landing behavior after initialization.
+            return -45. if not self.abort_flight.is_set() and not self.checkout_reason_control() else None
         from qr_circle_core import camera_pitch
         now=time.monotonic()
         target=self.target

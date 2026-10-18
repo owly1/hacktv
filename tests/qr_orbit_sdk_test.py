@@ -31,6 +31,36 @@ class AdapterTests(unittest.TestCase):
         return SimpleNamespace(ip=None, controller=mode, home_lat=0, home_lon=0,
                                gimbal_pitch=None, execute=False)
 
+    def test_legacy_bridge_separates_fire_marker_episodes_and_rejects_tracking_confirmation(self):
+        """Two decoded QR scenarios cannot share an incident in the Pi detector path."""
+        import numpy as np
+        from fire_detection import FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_PAYLOAD, parse_marker
+        args = self.controller_args()
+        publisher = Mock()
+        detector = Mock()
+        bridge = AnafiBridge(args, publisher, detector)
+        bridge._track = Mock()
+        bridge._locate = Mock(return_value={'fire': {}, 'drone': {}, 'est_area_ha': 0})
+        frame = np.zeros((80, 80, 3), np.uint8)
+        clock = [100.]
+        with patch('anafi_bridge.time.time', side_effect=lambda: clock[0]):
+            for payload in (FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_PAYLOAD):
+                detector.detect.return_value = {'source': 'qr-test', 'label': 'fire', 'confidence': 1,
+                    'bbox': [.2, .2, .8, .8], 'qr_text': payload, 'details': parse_marker(payload)}
+                for _ in range(3):
+                    clock[0] += .2
+                    bridge._detect_step(frame, clock[0])
+            rows = [call.args[0] for call in publisher.detection.call_args_list]
+            self.assertEqual([row['details']['name'] for row in rows], ['Alpha', 'Tiny'])
+            self.assertNotEqual(rows[0]['episode_id'], rows[1]['episode_id'])
+            detector.detect.return_value = {**detector.detect.return_value,
+                'qr_text': FIRE_MARKER_PAYLOAD, 'qr_tracking': 'optical-flow'}
+            clock[0] += .2
+            bridge._detect_step(frame, clock[0])
+            self.assertIsNone(bridge.episode)
+            self.assertEqual(bridge.hits, 0)
+            self.assertEqual(publisher.detection.call_count, 2)
+
     def test_missing_or_nonfinite_gimbal_state_stays_unknown(self):
         bridge = AnafiBridge(self.controller_args(), SimpleNamespace(), SimpleNamespace())
         for state in (None, [], Mock(), {}, {'pitch_absolute':float('nan')}, {0:{}}):

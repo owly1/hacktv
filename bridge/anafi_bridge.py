@@ -447,6 +447,7 @@ class AnafiBridge:
         # detection state
         self.hits = 0
         self.last_hit_box = None
+        self.last_hit_identity = None
         self.episode = None  # dict(id, last_seen, last_post)
         self.overlay = []    # boxes drawn on the window + sent with each video frame
         self.overlay_time = 0.0
@@ -699,7 +700,7 @@ class AnafiBridge:
                     self._person_step(img, captured)
                 except Exception as e:
                     print(f"[!] Person detection error: {e!r}")
-        hit = self.detector.detect(img)
+        hit = self.detector.detect(img, captured_at=captured)
         now = time.time()
         if hit is None:
             self.hits = 0
@@ -710,6 +711,18 @@ class AnafiBridge:
             return
         self.overlay = [{k: hit[k] for k in ("source", "label", "confidence", "bbox")}]
         self.overlay_time = now
+        identity = (hit['source'], hit['label'], hit.get('qr_text'))
+        if identity != self.last_hit_identity:
+            # A different scenario needs its own confirmation and episode;
+            # in particular Tiny cannot inherit Alpha's fire location/history.
+            self.hits = 0
+            self.last_hit_box = None
+            self.episode = None
+            self.last_hit_identity = identity
+        if hit.get('qr_tracking') in ('optical-flow', 'visual-template'):
+            if self.episode is not None:
+                self.episode['last_seen'] = now
+            return  # Cached text may maintain an episode, never open/publish one.
         self.hits = self.hits + 1 if self.hits == 0 or same_spot(hit, self.last_hit_box) else 1
         self.last_hit_box = hit["bbox"]
         self._track(hit, img.shape)

@@ -112,6 +112,35 @@ body[data-mode] .map-frame { padding: 1px; margin: 0 var(--pad); border-radius: 
 :root[data-theme=light] .fleet-card-head,
 :root[data-theme=light] .fleet-phase { color: color-mix(in srgb, var(--fleet-color) 40%, #111114); }
 .fleet-card canvas { border-radius: 6px; }
+
+/* The shared Pi architecture describes expansion without adding live drones. */
+.pi-architecture { padding: 16px 22px; border: 1px solid var(--line-2); border-radius: 16px; background: var(--surface); }
+.pi-route { display: flex; align-items: center; justify-content: center; gap: 22px; }
+.pi-route > span { display: grid; gap: 4px; position: relative; }
+.pi-route b { font-size: 12px; color: var(--text); }
+.pi-route small, .pi-route > i { font-size: 11px; color: var(--muted); }
+.pi-route svg { position: absolute; width: 20px; height: 20px; left: -30px; top: 5px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.pi-route .pi-hub { padding: 12px 18px; border: 1px solid var(--accent-line); border-radius: 10px; background: var(--accent-soft); }
+.pi-architecture p { margin: 12px 0 0; text-align: center; font-size: 11px; color: var(--muted); line-height: 1.6; }
+.autonomy-actions { flex-wrap: wrap; max-width: 350px; justify-content: flex-end; }
+.autonomy-actions .button { flex: 1 1 145px; }
+.autonomy-actions .autonomy-land { flex-basis: 100%; }
+.contour-start { color: var(--text); border-color: var(--selected); background: var(--selected-soft); }
+#contour-readiness { max-width: 80ch; }
+#contour-preview-dialog { width: min(720px, calc(100vw - 32px)); }
+#contour-preview-plot { display: block; width: 100%; height: auto; aspect-ratio: 640 / 380; min-height: 220px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface-sunk); }
+#contour-preview-plot .preview-current { fill: #ef6a35; fill-opacity: .5; stroke: #d94c27; stroke-width: 2; }
+#contour-preview-plot .preview-forecast { fill: #249bc5; fill-opacity: .07; stroke: #249bc5; stroke-width: 3; }
+#contour-preview-plot .preview-origin { fill: var(--text); }
+#contour-preview-plot .preview-aircraft { color: var(--text); fill: var(--surface); stroke: var(--text); stroke-width: 1.8; }
+#contour-preview-plot .preview-scale { stroke: var(--muted); fill: none; stroke-width: 1.5; }
+#contour-preview-plot text { fill: var(--muted); stroke: none; font-size: 12px; font-family: var(--mono); }
+.contour-preview-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 18px; margin: 12px 0 20px; font-size: 11px; color: var(--muted); }
+.contour-preview-legend i { display: inline-block; width: 16px; height: 3px; vertical-align: middle; margin-right: 5px; }
+.preview-fire-key { background: #ef6a35; }.preview-route-key { background: #249bc5; }
+#contour-preview-dialog .microcopy { font-size: 12px; line-height: 1.6; color: var(--muted); }
+@media(max-width:1000px) { .autonomy-panel { align-items: stretch; flex-direction: column; gap: 12px; }.autonomy-actions { max-width: none; justify-content: flex-start; }.autonomy-actions .autonomy-land { flex-basis: 145px; } }
+@media(max-width:600px) { .pi-route { flex-direction: column; gap: 8px; text-align: center; }.pi-route > i { transform: rotate(90deg); }.pi-route svg { left: -26px; }.autonomy-actions .button { flex-basis: 100%; } }
 .video-frame { margin: 0 var(--pad); height: auto; min-height: 220px; flex: 1 1 220px; border-radius: 10px; background: var(--feed-bg); }
 .video-frame canvas, .video-frame img { position: absolute; inset: 0; object-fit: cover; }
 .camera-overlay, .camera-bottom { color: var(--feed-ink); }

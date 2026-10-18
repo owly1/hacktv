@@ -30,7 +30,7 @@ async function dashboard() {
     L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, /* Preserve icon options without constructing a real map icon. */ divIcon: value => value},
     window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
   });
-  for (const name of ['model.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'app.js']) {
+  for (const name of ['model.js', 'contour.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'app.js']) {
     let source = await readFile(new URL(`../dist/${name}`, import.meta.url), 'utf8');
     if (name === 'app.js') source = source.replace(/\nboot\(\);\s*$/, '\n');
     vm.runInContext(source, context, {filename: name});
@@ -378,6 +378,65 @@ test('BOSCO sends search and flight authorization together and disables its star
   assert.equal(run('autonomousSession'),'bosco-session');
   assert.equal(element('autonomy-enable').disabled,true);
   assert.equal(element('autonomy-state').textContent,'SEARCHING');
+});
+
+test('contour has its own GPS readiness gate and explicit mode without changing the circle action',async()=>{
+  const {context,run,element}=await dashboard(); const calls=[];
+  context.fetch=async(url,options)=>{
+    const body=JSON.parse(options.body); calls.push(body);
+    return {ok:true,json:async()=>({enabled:true,mode:body.mode??'circle',session_id:'contour-session',
+      receiver:{ready:true,camera_ready:true,camera_search_supported:true,contour_supported:true,contour_ready:true,phase:'contour'},mission:{id:'contour-1'}})};
+  };
+  run(`state.mode='live';state.autonomy={enabled:false,receiver:{ready:true,camera_ready:true,camera_search_supported:true,
+    contour_supported:true,contour_ready:false,contour_reason:'GPS accuracy is insufficient'}};renderAutonomy()`);
+  assert.equal(element('autonomy-enable').disabled,false,'existing circle remains available');
+  assert.equal(element('autonomy-contour-enable').disabled,true);
+  assert.match(element('contour-readiness').textContent,/GPS accuracy is insufficient/);
+  run('state.autonomy.receiver.contour_ready=true;renderAutonomy()');
+  assert.equal(element('autonomy-contour-enable').disabled,false);
+  await run("setAutonomy('enable',{camera_search:true,mode:'contour'})");
+  assert.deepEqual(calls[0],{action:'enable',camera_search:true,mode:'contour'});
+  assert.equal(element('autonomy-contour-enable').disabled,true);
+  assert.equal(element('autonomy-enable').disabled,true);
+  assert.equal(element('autonomy-state').textContent,'GPS CONTOUR');
+  assert.match(element('autonomy-detail').textContent,/fixed initial fire area/);
+  run("state.mode='demo';state.autonomy.enabled=false;renderAutonomy()");
+  assert.equal(element('autonomy-contour-enable').disabled,true);
+});
+
+test('contour forecast keeps its GPS anchor, conditions and real clock separate from explorer and replay',async()=>{
+  const {run}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,mode:'contour',mission:{id:'contour-1',contour:{started_at:1000000,details:BoscoContour.TINY}},
+    receiver:{contour:{anchor:{latitude:43.8,longitude:-79.2,position_source:'gps'},started_at:1000000,details:BoscoContour.TINY}}};
+    var routeBefore=contourMissionGeometry(1060000);state.minute=60;state.speed=16;state.scenario.wind=120;state.scenario.direction=200;
+    state.site={latitude:10,longitude:10};var routeAfter=contourMissionGeometry(1060000);`);
+  assert.deepEqual(run('routeAfter.route'),run('routeBefore.route'));
+  assert.equal(run('routeAfter.ageMinutes'),1);
+  assert.deepEqual(run('routeAfter.route'),run('EmberModel.footprint([43.8,-79.2],6,EmberModel.scenarioFrom(BoscoContour.TINY),BoscoContour.TINY,1,{uniformFuel:true})'));
+  assert.notDeepEqual(run('contourMissionGeometry(1120000).route'),run('routeBefore.route'));
+  run("state.autonomy.receiver.contour.anchor.position_source='configured-demo-site-not-measured'");
+  assert.equal(run('contourMissionGeometry(1060000)'),null,'scenario coordinates never substitute for GPS');
+  run("state.autonomy.receiver.contour.anchor.position_source='gps';state.mode='demo'");
+  assert.equal(run('contourMissionGeometry(1060000)'),null);
+});
+
+test('tiny preview uses the live contour model with uniform fuel and never sends commands',async()=>{
+  const {context,run,element}=await dashboard(); const calls=[];
+  context.fetch=async(...args)=>{calls.push(args);throw new Error('preview must not call the API');};
+  run(`var uniform=BoscoContour.forecast([0,0],BoscoContour.TINY,0);globalThis.BoscoFuels={zones:[{factor:0,polygon:[[-1,-1],[-1,1],[1,1],[1,-1]]}]};
+    var withSiteFuel=BoscoContour.forecast([0,0],BoscoContour.TINY,0);resetContourPreview(2);`);
+  assert.deepEqual(run('uniform.route'),run('withSiteFuel.route'));
+  assert.notDeepEqual(run('uniform.route'),run('EmberModel.footprint([0,0],5,EmberModel.scenarioFrom(BoscoContour.TINY),BoscoContour.TINY)'));
+  assert.equal(run('uniform.current.length'),72);
+  assert.equal(run('uniform.speedMps'),.05,'near-static fire retains a slow minimum patrol speed');
+  assert.equal(run('BoscoContour.TINY.wind_kmh'),.2);
+  assert.equal(run('BoscoContour.TINY.spread_m_per_min'),.01);
+  const fiveMinuteGrowth=run('EmberModel.headDistance(5,EmberModel.scenarioFrom(BoscoContour.TINY),BoscoContour.TINY)-EmberModel.startRadius(BoscoContour.TINY)');
+  assert.ok(fiveMinuteGrowth>=.05&&fiveMinuteGrowth<.051,'five-minute head growth is only about five centimetres');
+  assert.match(element('contour-preview-plot').innerHTML,/preview-aircraft/);
+  assert.match(element('contour-preview-speed').textContent,/real-time growth/);
+  assert.deepEqual(calls,[]);
+  assert.equal(run('autonomousSession'),null);
 });
 
 test('a delayed poll cannot erase a newly enabled flight session',async()=>{

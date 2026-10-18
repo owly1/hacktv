@@ -8,11 +8,12 @@ from qr_visual_track import QRVisualTrack, QRTemplateTrack
 from qr_contrast import decode_candidate_crop
 
 QR_PREFIX = "EW1:"
-# The one QR code the drone treats as a fire: the printed FireSimulationDemo
-# marker (dist/test-marker.html, bridge/orbit-marker.txt). Any other code,
-# including other EW1: payloads, is ignored. Must match
-# bridge/make_test_marker.py and backend/validation.mjs.
+# Exact scenario identities; Alpha remains the original circular-demo marker.
+# Tiny is a one-square-metre scenario for the separate forecast-contour mode.
+# Keep these pinned copies aligned with the generator and backend validation.
 FIRE_MARKER_PAYLOAD = "EW1:Alpha|120|X|35|M|30|60|31|18|18"
+TINY_FIRE_MARKER_PAYLOAD = "EW1:Tiny|0.0001|L|0.01|G|0.2|60|22|45|18"
+FIRE_MARKER_PAYLOADS = (FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_PAYLOAD)
 
 # YOLO false-alarm filters
 DEFAULT_CONF = 0.65           # minimum YOLO score
@@ -34,12 +35,12 @@ FUEL_CODES = {"F": "dry conifer forest", "G": "cured grass", "M": "dry mixed for
 def parse_marker(text):
     """Decode the Emberwatch fire marker into fire details, or None.
 
-    Only FIRE_MARKER_PAYLOAD is accepted, byte for byte; every other QR code
+    Only FIRE_MARKER_PAYLOADS are accepted, byte for byte; every other QR code
     (other EW1: payloads included) returns None and is never reported as a fire.
     Payload (kept short so the code has few, large modules and reads from ~2 m):
     EW1:name|area_ha|intensity|spread_m_per_min|fuel|wind_kmh|toward_deg|temp_c|rh_pct|side_cm
     """
-    if text != FIRE_MARKER_PAYLOAD:
+    if text not in FIRE_MARKER_PAYLOADS:
         return None
     fields = text[len(QR_PREFIX):].split("|")
     if len(fields) != 10:
@@ -80,6 +81,9 @@ class FireDetector:
         self.conf = conf
         self.qr_track=QRVisualTrack()
         self.qr_template=QRTemplateTrack()
+        # The cached pixels, geometry and decode timestamp belong to this
+        # exact identity. A new marker cannot inherit the previous template.
+        self._qr_payload=None
         self._qr_contrast_at=float('-inf')
         self.labels = ('fire', 'smoke') if detect_smoke else ('fire',)
         # Two QR readers: the classic one is fast; the ArUco-based one finds
@@ -153,7 +157,7 @@ class FireDetector:
                 break
         if not details and candidates and not other_code:
             text, recovered, recovered_modules, wrong = decode_candidate_crop(
-                gray, candidates, self.qr_readers[0], FIRE_MARKER_PAYLOAD)
+                gray, candidates, self.qr_readers[0], FIRE_MARKER_PAYLOADS)
             other_code=other_code or wrong
             if recovered is not None:
                 points,modules=recovered,recovered_modules
@@ -207,6 +211,10 @@ class FireDetector:
                 points,modules,details=candidate,recovered_modules,parse_marker(text)
         tracking='decoded';decoded_at=captured_at
         if details and points is not None:
+            if text != self._qr_payload:
+                self.qr_track.clear()
+                self.qr_template.clear()
+            self._qr_payload=text
             self.qr_template.seed(gray,points,captured_at,modules)
             if modules is not None:
                 quad=np.asarray(points).reshape(4,2)
@@ -222,16 +230,17 @@ class FireDetector:
         elif other_code:
             self.qr_track.clear()
             self.qr_template.clear()
+            self._qr_payload=None
         else:
             flow=self.qr_track.follow(gray,captured_at)
             if flow is not None:candidates.append(flow)
             template_match=self.qr_template.match(gray,candidates,captured_at)
             if template_match is not None:
-                points=template_match['corners'];text=FIRE_MARKER_PAYLOAD;details=parse_marker(text)
+                points=template_match['corners'];text=self._qr_payload;details=parse_marker(text)
                 tracking='visual-template';decoded_at=template_match['decoded_at']
             elif flow is not None:
                 points=flow
-                text=FIRE_MARKER_PAYLOAD;details=parse_marker(text)
+                text=self._qr_payload;details=parse_marker(text)
                 tracking='optical-flow';decoded_at=self.qr_track.decoded_at
         if details and points is not None:
             pts = points.reshape(-1, 2)

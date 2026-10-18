@@ -4,6 +4,8 @@ The shared features are integrated on `main`; old branch names are not setup
 instructions. Start with [README.md](README.md) and give each assistant
 [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md).
 
+Circle and contour are integrated on `main`: [combined validation and next flight evidence](docs/CIRCLE_CONTOUR_INTEGRATION.md).
+
 ## Work areas
 
 | Owner area | Main files | Check before handoff |
