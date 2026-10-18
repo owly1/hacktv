@@ -355,7 +355,7 @@ export const ANALYSIS_INSTRUCTIONS = [
   'Direction convention: every direction in the data (wind_dir_deg, direction, toward_deg, bearing_deg) is the direction the fire spreads or the wind blows TOWARD, in degrees clockwise from north (60 = toward the east-northeast) — never the direction the wind comes from.',
   'List what this evidence cannot establish under "unknowns" and the specific observations that would overturn your assessment under "falsifiers".',
   'If only telemetry is supplied (no image), say plainly that this sample contains no visual fire evidence.',
-  'The drone has no wind sensor. You may still derive an APPROXIMATE wind vector from its stabilization behavior: while holding position a multirotor tilts so rotor thrust balances wind drag, so sustained non-zero pitch/roll in near-hover implies a wind load in the tilt direction; GPS wander while position-holding and disagreement between commanded and achieved ground track carry the same signal. Stabilization is only visible over time — call get_telemetry_history before estimating; a single sample is not evidence of stabilization. When you estimate wind this way, fill wind_estimate and state the method; it is a derived estimate, never a sensor measurement. If the telemetry lacks attitude data or enough history to observe stabilization, omit wind_estimate and list wind conditions under unknowns.',
+  'The drone has no wind sensor. You may still derive an APPROXIMATE wind vector from its stabilization behavior. Sign convention: while holding position a multirotor tilts INTO the wind (toward its source) so rotor thrust balances wind drag — the wind therefore blows TOWARD the azimuth opposite the sustained tilt; GPS wander between position corrections drifts downwind (in the TOWARD direction); and in forward flight the difference between heading and achieved ground track reveals the crosswind. Tilt magnitude and wander rate correlate loosely with wind speed, not precisely — report an approximate value with honest confidence. Stabilization is only visible over time — call get_telemetry_history before estimating; a single sample is not evidence of stabilization. When you estimate wind this way, fill wind_estimate and state the method; it is a derived estimate, never a sensor measurement. If the telemetry lacks attitude data or enough history to observe stabilization, omit wind_estimate and list wind conditions under unknowns.',
 ].join(' ');
 
 const GEMINI_RESPONSE_SCHEMA = {
@@ -492,6 +492,12 @@ function validateWindEstimate(value) {
         && (typeof value[key] !== 'number' || !Number.isFinite(value[key]))) {
       throw new ApiError(502, `Gemini output "wind_estimate.${key}" must be a finite number or absent`);
     }
+  }
+  // Sanity bounds: negative speed is meaningless, and ~60 m/s exceeds anything
+  // an ANAFI can operate in — a larger claim is a model error, not evidence.
+  if (value.speed_mps !== undefined && value.speed_mps !== null
+      && (value.speed_mps < 0 || value.speed_mps > 60)) {
+    throw new ApiError(502, 'Gemini output "wind_estimate.speed_mps" must be 0–60');
   }
   if (value.direction_deg !== undefined && value.direction_deg !== null
       && (value.direction_deg < 0 || value.direction_deg >= 360)) {

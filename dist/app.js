@@ -18,6 +18,9 @@ const state = {
   telemetry: null, incident: null, episodeSeen: null, flight: {events: [], path: []},
   analysis: null, analysisMeta: null, plan: null, planDirty: false,
   scenario: {...M.BASE}, detectedScenario: null, minute: 0, playing: false, speed: 1,
+  // created_at of the analysis whose derived wind last set scenario.wind, the
+  // analysis the user manually overrode, and the estimate shown in the UI
+  windAuto: null, windManual: null, windDerived: null,
   video: {lastAt: 0, decoding: false, times: []},
   demo: {fires: [], selected: null, started: 0, videos: null},
   map: null, layers: {}, tiles: {}, basemap: 'osm', follow: false, droneMarker: null, tilesOk: false, tileErrors: 0, centredOnDrone: false,
@@ -159,7 +162,7 @@ function renderSpread() {
   const sc = state.scenario, t = state.minute;
   $('time-label').textContent = `T + ${Math.round(t)} min`; $('timeline').value = t;
   document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - t) < .5));
-  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}`;
+  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? ' · derived est.' : '');
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
@@ -311,6 +314,7 @@ function renderIncident() {
     state.episodeSeen = inc.episode_id;
     state.detectedScenario = M.scenarioFrom(inc.latest.details);
     state.scenario = {...state.detectedScenario}; state.minute = 0;
+    state.windAuto = state.windManual = state.windDerived = null;
     markPlanDirty(); renderFirePin(); renderSpread(); fitToFire();
     toast(`Fire detected — ${inc.latest.details?.name || inc.latest.label}. See analysis and response below.`);
   } else renderFirePin();
@@ -338,7 +342,32 @@ function renderAnalysis() {
   $('analysis-title').textContent = 'Spread outlook';
   $('analysis-detail').textContent = a.spread_outlook || a.unknowns.join(' ');
   $('analysis-observations').innerHTML = (a.observations || []).slice(0, 4).map(o => `<li>${escapeHTML(o)}</li>`).join('');
-  $('analysis-limit').textContent = [a.unknowns[0], a.limitations].filter(Boolean).join(' · ');
+  const w = a.wind_estimate;
+  const windLine = w ? `Wind est. ${w.speed_mps != null ? `≈${w.speed_mps} m/s` : 'unknown speed'}${w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}° ${M.compass(w.direction_deg)}` : ''} — derived from drone stabilization, not a sensor (${w.confidence})` : null;
+  $('analysis-limit').textContent = [windLine, a.unknowns[0], a.limitations].filter(Boolean).join(' · ');
+  applyWindEstimate(a);
+}
+
+/* The drone has no wind sensor: when the latest analysis carries a wind
+   estimate derived from stabilization telemetry, adopt it as the scenario's
+   wind so the projected spread follows live evidence instead of the marker's
+   fixed value. Each analysis applies at most once; a manual Apply in the
+   conditions dialog overrides it until the next analysis arrives. */
+function applyWindEstimate(a) {
+  const w = a?.wind_estimate;
+  if (!w || state.mode === 'demo') return;
+  if (a.created_at === state.windAuto || a.created_at === state.windManual) return;
+  const kmh = w.speed_mps != null ? Math.round(w.speed_mps * 3.6) : null;
+  const deg = w.direction_deg != null ? ((Math.round(w.direction_deg) % 360) + 360) % 360 : null;
+  if (kmh === null && deg === null) return;
+  const changed = (kmh !== null && kmh !== state.scenario.wind) || (deg !== null && deg !== state.scenario.direction);
+  if (kmh !== null) state.scenario.wind = kmh;
+  if (deg !== null) state.scenario.direction = deg;
+  state.windAuto = a.created_at; state.windDerived = w;
+  if (changed) {
+    markPlanDirty(); renderSpread();
+    toast(`Wind updated from drone stabilization — derived estimate, not a sensor reading.`);
+  }
 }
 
 // ------------------------------------------------------------------ plan
@@ -640,6 +669,7 @@ function exitDemo() {
   $('telemetry-tag').textContent = 'LIVE'; $('telemetry-note').textContent = 'Waiting for live telemetry'; $('camera-clock').textContent = '—'; $('video-status').textContent = 'Waiting for the bridge'; state.video.lastAt = 0;
   $('battery-value').innerHTML = '—<span class="small-unit">%</span>'; $('battery-context').textContent = 'no telemetry yet'; $('drone-source').textContent = 'Waiting for drone';
   Object.assign(state, state.live ?? {}); resetAnalysisPanel(); resetPlanPanel(); renderAnalysis(); if (state.plan) renderPlan();
+  state.windAuto = state.windManual = state.windDerived = null;
   renderIncident(); renderDrone(); renderSpread(); renderTelemetry(); renderFlight(); fitToFire();
 }
 
@@ -722,7 +752,7 @@ function bindUi() {
   $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'Started from the conditions reported with the detected fire. Adjust them to see how the spread changes.' : 'These conditions drive the projected spread on the map.'; openDialog('scenario-dialog'); };
   for (const [id, key] of [['wind-input', 'wind'], ['direction-input', 'direction'], ['dry-input', 'dryness'], ['temp-input', 'temp'], ['rh-input', 'rh']]) $(id).oninput = () => { pending[key] = +$(id).value; scenarioControls(pending); };
   $('reset-scenario').onclick = () => { pending = {...(state.detectedScenario || M.BASE)}; scenarioControls(pending); };
-  $('apply-scenario').onclick = () => { state.scenario = {...pending}; markPlanDirty(); renderSpread(); $('scenario-dialog').close(); };
+  $('apply-scenario').onclick = () => { state.scenario = {...pending}; state.windManual = state.analysis?.created_at ?? 'manual'; state.windDerived = null; markPlanDirty(); renderSpread(); $('scenario-dialog').close(); };
   $('play').onclick = () => { state.playing = !state.playing; setPlayButton(); };
   $('speed').onclick = () => { state.speed = state.speed === 4 ? 1 : state.speed * 2; $('speed').textContent = state.speed + '×'; };
   $('timeline').oninput = () => { state.playing = false; setPlayButton(); state.minute = +$('timeline').value; renderSpread(); };

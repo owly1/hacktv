@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createApp, MemoryStorage } from '../backend/server.mjs';
+import { createApp, MemoryStorage, validateAnalysisContent } from '../backend/server.mjs';
 import { ApiError } from '../backend/validation.mjs';
 
 const INGEST = 'ingest-token-aaa';
@@ -485,6 +485,32 @@ test('failing configured storage reports 503, not a memory fallback', async () =
   assert.equal(json.storage.status, 'postgres-unavailable');
   s.close();
   s.closeAllConnections?.();
+});
+
+test('wind_estimate sanity bounds reject implausible model output', () => {
+  const base = { summary: 's', unknowns: [], limitations: 'l' };
+  // derived calm is a legitimate estimate — speed 0 must pass
+  assert.equal(
+    validateAnalysisContent({ ...base, wind_estimate: { speed_mps: 0, method: 'no tilt in position hold', confidence: 'medium' } }).wind_estimate.speed_mps,
+    0,
+  );
+  assert.throws(
+    () => validateAnalysisContent({ ...base, wind_estimate: { speed_mps: -1, method: 'm', confidence: 'low' } }),
+    /speed_mps.*0–60/,
+  );
+  assert.throws(
+    () => validateAnalysisContent({ ...base, wind_estimate: { speed_mps: 500, method: 'm', confidence: 'low' } }),
+    /speed_mps.*0–60/,
+  );
+  assert.throws(
+    () => validateAnalysisContent({ ...base, wind_estimate: { method: 'm', confidence: 'low', direction_deg: 360 } }),
+    /direction_deg/,
+  );
+  // "moving air, direction unknown" stays valid — direction optional
+  assert.equal(
+    validateAnalysisContent({ ...base, wind_estimate: { method: 'ground-track drift', confidence: 'low' } }).wind_estimate.direction_deg,
+    null,
+  );
 });
 
 // ---- startup token contract ----
