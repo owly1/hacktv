@@ -231,6 +231,90 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertTrue(self.cancelled)
 
+    def test_movement_uses_matching_event_not_sdk_cache_and_records_actual_result(self):
+        requested = (.034, -.259, 0., .262)
+        actual = (.13, -.259, 0., .262)  # 9.6 cm endpoint error is corrected next step.
+        pending = Mock()
+        pending.done.return_value = pending.success.return_value = True
+        result = dict(zip(('dX','dY','dZ','dPsi'),actual), error='ok')
+        pending.matched_events.return_value.last.return_value = SimpleNamespace(args=result)
+        drone = Mock(return_value=pending)
+        drone.get_state.side_effect = AssertionError('cached event is not command acknowledgement')
+        publisher = Mock()
+        driver = OlympeOrbitDriver(SimpleNamespace(drone=drone, publisher=publisher, path_reference='launch-heading'))
+        self.assertEqual(driver.move(requested,.25,lambda:None),actual)
+        self.assertEqual(publisher.diagnostic.call_args_list[-1].args[0], 'move_completed')
+        for change in ({'dX':.5}, {'dPsi':1.}, {'dY':float('nan')}, {'error':'interrupted'}):
+            pending.matched_events.return_value.last.return_value = SimpleNamespace(args={**result,**change})
+            with self.assertRaises(RuntimeError):
+                driver.move(requested,.25,lambda:None)
+            pending.cancel.assert_called()
+            self.assertEqual(publisher.diagnostic.call_args_list[-1].args[0], 'move_failed')
+        pending.matched_events.return_value.last.return_value = None
+        with self.assertRaisesRegex(RuntimeError,'without its displacement event'):
+            driver.move(requested,.25,lambda:None)
+
+    def test_recording_continues_while_backend_video_upload_is_blocked(self):
+        import threading
+        from anafi_bridge import Publisher
+        from flight_recording import FlightRecorder
+        gate, entered = threading.Event(), threading.Event()
+        with tempfile.TemporaryDirectory() as root:
+            publisher = Publisher(root)
+            def blocked(*args):
+                entered.set()
+                gate.wait(3)
+            with patch.object(publisher,'_post',side_effect=blocked):
+                publisher.start_recording()
+                try:
+                    publisher.frame(b'jpeg-a',100.,[])
+                    self.assertTrue(entered.wait(1))
+                    for i in range(20):
+                        publisher.frame(b'jpeg-b',100.1+i/30,[])
+                    publisher.diagnostic('flight_control',{'phase':'landed'})
+                    publisher.close()
+                    self.assertEqual(publisher.recorder.stats['frames'],21)
+                    self.assertLessEqual(publisher.frame_uploads.qsize(),1)
+                    self.assertIn('landed',(publisher.recorder.path/'events.jsonl').read_text())
+                finally:
+                    gate.set()
+                    publisher.close()
+
+    def test_person_outbox_recovery_and_flight_recording_coexist(self):
+        from anafi_bridge import Publisher
+        with tempfile.TemporaryDirectory() as root:
+            publisher = Publisher(root, 'http://test.invalid', 'test-token')
+            try:
+                with patch.object(publisher, '_post', return_value=None):
+                    publisher.start_recording()
+                    publisher.person({'obs_id':'merge-test-person'})
+                self.assertEqual(len(publisher.outbox), 1)
+                self.assertIn('merge-test-person', Path(publisher.outbox_path).read_text())
+                with patch.object(publisher, '_post', return_value={}) as post:
+                    publisher.telemetry({'state':'hovering','altitude_m':1})
+                    publisher.flight('landed','merge integration test')
+                self.assertEqual(publisher.outbox, [])
+                self.assertEqual(Path(publisher.outbox_path).read_text(), '')
+                self.assertIn('/api/ingest/person', [call.args[0] for call in post.call_args_list])
+            finally:
+                publisher.close()
+            evidence = (publisher.recorder.path/'events.jsonl').read_text()
+            self.assertIn('telemetry', evidence)
+            self.assertIn('landed', evidence)
+
+    def test_bridge_shutdown_flushes_recording_after_disconnect(self):
+        args = self.controller_args(mode='direct')
+        args.no_window, args.demo_flight = True, False
+        publisher = Mock()
+        bridge = AnafiBridge(args, publisher, Mock())
+        bridge.running = False
+        order = []
+        publisher.close.side_effect = lambda: order.append('recording closed')
+        with patch('anafi_bridge.threading.Thread'), \
+             patch.object(bridge, '_disconnect', side_effect=lambda: order.append('disconnected')):
+            bridge.run()
+        self.assertEqual(order, ['disconnected', 'recording closed'])
+
     def test_landing_requires_a_received_landed_event(self):
         driver, bridge = self.setup_fake()
         def sleep(seconds):

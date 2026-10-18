@@ -224,3 +224,63 @@ SDK tests are skipped on macOS and need the Pi's SDK environment. The existing
 terminal-restoration test can differ on macOS's OS-managed `PENDIN` flag;
 investigate that separately from the Linux flight runtime. No flight test is
 performed by the setup or unit tests.
+
+## Autonomous one-metre QR circle
+
+For the QR-as-demo-trigger workflow, use `pi --mode qr-demo --execute`, described
+in [Automatic QR demo preset](QR_AUTO_DEMO.md). The selected QR creates a fire
+incident, then starts a fixed one-metre-radius circle relative to launch heading
+and lands. This preset needs no camera calibration, QR-size or camera-offset
+measurement. Without `--execute`, it only creates the incident. Stop the
+observation receiver before starting either flight runtime.
+
+The separate `qr-circle` flight mode is described in
+[Automatic QR fire circle](QR_AUTO_CIRCLE.md). It uses the measured marker
+position and the normal fire-incident pipeline. `--execute` enables automatic
+takeoff on recognition; stop the observation supervisor first. It requires
+measured calibration and a current physical preflight. The observer remains
+read-only and is the only mode that restarts automatically.
+
+### Calibration capture with visible feedback
+
+Use the native-resolution observer. The browser capture page avoids a second
+interactive terminal and shows both the live image and the exact rejected or
+accepted photo:
+
+```sh
+.venv/bin/python bridge/calibrate_camera.py capture --web --directory anafi_out/calibration-browser
+```
+
+Open <http://127.0.0.1:8791/> and click **Capture photo** for each view. Count the
+squares on your actual sheet: the default is 10 across and 7 down (54 inner
+corners); a 12 × 7 sheet needs 11 × 6 inner corners. Board dimensions
+can be selected before the first accepted photo. Dimensions are saved with the
+session and automatically used by `fit --directory anafi_out/calibration-browser`.
+Browser capture saves every fresh, matching-resolution photo, even when the
+checkerboard is not detected. Saved count and detected count are shown separately;
+the fitter searches the saved images again and uses views with detected corners.
+The terminal capture mode saves `last-attempt.jpg` and prints its path on rejection.
+The detector uses CPU processing, lighting normalization and a classic-corner
+fallback. Calibration quality and physical verification requirements remain.
+
+Attach the paper flat to a rigid board before capture. Bending paper changes the
+geometry even when every corner is detected. Vary tilt, distance and position;
+include the left, right, upper and lower portions of the image. Twenty detected
+photos do not guarantee a valid fit: coverage and reprojection error are checked
+separately. Preserve a failed set for diagnosis and choose a new `--directory`
+for replacement photos. Restarting the browser command with the same directory
+restores its saved board dimensions and photo count without overwriting views.
+The browser defaults to 50 photos. To append 50 to an existing 20-photo set, run
+the same command with `--photos 70` (the target is the total, including existing
+photos). The larger target is saved and restored on future restarts.
+The page shows horizontal and vertical board-position coverage after each photo.
+Use **Start new photo set** to create a separate retake folder without deleting
+previous photos or needing another terminal. Its path is shown on the page; use
+that path with `fit --directory` or to resume the new set after a server restart.
+
+The calibration preview streams the backend's original MJPEG frames continuously,
+without polling or JPEG re-encoding. Its FPS label measures incoming backend
+frames. The Mac observation receiver defaults to `--camera-fps 0` (all frames it
+can process); native resolution is preserved with `--native-video`. Actual FPS
+depends on the aircraft stream, Pi decoding/encoding and connection. Direct
+observer launches can explicitly throttle with `--camera-fps 0.5` through `60`.

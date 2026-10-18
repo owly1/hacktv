@@ -172,7 +172,7 @@ green configured badge.
 | Branch | Purpose |
 |---|---|
 | `main` | Dashboard/backend, Pi observation, existing QR preset, historical-fire replay and person search |
-| `codex/qr-code-circle-flight` | Separate QR circle-flight work; deliberately excluded from this integration |
+| QR circle-flight work | Merged into `main`: repeated preset circles, measured-marker orbit, calibration capture and flight recordings; the feature branch is retired |
 
 The integrated features above are available on main. To receive the code, use
 `git pull --ff-only` from a clean checkout of your branch. If Git reports local

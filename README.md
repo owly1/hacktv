@@ -21,7 +21,8 @@ deploy a separate Mac receiver directory, and start observation or QR testing.
 Olympe runs on the Pi; the dashboard, RGB fire/smoke detector and QR preview
 run on the Mac. Observation mode automatically starts fire detection: show
 the [fire marker](http://127.0.0.1:8787/test-marker.html) to trigger the incident
-and automatic analysis. The separate QR flight rehearsal is only an animation.
+and automatic analysis. See the flight-mode table below for rehearsal and
+explicitly enabled aircraft flight.
 
 ## 1. Backend + dashboard (macOS, Windows or Linux, Node 22+)
 
@@ -88,8 +89,9 @@ cached.
 
 The Pi 4B + USB Ethernet setup tested in this chat is included as
 [`bridge/anafi_observer.py`](bridge/anafi_observer.py). It receives telemetry
-and 640 × 360 JPEG frames at a configurable rate. The current Pi targets
-10 FPS and measured about 8–9 FPS. It implements no
+and JPEG frames at a configurable resolution and rate. The Mac launcher uses
+the available source frame rate; `--native-video` preserves the source resolution.
+The standalone example below caps transmission at 10 FPS. It implements no
 flight controls, gimbal movement or fire detection. The existing
 `bridge/anafi_bridge.py` remains the team's separate detection/flight bridge.
 
@@ -121,17 +123,37 @@ flight, controller coexistence and fire detection were not part of that test.
 
 ## 3. Test without a real fire
 
-Print `http://127.0.0.1:8787/test-marker.html` at 100% (the code must measure
-18 cm). The QR code stands in for a large fire and carries its details; the
-drone reads it from up to ~2 m.
+Print [the fire marker](http://127.0.0.1:8787/test-marker.html). Only its exact
+FireSimulationDemo payload counts as a QR fire; other QR codes, including other
+`EW1:` payloads, are ignored by the detector and rejected by backend ingest.
+Printed size does not select or change the automatic preset path. The separate
+measured-marker orbit requires the actual printed size in its calibration.
+
+## Automatic QR flight experiment
+
+These modes are included in main. Ordinary observation and historical replay
+do not enable flight. Both automatic flight modes require the exact fire marker,
+five fresh scans and an accepted backend incident before takeoff.
+
+| Mode | Behaviour | Guide |
+| --- | --- | --- |
+| Browser rehearsal | Recognizes QR and animates a flight; no aircraft commands | [Mac setup](docs/MAC_SETUP.md) |
+| Automatic preset (`qr-demo` / `QrAutoPreset`) | Repeats 1 m-radius circles around a centre 1 m ahead of launch, aiming the camera there; no visual QR position tracking or camera calibration required | [Automatic preset](docs/QR_AUTO_DEMO.md) |
+| Measured-marker orbit (`qr-circle` / `QrAutoCircle`) | One calibrated orbit around the measured QR centre with camera tracking; requires measured calibration and physical preflight | [Measured orbit](docs/QR_AUTO_CIRCLE.md) |
+
+Live launchers require `--execute` on Mac or `-Execute` on Windows. The repeated
+preset lands on operator request, a protection limit, or its five-minute cap.
+Flight-enabled sessions record video and diagnostics; the Mac launcher copies
+them back and creates MP4 previews and flight review reports after exit.
 
 ## Demo
 
 For the new QR recognition rehearsal, run `python bridge/qr_orbit_rehearsal.py`
 on the laptop and open <http://127.0.0.1:8789/>. It reads the existing camera
 and animates a simulated orbit; it cannot command the aircraft.
-The separate opt-in flight experiment is **not flight-tested or installed as
-the Pi service**. See [QR orbit setup and physical checks](docs/QR_ORBIT_DEMO.md).
+Live flight modes remain opt-in and are not installed as the default Pi service.
+The latest repeated-circle changes have automated test coverage; a complete
+hardware flight remains to be verified. See [QR orbit setup and physical checks](docs/QR_ORBIT_DEMO.md).
 The [step-by-step cold-start guide](docs/QR_DEMO_FROM_OFF.md) includes grounded
 calibration capture and a gated one-segment checkout before a full orbit.
 

@@ -223,8 +223,13 @@ export const FIRE_MARKER_DETAILS = Object.freeze({
   fuel: 'dry mixed forest and grass', wind_kmh: 30, wind_dir_deg: 60, temp_c: 31, rh_pct: 18,
   marker_size_m: 0.18, test_marker: true,
 });
-// Notes bridge/fire_monitor.py adds when it pins the marker to a scenario site.
-const FIRE_MARKER_ANNOTATIONS = new Set(['position_simulated', 'location_note']);
+// Scenario notes and tightly constrained annotations from automatic QR flights.
+const FIRE_FLIGHT_ANNOTATIONS = ['flight_protocol', 'orbit_radius_m', 'path_reference'];
+const FIRE_MARKER_ANNOTATIONS = new Set(['position_simulated', 'location_note', ...FIRE_FLIGHT_ANNOTATIONS]);
+const FIRE_FLIGHT_PATHS = new Map([
+  ['qr-auto-circle', 'measured-marker'],
+  ['qr-auto-preset', 'launch-heading'],
+]);
 const FLIGHT_PHASES = new Set([
   'preflight', 'takeoff', 'climb', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
 ]);
@@ -291,8 +296,14 @@ export function validateDetection(body, nowMs) {
     const details = body.details ?? {};
     const fireKeys = Object.keys(FIRE_MARKER_DETAILS);
     if (!fireKeys.every((k) => details[k] === FIRE_MARKER_DETAILS[k])
-        || !Object.keys(details).every((k) => k in FIRE_MARKER_DETAILS || FIRE_MARKER_ANNOTATIONS.has(k))) {
+        || !Object.keys(details).every((k) => Object.hasOwn(FIRE_MARKER_DETAILS, k) || FIRE_MARKER_ANNOTATIONS.has(k))) {
       throw new ApiError(400, `qr-test details must match the fire marker ${FIRE_MARKER_PAYLOAD}`);
+    }
+    if (FIRE_FLIGHT_ANNOTATIONS.some((key) => Object.hasOwn(details, key))
+        && (!FIRE_FLIGHT_PATHS.has(details.flight_protocol)
+            || details.path_reference !== FIRE_FLIGHT_PATHS.get(details.flight_protocol)
+            || details.orbit_radius_m !== 1)) {
+      throw new ApiError(400, 'QR flight annotations require a supported protocol, matching path reference and one-metre radius');
     }
   }
   let jpeg = null;

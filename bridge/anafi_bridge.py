@@ -132,6 +132,7 @@ def dest_point(lat, lon, bearing_deg, dist_m):
 
 
 from fire_detection import DEFAULT_CONF, FireDetector, confirm_hits, parse_marker, same_spot
+from flight_recording import FlightRecorder
 
 
 # ---------------------------------------------------------------- publishing
@@ -150,6 +151,9 @@ class Publisher:
         self.local = threading.local()
         self.last_error = None
         self.last_snapshot_file = 0.0
+        self.recorder = None
+        self.frame_uploads = queue.Queue(maxsize=1)
+        self.closing = threading.Event()
         os.makedirs(out_dir, exist_ok=True)
         # Store-and-forward: person observations that could not be delivered, oldest first.
         # Kept on disk so a bridge restart during an outage loses nothing.
@@ -161,6 +165,33 @@ class Publisher:
                 self.outbox = [json.loads(line) for line in f if line.strip()][-OUTBOX_MAX:]
             if self.outbox:
                 print(f"[*] {len(self.outbox)} stored person observations waiting to be delivered")
+
+    def start_recording(self):
+        if self.recorder is None:
+            self.recorder = FlightRecorder(self.out_dir)
+            threading.Thread(target=self._upload_frames, daemon=True, name='frame-upload').start()
+            print(f'[*] Flight video and diagnostics: {self.recorder.path}', flush=True)
+
+    def _upload_frames(self):
+        while not self.closing.is_set():
+            try:
+                jpeg, captured_at, overlay = self.frame_uploads.get(timeout=.2)
+            except queue.Empty:
+                continue
+            self._post_frame(jpeg, captured_at, overlay)
+
+    def _post_frame(self, jpeg, captured_at, overlay):
+        self._post("/api/ingest/frame", jpeg, "image/jpeg",
+                   {"X-Captured-At": utc_iso(captured_at), "X-Detections": json.dumps(overlay)})
+
+    def diagnostic(self, kind, data):
+        if self.recorder is not None:
+            self.recorder.event(kind, data)
+
+    def close(self):
+        self.closing.set()
+        if self.recorder is not None:
+            self.recorder.close()
 
     # -- files
     def _write_atomic(self, name, data):
@@ -218,6 +249,7 @@ class Publisher:
 
     # -- payloads
     def telemetry(self, sample):
+        self.diagnostic('telemetry', sample)
         line = json.dumps(sample)
         self._write_atomic("telemetry.json", (line + "\n").encode())
         self._append("telemetry.jsonl", sample)
@@ -263,8 +295,17 @@ class Publisher:
                            "".join(json.dumps(i) + "\n" for i in self.outbox).encode())
 
     def frame(self, jpeg, captured_at, overlay):
-        self._post("/api/ingest/frame", jpeg, "image/jpeg",
-                   {"X-Captured-At": utc_iso(captured_at), "X-Detections": json.dumps(overlay)})
+        if self.recorder is not None:
+            self.recorder.frame(jpeg, captured_at)
+            # Keep recording at camera speed even if HTTP ingest stalls. A
+            # one-frame mailbox drops stale uploads, never queues latency.
+            try:
+                self.frame_uploads.get_nowait()
+            except queue.Empty:
+                pass
+            self.frame_uploads.put_nowait((jpeg, captured_at, overlay))
+        else:
+            self._post_frame(jpeg, captured_at, overlay)
         if captured_at - self.last_snapshot_file >= SNAPSHOT_FILE_INTERVAL:
             self.last_snapshot_file = captured_at
             self._write_atomic("snapshot.jpg", jpeg)
@@ -277,8 +318,10 @@ class Publisher:
 
     def flight(self, phase, message="", step=None, steps=None):
         print(f"[flight] {phase}{f' {step}/{steps}' if step else ''} {message}")
-        self._post("/api/ingest/flight", json.dumps(
-            {"at": utc_iso(time.time()), "phase": phase, "message": message, "step": step, "steps": steps}).encode())
+        event = {"at": utc_iso(time.time()), "phase": phase, "message": message, "step": step, "steps": steps}
+        self._append('flight.jsonl', event)
+        self.diagnostic('flight', event)
+        self._post("/api/ingest/flight", json.dumps(event).encode())
 
 
 # ---------------------------------------------------------------- detection
@@ -334,6 +377,8 @@ class AnafiBridge:
         self.controller_kind = getattr(args, "controller", "direct")
         self.ip = args.ip or ("192.168.53.1" if self.controller_kind == "skycontroller3" else DEFAULT_DRONE_IP)
         self.publisher = publisher
+        if (getattr(args, 'execute', False) or getattr(args, 'demo_flight', False)) and hasattr(publisher, 'start_recording'):
+            self.publisher.start_recording()
         self.detector = detector
         self.drone = None
         # Small queue: we always want the newest frame, not a backlog (keeps latency low)
@@ -1031,6 +1076,8 @@ class AnafiBridge:
                 self._land()  # never leave the drone in the air when the bridge exits
             self.running = False
             self._disconnect()
+            if hasattr(self.publisher, 'close'):
+                self.publisher.close()
             if show:
                 cv2.destroyAllWindows()
 

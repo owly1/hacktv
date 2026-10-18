@@ -355,6 +355,34 @@ test('yolo detections are not held to the fire marker details', async () => {
   } finally { await t.close(); }
 });
 
+test('automatic QR flights retain exact fire details and accept only matching flight annotations', async () => {
+  const t = await startApp({ noGemini: true });
+  try {
+    for (const [protocol, reference] of [['qr-auto-preset', 'launch-heading'], ['qr-auto-circle', 'measured-marker']]) {
+      const details = { ...FIRE_MARKER_DETAILS, flight_protocol: protocol, orbit_radius_m: 1, path_reference: reference };
+      const response = await t.req('POST', '/api/ingest/detection', {
+        token: INGEST, body: detection({ episode_id: protocol, details }),
+      });
+      assert.equal(response.status, 200);
+      const accepted = await response.json();
+      assert.equal(accepted.accepted, true);
+      assert.ok(accepted.id);
+      for (const invalid of [
+        { ...details, name: 'Ravine' }, { ...details, marker_size_m: 0.19 },
+        { ...details, flight_protocol: 'arbitrary-flight' }, { ...details, orbit_radius_m: 2 },
+        { ...details, path_reference: reference === 'launch-heading' ? 'measured-marker' : 'launch-heading' },
+        { ...details, orbit_radius_m: undefined }, { ...details, extra: true },
+        { ...details, constructor: 'not-a-marker-field' },
+      ]) {
+        const rejected = await t.req('POST', '/api/ingest/detection', {
+          token: INGEST, body: detection({ details: invalid }),
+        });
+        assert.equal(rejected.status, 400, JSON.stringify(invalid));
+      }
+    }
+  } finally { await t.close(); }
+});
+
 test('flight events and the flight path are served together', async () => {
   const t = await startApp({ noGemini: true });
   try {

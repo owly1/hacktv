@@ -46,8 +46,8 @@ def numeric(value, lower, upper):
 
 def camera_fps(value):
     rate = float(value)
-    if not math.isfinite(rate) or not .5 <= rate <= 15:
-        raise argparse.ArgumentTypeError("camera FPS must be between 0.5 and 15")
+    if not math.isfinite(rate) or (rate != 0 and not .5 <= rate <= 60):
+        raise argparse.ArgumentTypeError("camera FPS must be 0 (all available frames) or between 0.5 and 60")
     return rate
 
 
@@ -87,8 +87,8 @@ def main():
     parser.add_argument("--camera", action="store_true", help="Send JPEG camera frames; requires OpenCV, not WebRTC video")
     parser.add_argument("--camera-transport", choices=["snapshot", "frame"], default="snapshot",
                         help="frame sends raw JPEGs to the team's existing camera relay")
-    parser.add_argument("--camera-fps", type=camera_fps, default=.5,
-                        help="Maximum camera send rate, 0.5-15 FPS (default 0.5)")
+    parser.add_argument("--camera-fps", type=camera_fps, default=0,
+                        help="Maximum send rate; 0 sends every available frame (default), or 0.5-60 FPS")
     parser.add_argument("--camera-width", type=camera_width, default=640,
                         help="JPEG width; 0 preserves native decoded size for calibration (default 640)")
     args = parser.parse_args()
@@ -153,7 +153,7 @@ def main():
 
     def snapshots():
         last_attempt = 0
-        interval = 1 / args.camera_fps
+        interval = 1 / args.camera_fps if args.camera_fps else 0
         while not stop.is_set():
             try:
                 frame, captured_at = frames.get(timeout=.5)

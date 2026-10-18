@@ -95,6 +95,9 @@ class HoverCheckout(QROrbitBridge):
                 f"Battery: {t.get('battery_pct')} %", f"State: {t.get('state')}",
                 f"Height above takeoff: {t.get('altitude_m')} m", "X or Esc requests landing"]
 
+    def _takeoff_message(self):
+        return "operator requested one takeoff checkout"
+
     def _hover(self):
         pending = None
         self.hold_connection = True  # Also land if TakeOff raises after transmission.
@@ -103,7 +106,7 @@ class HoverCheckout(QROrbitBridge):
                 reason = self.checkout_reason(starting=True)
                 if self.abort_flight.is_set() or reason:
                     raise InterruptedError(reason or "operator landing requested")
-                self.report("takeoff", "operator requested one takeoff checkout")
+                self.report("takeoff", self._takeoff_message())
                 pending = self.drone(TakeOff(_no_expect=True))
             deadline = time.monotonic()+10
             hover_started = None

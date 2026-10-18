@@ -63,6 +63,7 @@ class MacLauncherTests(unittest.TestCase):
         command = mac.runtime_command(mac.DEFAULTS, 'observe', False)
         self.assertIn('anafi_observer.py', command)
         self.assertIn('--camera-transport frame', command)
+        self.assertIn('--camera-fps 0', command)
         self.assertNotIn('--execute', command)
         with self.assertRaises(ValueError):
             mac.runtime_command(mac.DEFAULTS, 'observe', True)
@@ -76,6 +77,35 @@ class MacLauncherTests(unittest.TestCase):
             self.assertIn('--execute', live)
             self.assertNotIn('ARM QR PRESET', live)
             self.assertNotIn('TAKEOFF TEST', live)
+
+    def test_qr_circle_is_explicit_native_calibrated_and_not_supervised(self):
+        observe = mac.runtime_command(mac.DEFAULTS, 'observe', False)
+        live = mac.runtime_command(mac.DEFAULTS, 'qr-circle', True)
+        preview = mac.runtime_command(mac.DEFAULTS, 'qr-circle', False)
+        self.assertIn('python -u qr_auto_circle.py', live)
+        self.assertIn('--video-width 0', live)
+        self.assertIn('--camera-calibration camera.local.json', live)
+        self.assertIn('--preflight-file current-preflight.local.json', live)
+        self.assertIn('--execute', live)
+        self.assertNotIn('--execute', preview)
+        self.assertNotIn('--camera-calibration', preview)
+        self.assertNotIn('python -u qr_auto_circle.py', observe)
+        self.assertIn('qr_auto_circle', mac.prepare_command(mac.DEFAULTS))
+        with self.assertRaises(ValueError):
+            mac.runtime_command(mac.DEFAULTS, 'unknown', True)
+
+    def test_automatic_preset_selects_fixed_path_without_calibration(self):
+        live=mac.runtime_command(mac.DEFAULTS,'qr-demo',True)
+        rehearsal=mac.runtime_command(mac.DEFAULTS,'qr-demo',False)
+        self.assertIn('qr_auto_circle.py',live)
+        self.assertIn('--preset',live)
+        self.assertIn('--video-fps 30',live)
+        self.assertIn('--execute',live)
+        self.assertNotIn('--execute',rehearsal)
+        for text in (live,rehearsal):
+            self.assertNotIn('--camera-calibration',text)
+            self.assertNotIn('--preflight-file',text)
+            self.assertNotIn('ARM QR PRESET',text)
 
     def test_connection_guards_precede_runtime_start(self):
         preparation = mac.prepare_command(mac.DEFAULTS)
@@ -103,6 +133,7 @@ class MacLauncherTests(unittest.TestCase):
             names = archive.getnames()
             self.assertIn('anafi_observer.py', names)
             self.assertIn('qr_preset_demo.py', names)
+            self.assertIn('flight_recording.py', names)
             self.assertNotIn('bridge.env', names)
             entry = archive.getmember('mac.env')
             self.assertEqual(entry.mode, 0o600)
@@ -116,6 +147,17 @@ class MacLauncherTests(unittest.TestCase):
         self.assertIn('StrictHostKeyChecking=yes', args)
         self.assertIn('BatchMode=yes', args)
         self.assertIn('StrictHostKeyChecking=ask', mac.ssh_args(mac.DEFAULTS, interactive=True))
+
+    def test_fetch_flights_uses_verified_ipv6_ssh_and_local_review(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(mac,'ROOT',Path(folder)), \
+             patch.object(mac.subprocess,'run') as run, contextlib.redirect_stdout(io.StringIO()):
+            mac.fetch_flights(mac.DEFAULTS)
+        copy, review = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(copy[:2],['scp','-r'])
+        self.assertIn('StrictHostKeyChecking=yes',copy)
+        self.assertTrue(copy[-2].startswith('pet@[fe80::'))
+        self.assertTrue(copy[-2].endswith('/anafi_out/flights/.'))
+        self.assertTrue(review[1].endswith('review_flights.py'))
 
     def test_native_resolution_is_opt_in_for_each_receiver(self):
         for mode, flag in [('observe', '--camera-width 0'), ('qr-preset', '--video-width 0')]:

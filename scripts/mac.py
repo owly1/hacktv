@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tarfile
@@ -89,6 +90,16 @@ def remote(config, command, data=None, interactive=False):
                           config['host'], command], input=data, check=True, timeout=60 if not interactive else None)
 
 
+def fetch_flights(config):
+    destination = ROOT/'anafi_out'/'flights'
+    destination.mkdir(parents=True, exist_ok=True)
+    host = '['+config['host']+']' if ':' in config['host'] else config['host']
+    source = config['user']+'@'+host+':'+config['directory']+'/anafi_out/flights/.'
+    subprocess.run(['scp', '-r']+ssh_args(config)[1:]+[source, str(destination)], check=True, timeout=300)
+    print('Flight recordings saved to', destination, flush=True)
+    subprocess.run([sys.executable, str(ROOT/'scripts'/'review_flights.py'), str(destination)], check=True)
+
+
 def bundle(config, env):
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode='w:gz') as archive:
@@ -111,7 +122,7 @@ def sync_clock(config):
 def prepare_command(config):
     return '\n'.join([
         'set -eu',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         'systemctl --user stop emberwatch-bridge.service',
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
@@ -146,6 +157,8 @@ print(f'Requested stop for {count} observation receiver(s). Flight sessions were
 
 
 def runtime_command(config, mode, execute, native=False):
+    if mode not in ("observe", "qr-preset", "hover", "qr-circle", "qr-demo"):
+        raise ValueError("Unknown receiver mode")
     directory = shlex.quote(config['directory'])
     common = ['--controller', 'direct', '--ip', config['drone_ip'], '--drone-id', config['drone_id'],
               '--backend', f"http://127.0.0.1:{config['pi_port']}"]
@@ -153,18 +166,24 @@ def runtime_command(config, mode, execute, native=False):
         if execute:
             raise ValueError('Observation mode cannot execute flight commands.')
         program = ['anafi_observer.py', '--camera', '--camera-transport', 'frame',
-                   '--camera-fps', '10', '--camera-width', '0' if native else '640']
+                   '--camera-fps', '0', '--camera-width', '0' if native else '640']
     else:
-        program = ['qr_preset_demo.py' if mode == 'qr-preset' else 'hover_checkout.py',
+        program = [{'qr-preset': 'qr_preset_demo.py', 'hover': 'hover_checkout.py',
+                    'qr-circle': 'qr_auto_circle.py', 'qr-demo': 'qr_auto_circle.py'}[mode],
                    '--no-window', '--out-dir', 'anafi_out']
-        if native:
+        if mode == 'qr-demo':
+            program += ['--preset', '--video-fps', '30']
+        if mode == 'qr-circle' and execute:
+            program += ['--camera-calibration', 'camera.local.json',
+                        '--preflight-file', 'current-preflight.local.json']
+        if native or mode == 'qr-circle':
             program += ['--video-width', '0']
         if execute:
             program += ['--execute']
     # Recheck for competing receivers immediately before opening the SDK link.
     return '\n'.join([
         'set -eu', f'cd "$HOME"/{directory}', 'test -r mac.env',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
         "  echo 'Another observation receiver is running; stop it in its own terminal.' >&2; exit 73; fi",
@@ -275,15 +294,18 @@ def main():
     configure.add_argument('--host', required=True, help='Example: fe80::2ecf:67ff:fe80:173e%%en8')
     configure.add_argument('--user', default='pet')
     commands.add_parser('authorize-pi', help='Interactive first SSH login; install this Mac’s public key')
-    commands.add_parser('install-pi', help='Copy source and this Mac’s ingest token into its own Pi directory')
+    install = commands.add_parser('install-pi', help='Copy source and this Mac’s ingest token into its own Pi directory')
+    install.add_argument('--camera-calibration', help='Measured JSON to copy as camera.local.json')
+    install.add_argument('--preflight-file', help='Completed physical checks to copy as current-preflight.local.json')
     commands.add_parser('check-pi', help='Check remote SDK imports without connecting to the drone')
     commands.add_parser('stop-observer', help='Stop only this Mac’s read-only Pi observer')
+    commands.add_parser('fetch-flights', help='Copy saved flight video/diagnostics from the Pi and generate review reports')
     rehearsal = commands.add_parser('rehearsal', help='Local QR recognition; no aircraft commands')
     rehearsal.add_argument('--test-image', action='store_true')
     rehearsal.add_argument('--port', type=int, default=8789)
     pi = commands.add_parser('pi', help='Foreground Pi receiver plus reverse tunnel')
-    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover'], default='observe')
-    pi.add_argument('--execute', action='store_true', help='Enable flight mode; still requires typed arming')
+    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover', 'qr-circle', 'qr-demo'], default='observe')
+    pi.add_argument('--execute', action='store_true', help='Enable flight: qr-demo and qr-circle start after QR/incident confirmation; other modes require typed arming')
     pi.add_argument('--native-video', action='store_true')
     args = parser.parse_args()
     os.chdir(ROOT)
@@ -308,6 +330,9 @@ def main():
                'chmod 600 ~/.ssh/authorized_keys', public_key, interactive=True)
         return
     env = local_env()
+    if args.command == 'fetch-flights':
+        fetch_flights(config)
+        return
     if args.command == 'doctor':
         print('Python:', sys.version.split()[0])
         for module in ['cv2', 'numpy', 'segno']:
@@ -337,6 +362,12 @@ def main():
         directory = shlex.quote(config['directory'])
         remote(config, f'umask 077; mkdir -p "$HOME"/{directory} && '
                f'chmod 700 "$HOME"/{directory} && tar -xzf - -C "$HOME"/{directory}', bundle(config, env))
+        for source, target in ((args.camera_calibration, 'camera.local.json'),
+                               (args.preflight_file, 'current-preflight.local.json')):
+            if source:
+                data = Path(source).read_bytes()
+                json.loads(data)  # Reject malformed JSON before copying it.
+                remote(config, f'umask 077; cat > "$HOME"/{directory}/{target}', data)
         print('Installed source and this Mac’s ingest token in', config['directory'])
         return
     if args.command == 'check-pi':
@@ -353,7 +384,8 @@ def main():
             raise ValueError('Start the Pi receiver in an interactive operator terminal.')
         command = runtime_command(config, args.mode, args.execute, args.native_video)
         print('Keep the Skycontroller off and FreeFlight closed for this direct Pi connection.', flush=True)
-        print('Flight is ' + ('ENABLED AFTER TYPED ARMING' if args.execute else 'DISABLED'), flush=True)
+        print('Flight is ' + ('AUTOMATIC AFTER QR + INCIDENT' if args.execute and args.mode in ('qr-circle','qr-demo')
+              else 'ENABLED AFTER TYPED ARMING' if args.execute else 'DISABLED'), flush=True)
         if args.mode == 'observe':
             supervise_observer(config, env, command)
             return
@@ -363,7 +395,23 @@ def main():
         # clock alignment between preparation and the first camera frame.
         sync_clock(config)
         # Never reuse an unknown tunnel: bind failure stops the receiver startup.
-        os.execvp('ssh', receiver_ssh(config, env, command))
+        try:
+            child = subprocess.Popen(receiver_ssh(config, env, command))
+            # SSH owns operator input/signals. Keep the parent alive until its
+            # remote landing/cleanup finishes, then collect the recording.
+            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                result = child.wait()
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            if result:
+                raise subprocess.CalledProcessError(result, child.args)
+        finally:
+            if args.execute:
+                try:
+                    fetch_flights(config)
+                except (OSError, subprocess.SubprocessError) as error:
+                    print('Flight files remain on the Pi. Retry: python scripts/mac.py fetch-flights', flush=True)
 
 
 if __name__ == '__main__':

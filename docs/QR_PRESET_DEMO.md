@@ -1,6 +1,9 @@
 # QR-triggered preset circle and nearby hover
 
-This is the current calibration-free demonstration. QR recognition is only a
+For automatic QR → fire incident → takeoff without a typed arm phrase, use
+[QR_AUTO_DEMO.md](QR_AUTO_DEMO.md). This guide covers the older typed-arm preset.
+
+This is a calibration-free demonstration. QR recognition is only a
 start signal. The program does not estimate object distance, center the path
 on an object in the picture, follow an object, or move directly over it.
 

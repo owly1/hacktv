@@ -84,8 +84,14 @@ FireSimulationDemo printout, whose payload is
 toward 60°, 31 °C, 18 % RH, 18 cm side). The bridge compares the decoded text
 byte for byte with `FIRE_MARKER_PAYLOAD` (`bridge/fire_detection.py`); any other QR code, including other
 `EW1:` payloads, is ignored and never posted. The backend rejects (400) a
-`qr-test` detection whose `details` are not exactly that fire (only the
-`position_simulated` / `location_note` scenario notes may be added). The QR
+`qr-test` detection whose fire fields in `details` are not exactly that fire.
+The `position_simulated` / `location_note` scenario notes may be added. Automatic
+flight can also attach all three fields `flight_protocol`, `orbit_radius_m`, and
+`path_reference`: radius must be exactly `1`, and the protocol/reference pair
+must be `qr-auto-preset` / `launch-heading` or `qr-auto-circle` / `measured-marker`.
+Partial or mismatched flight annotations and all other extra fields are rejected.
+These fields describe the flight context; backend acceptance does not itself
+command the aircraft. The runtime still checks fresh scans and aircraft state. The QR
 orbit, preset and hover flows refuse to arm for any other selected marker. The
 payload is pinned in `bridge/fire_detection.py` (the bridge, observer, monitor
 and orbit/preset cores all use it), `bridge/make_test_marker.py`,
