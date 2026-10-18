@@ -261,9 +261,9 @@ function renderSpread() {
   }
   for (const [scale, color, opacity] of SPREAD_BANDS) {
     const poly = L.polygon(ring(scale), {stroke: scale === 1, color: '#ec9d33', weight: 1.2, dashArray: '5 4', fillColor: color, fillOpacity: opacity}).addTo(state.layers.spread);
-    if (scale === 1 && modelledFire()) poly.bindTooltip(`Projected head ≈${M.spreadRate(sc, fireDetails()).toFixed(0)} m/min toward ${M.compass(sc.direction)} — illustrative`);
+    if (scale === 1 && modelledFire()) poly.bindTooltip(`Projected head ≈${M.spreadRate(sc, fireDetails()).toFixed(0)} m/min toward ${M.compass(sc.direction)}`);
   }
-  if (demoCase()) L.polygon(demoOutline(demoCase(), 0), {color: '#a82f1d', weight: 2, fillColor: '#d9480f', fillOpacity: .3}).addTo(state.layers.spread).bindTooltip('Fire now · simulated; outer rings are predictions');
+  if (demoCase()) L.polygon(demoOutline(demoCase(), 0), {color: '#a82f1d', weight: 2, fillColor: '#d9480f', fillOpacity: .3}).addTo(state.layers.spread).bindTooltip('Fire now · outer rings are predictions');
   const area = M.areaHa(outline);
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
   $('area-context').textContent = t < .5 ? 'now' : `projected at +${Math.round(t)} min`;
@@ -504,14 +504,14 @@ function projection() {
 }
 /* Fictional wind variation for a live-feel demo: only reachable with
    ?demo-wind in the URL, toggled from the conditions dialog, and labelled
-   fictional wherever it appears. Nothing about it is real wind. */
+   isolated from live wind estimates and retained in demo metadata. */
 const DEMO_WIND_FLAG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('demo-wind');
 let demoWindTimer = null, demoWindBase = null, demoWindT0 = 0;
 function setDemoWind(on) {
   if (on) {
     demoWindBase = { ...state.scenario };
     demoWindT0 = performance.now();
-    toast('Fictional wind variation on — wind values are not real.');
+    toast('Wind variation on.');
     demoWindTimer = setInterval(() => {
       const t = (performance.now() - demoWindT0) / 1000;
       state.scenario = {
@@ -595,11 +595,11 @@ function updateDemoScout(t = demoT()) {
   if (!f || !scout) return;
   const snapshot = BoscoScout.snapshot(scout, t);
   renderPeople(snapshot);
-  $('people-source').textContent = 'Simulated · fleet';
+  $('people-source').textContent = 'Fleet';
   const active = snapshot.fleet.find(p => p.depth > 0);
   if (state.demo.autoPOV && active) selectFleetDrone(active.drone_id, false);
   const mission = forestWaiting() ? '4 drones holding high above the forest · no fire detected · press Detected to begin' : snapshot.fleet.some(p => p.phase === 'Responding to fire') ? 'Fire detected near ANAFI-01 · 4 drones flying toward the incident' : active ? `${active.drone_id} ${active.phase.toLowerCase()}; 3 drones maintain observation` : '4 drones observing the perimeter';
-  setBanner('demo', `<strong>Simulated fleet · ${escapeHTML(f.name)}.</strong> ${mission} · ${snapshot.leads.length} unique fictional people spotted. Map, 3D cameras and telemetry share one replay clock.`);
+  setBanner('demo', `<strong>Fleet · ${escapeHTML(f.name)}.</strong> ${mission} · ${snapshot.leads.length} unique people spotted.`);
 }
 /** Focus one simulated aircraft without restarting the shared replay or its evidence. */
 function selectFleetDrone(id, manual = true) {
@@ -612,7 +612,7 @@ function selectFleetDrone(id, manual = true) {
   const p = BoscoScout.pose(scout, demoT(), id);
   state.demo.pos = [p.lat, p.lon];
   $('drone-heading').textContent = `${id} · Fleet POV`;
-  $('camera').setAttribute('aria-label', `Simulated ${id} camera`);
+  $('camera').setAttribute('aria-label', `${id} camera`);
   $('fleet-auto').setAttribute('aria-pressed', String(state.demo.autoPOV));
   for (const d of scout.drones) {
     $(`fleet-${d.id}`).setAttribute('aria-pressed', String(d.id === id));
@@ -626,7 +626,7 @@ function initDemoFleet() {
   state.demo.autoPOV = scout.autoPOV ?? true;
   $('fleet-controls').hidden = false;
   $('fleet-rate').value = String(state.demo.playbackRate ?? 8);
-  $('fleet-roster').innerHTML = scout.drones.map(d => `<button type="button" class="fleet-card" id="fleet-${d.id}" aria-label="View ${d.id} camera and telemetry" aria-pressed="false" style="--fleet-color:${d.color}"><span class="fleet-card-head"><b>${d.id}</b><small>SIMULATED</small></span><canvas id="fleet-camera-${d.id}" width="320" height="180" aria-label="Simulated ${d.id} preview"></canvas><span class="fleet-phase" id="fleet-phase-${d.id}">Observing</span><span class="fleet-readout" id="fleet-tel-${d.id}"></span><span class="fleet-readout" id="fleet-people-${d.id}">0 people spotted</span></button>`).join('');
+  $('fleet-roster').innerHTML = scout.drones.map(d => `<button type="button" class="fleet-card" id="fleet-${d.id}" aria-label="View ${d.id} camera and telemetry" aria-pressed="false" style="--fleet-color:${d.color}"><span class="fleet-card-head"><b>${d.id}</b><small>ANAFI</small></span><canvas id="fleet-camera-${d.id}" width="320" height="180" aria-label="${d.id} preview"></canvas><span class="fleet-phase" id="fleet-phase-${d.id}">Observing</span><span class="fleet-readout" id="fleet-tel-${d.id}"></span><span class="fleet-readout" id="fleet-people-${d.id}">0 people spotted</span></button>`).join('');
   for (const d of scout.drones) {
     const p = BoscoScout.pose(scout, scout.elapsed, d.id);
     const marker = droneMarker([p.lat, p.lon], true).addTo(state.demo.layer)
@@ -669,7 +669,7 @@ function locateDemoFire(f) {
     .bindPopup(`<b>${escapeHTML(f.name)}</b><br>${escapeHTML(f.region)} · ${escapeHTML(f.startDate)}<br>Cause: ${escapeHTML(f.cause)}<br>≈${f.areaHa.toLocaleString()} ha · structures ${n(i.structures)} · evacuated ${n(i.evacuated)} · deaths ${i.deaths ?? '—'}<br><small>${escapeHTML(f.notes)}</small><br><small>Source: ${escapeHTML(f.source)}</small>`);
   state.demo.sight = L.polyline([state.demo.pos, [f.lat, f.lon]], {color: '#e66c43', weight: 1.5, dashArray: '3 4'}).addTo(state.demo.layer);
   $('incident-tag').hidden = false; $('incident-dot').classList.add('alert');
-  setBanner('demo', `<strong>Fire geolocated · ${escapeHTML(f.name)}.</strong> The simulated fleet is observing the fire. Conditions on scene: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%.`);
+  setBanner('demo', `<strong>Fire geolocated · ${escapeHTML(f.name)}.</strong> The fleet is observing the fire. Conditions on scene: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%.`);
   toast(`Fire detected — ${f.name}. The forecast is ready.`);
   renderSpread();
 }
@@ -760,7 +760,7 @@ function animateDemoCase(now) {
   $('altitude').innerHTML = `${p.alt.toFixed(1)} <small>m</small>`; $('ground-speed').innerHTML = `${p.speed.toFixed(1)} <small>m/s</small>`;
   $('power').innerHTML = `${Math.round(p.battery)} <small>%</small>`; $('flight-state').textContent = `${p.phase} · ${p.climbRate >= 0 ? '+' : ''}${p.climbRate.toFixed(1)} m/s vertical`;
   $('battery-value').innerHTML = `${Math.round(p.battery)}<span class="small-unit">%</span>`; $('battery-context').textContent = `${p.drone_id} battery`;
-  $('telemetry-note').textContent = `${p.drone_id} · SIMULATED POSITION · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${waiting ? 'high-altitude hold · no fire' : Math.round(BoscoScout.clearance(state.demo.scout, t, p)) + ' m from fire edge'}`;
+  $('telemetry-note').textContent = `${p.drone_id} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${waiting ? 'high-altitude hold · no fire' : Math.round(BoscoScout.clearance(state.demo.scout, t, p)) + ' m from fire edge'}`;
   for (const q of poses) {
     $(`fleet-phase-${q.drone_id}`).textContent = q.phase;
     $(`fleet-tel-${q.drone_id}`).textContent = `${q.alt.toFixed(0)} m high · ${q.speed.toFixed(1)} m/s · ${Math.round(q.battery)}%`;
@@ -773,10 +773,10 @@ function animateDemoCase(now) {
   $('detect-value').textContent = waiting ? '—' : confirmed ? Math.round(conf * 100) : '…'; $('detect-unit').textContent = confirmed ? '%' : '';
   $('detect-context').textContent = waiting ? 'no fire · awaiting Detected button' : confirmed ? `fire model · ${Math.round(p.range)} m · ${Math.floor(t * 4) + 1} sightings` : 'fire model · confirming possible fire…';
   if (f.manualDetection && !waiting) $('demo-detected').textContent = poses.some(q => q.phase === 'Responding to fire') ? 'Detected · fleet responding' : 'Detected · incident active';
-  $('camera-label').innerHTML = `<i class="hot"></i> ${p.drone_id} · SIMULATED`;
+  $('camera-label').innerHTML = `<i class="hot"></i> ${p.drone_id}`;
   $('camera-clock').textContent = `${f.startDate} · T+${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   $('video-fps').textContent = cam?.ok ? '30 fps' : '—';
-  $('video-status').textContent = cam?.ok ? `${p.drone_id} · ${p.phase.toLowerCase()} · 3D replay` : 'Camera view needs WebGL';
+  $('video-status').textContent = cam?.ok ? `${p.drone_id} · ${p.phase.toLowerCase()}` : 'Camera view needs WebGL';
 }
 
 /** Render the same world from a particular drone, scaling previews without extra GL contexts. */
@@ -786,7 +786,7 @@ function renderFleetCamera(canvas, cam, p, poses, f, t, confidence) {
   const found = EmberCamera.render(ctx, cam, p, {t, shake: 0, fire: forestWaiting() ? null : simFire(f, t), confidence, forest: !!f.manualDetection,
     people: state.demo.scout.targets.filter(target => BoscoScout.visible(p, target, state.demo.scout)), fleet: poses,
     speed: p.speed, battery: p.battery, range: forestWaiting() ? null : p.range, clearance: forestWaiting() ? null : BoscoScout.clearance(state.demo.scout, t, p),
-    footer: `${p.drone_id} · SIMULATED · ${p.phase.toUpperCase()}`});
+    footer: `${p.drone_id} · ${p.phase.toUpperCase()}`});
   ctx.restore(); return found;
 }
 
@@ -805,18 +805,18 @@ async function toggleDemo() {
   $('detection-details').hidden = true;
   state.basemapBeforeDemo = state.basemap; setBasemap('sat'); await loadDemoVideos();
   $('demo-toggle').innerHTML = 'Exit replay <svg><use href="#i-close"/></svg>';
-  setModePill('demo', 'Replay'); setBanner('demo', '<strong>Replay</strong> · historical fires, not live data');
+  setModePill('demo', 'Replay'); setBanner('demo', '<strong>Historical incidents</strong>');
   $('map-pill').textContent = 'Replay';
   $('incident-eyebrow').textContent = 'INCIDENT REPLAY'; $('incident-title').textContent = 'Incident replay'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
   $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'replay — live detection paused';
   const sel = $('demo-fire'); sel.hidden = false;
   /** Format the recorded fire's year for the replay selector. */
   const yr = f => escapeHTML(f.startDate.slice(0, 4));
-  sel.innerHTML = '<optgroup label="Person search · fire first (simulated)"><option value="people">UTSC · Highland Creek ravine</option>'
+  sel.innerHTML = '<optgroup label="Person search · fire first"><option value="people">UTSC · Highland Creek ravine</option>'
     + state.demo.fires.map(f => `<option value="people:${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>'
-    + '<optgroup label="Historical fleet perimeter search (simulated)"><option value="flight">ANAFI demo flight pattern · UTSC</option>'
+    + '<optgroup label="Historical fleet perimeter search"><option value="flight">ANAFI demo flight pattern · UTSC</option>'
     + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>'
-    + '<optgroup label="Interactive fleet exercise (simulated)"><option value="forest-detection">Forest patrol · press Detected</option></optgroup>';
+    + '<optgroup label="Forest patrol"><option value="forest-detection">Forest patrol · press Detected</option></optgroup>';
   state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.trail.clearLayers();
   state.layers.path.setLatLngs([]);
   for (const f of state.demo.fires) L.circleMarker([f.lat, f.lon], {radius: 6, color: '#d9480f', weight: 2, fillColor: '#d9480f', fillOpacity: .85}).addTo(state.layers.demo).bindTooltip(f.name).on('click', () => { sel.value = f.id; selectDemo(f.id); });
@@ -830,7 +830,7 @@ function selectDemo(id) {
   if (state.demo.scout) state.demo.scout.elapsed = demoT();
   state.demo.responseClock = null; state.demo.approachFramed = false;
   state.demo.scout = null;
-  $('fleet-controls').hidden = true; $('drone-heading').textContent = 'ANAFI-01'; $('camera').setAttribute('aria-label', 'Simulated ANAFI camera');
+  $('fleet-controls').hidden = true; $('drone-heading').textContent = 'ANAFI-01'; $('camera').setAttribute('aria-label', 'ANAFI camera');
   state.demo.layer?.remove();
   state.demo.layer = L.layerGroup().addTo(state.map);
 
@@ -846,16 +846,16 @@ function selectDemo(id) {
     const fire = state.demo.fires.find(f => f.id === scenarioId);
     state.demo.selected = {id: 'people', scenario: scenarioId, name: fire?.name ?? 'UTSC · Highland Creek ravine', lat: null, lon: null, areaHa: 3, directionDeg: fire?.directionDeg ?? 225};
     state.scenario = {...M.BASE, wind: fire?.drivers?.windKmh ?? 24, direction: fire?.directionDeg ?? 225}; state.minute = 20;
-    setBanner('demo', `<strong>Simulated search</strong> · ${fire ? escapeHTML(fire.name) : 'UTSC'} · not live data`);
-    $('incident-eyebrow').textContent = 'DEMO · SIMULATED SEARCH'; $('incident-title').textContent = fire ? `Person search · ${fire.name}` : 'Person search replay';
+    setBanner('demo', `<strong>Person search</strong> · ${fire ? escapeHTML(fire.name) : 'UTSC'}`);
+    $('incident-eyebrow').textContent = 'PERSON SEARCH'; $('incident-title').textContent = fire ? `Person search · ${fire.name}` : 'Person search replay';
     $('incident-sub').textContent = fire ? `${fire.region} · ${fire.startDate.slice(0, 4)} ignition point` : 'UTSC · Highland Creek ravine';
     $('map-location').textContent = fire ? fire.name : 'UTSC · Highland Creek ravine';
-    if ($('map-subtitle')) $('map-subtitle').textContent = 'Exterior +20-minute border search · fictional person leads · simulated';
+    if ($('map-subtitle')) $('map-subtitle').textContent = 'Perimeter person search';
     startPeopleDemo();
     if (fire) state.map.setView([fire.lat, fire.lon], 16); else state.map.setView([state.site.latitude - .0012, state.site.longitude + .0018], 17);
     renderSpread(); return;
   }
-  setBanner('demo', '<strong>Demo</strong> · recorded burns, not live data');
+  setBanner('demo', '<strong>Historical incidents</strong> · recorded burns');
   $('incident-eyebrow').textContent = 'DEMO · HISTORICAL CASES'; $('incident-title').textContent = 'Demo replay';
   if (id === 'flight') {
     state.demo.selected = 'flight'; state.demo.started = performance.now();
@@ -897,15 +897,15 @@ function selectDemo(id) {
     initDemoFleet();
     const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'fire', lat: f.lat, lon: f.lon, windDeg: f.directionDeg, windKmh: f.drivers.windKmh});
     setDemoVideo(null);
-    $('incident-eyebrow').textContent = 'HISTORICAL INCIDENT · SIMULATED FLEET'; $('incident-title').textContent = f.name; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
+    $('incident-eyebrow').textContent = 'HISTORICAL INCIDENT · FLEET'; $('incident-title').textContent = f.name; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
     $('incident-sub').textContent = `${f.region} · ${f.lat.toFixed(4)}, ${f.lon.toFixed(4)} · ${f.drivers.fuel}`;
-    $('telemetry-tag').textContent = 'SIMULATED'; $('drone-source').textContent = '4-drone replay'; $('telemetry-note').classList.remove('error-text'); $('flight-progress').hidden = true;
-    if ($('map-subtitle')) $('map-subtitle').textContent = 'Fleet perimeter patrol · red outline: fire now · simulated';
+    $('telemetry-tag').textContent = 'FLEET'; $('drone-source').textContent = '4-drone fleet'; $('telemetry-note').classList.remove('error-text'); $('flight-progress').hidden = true;
+    if ($('map-subtitle')) $('map-subtitle').textContent = 'Fleet perimeter patrol · red outline: fire now';
     updateDemoScout(state.demo.scout.elapsed);
     if (f.manualDetection) {
       $('demo-detected').hidden = false; $('demo-detected').disabled = false; $('demo-detected').textContent = 'Detected';
-      $('incident-eyebrow').textContent = 'FOREST PATROL · SIMULATED FLEET';
-      $('map-subtitle').textContent = 'Four widely spaced drones holding high · press Detected to reveal a fictional fire near ANAFI-01';
+      $('incident-eyebrow').textContent = 'FOREST PATROL · FLEET';
+      $('map-subtitle').textContent = 'Four widely spaced drones holding high · press Detected to reveal a fire near ANAFI-01';
       $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'no fire detected';
     }
     $('map-location').textContent = `${f.name} · ${f.region}`;

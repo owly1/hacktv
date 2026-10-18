@@ -125,14 +125,14 @@ async function pollPeople() {
 function startPeopleDemo() {
   peopleState.demo = {started: performance.now(), lastFetch: -Infinity, inflight: false, t: 0, frame: null};
   peopleState.listKey = ''; peopleState.covKey = ''; peopleState.seen.clear();
-  $('people-source').textContent = 'Simulated'; $('people-source').className = 'pill warn';
-  $('telemetry-tag').textContent = 'SIMULATED'; $('drone-source').textContent = 'Simulated search';
-  $('telemetry-note').textContent = 'Seeded person-search simulation · no live aircraft';
+  $('people-source').textContent = 'Search'; $('people-source').className = 'pill warn';
+  $('telemetry-tag').textContent = 'SEARCH'; $('drone-source').textContent = 'Person search';
+  $('telemetry-note').textContent = 'Person search · ANAFI-01';
   for (const id of ['altitude', 'ground-speed', 'power']) $(id).textContent = '—';
-  $('battery-value').textContent = '—'; $('battery-context').textContent = 'simulated ANAFI-01';
+  $('battery-value').textContent = '—'; $('battery-context').textContent = 'ANAFI-01';
   $('drone-heading').textContent = 'ANAFI-01 · Search POV';
-  $('flight-state').textContent = 'Waiting for simulated pose'; $('video-status').textContent = 'Loading search replay';
-  drawWaiting('Loading simulated camera', 'Waiting for the search replay pose');
+  $('flight-state').textContent = 'Waiting for drone position'; $('video-status').textContent = 'Loading search replay';
+  drawWaiting('Loading camera', 'Waiting for the search replay pose');
   $('flight-progress').hidden = false;
 }
 /** Clear search-only layers, cached rendering keys and simulated lead state. */
@@ -153,7 +153,7 @@ function tickPeopleDemo(now) {
   if (t > duration + PEOPLE_DEMO_HOLD_S * PEOPLE_DEMO_SPEED) { d.started = now; t = 0; peopleState.listKey = ''; peopleState.covKey = ''; peopleState.seen.clear(); }
   d.lastFetch = now; d.inflight = true;
   getJson(`/api/demo/people?t=${Math.min(t, duration).toFixed(1)}&scenario=${encodeURIComponent(state.demo.selected.scenario || 'utsc')}`).then(snap => { if (peopleDemoActive() && peopleState.demo === d) renderPeople(snap); })
-    .catch(e => toast('Simulated search unavailable: ' + e.message)).finally(() => { d.inflight = false; });
+    .catch(e => toast('Person search unavailable: ' + e.message)).finally(() => { d.inflight = false; });
 }
 
 /** Accept a source-identified replay frame and reset scene resources on scenario changes. */
@@ -195,22 +195,22 @@ function renderPeopleCamera(now) {
   const cam = camera();
   if (cam?.ok) EmberCamera.render($('camera').getContext('2d'), cam, pose, {t, shake: 0, fire: scene.fire,
     people: scene.objects, confidence: .97, speed: drone.ground_speed_mps, battery: drone.battery_pct,
-    range: Math.hypot(pose.e, pose.n), footer: 'ANAFI-01 · SIMULATED SEARCH · RGB / THERMAL ILLUSTRATION'});
-  else drawWaiting('Simulated camera needs WebGL', 'Search telemetry and rescue leads remain available');
+    range: Math.hypot(pose.e, pose.n), footer: 'ANAFI-01 · PERSON SEARCH'});
+  else drawWaiting('Camera needs WebGL', 'Search telemetry and rescue leads remain available');
   if (now - (d.lastPanel ?? -1000) < 200) return; d.lastPanel = now;
   $('altitude').innerHTML = `${pose.alt.toFixed(1)} <small>m</small>`;
   $('ground-speed').innerHTML = `${drone.ground_speed_mps.toFixed(1)} <small>m/s</small>`;
   $('power').innerHTML = `${Math.round(drone.battery_pct)} <small>%</small>`;
   $('battery-value').innerHTML = `${Math.round(drone.battery_pct)}<span class="small-unit">%</span>`;
-  $('battery-context').textContent = 'Simulated ANAFI-01 battery';
+  $('battery-context').textContent = 'ANAFI-01 battery';
   $('flight-state').textContent = snap.mission.phase === 'orbit' ? 'Circling fire' : snap.mission.mode;
-  $('telemetry-note').textContent = `ANAFI-01 · SIMULATED · ${frame.latitude.toFixed(5)}, ${frame.longitude.toFixed(5)} · heading ${Math.round(pose.heading)}° · camera ${-Math.round(pose.pitch)}°`;
-  $('camera-label').innerHTML = '<i class="hot"></i> ANAFI-01 · SIMULATED SEARCH';
-  $('camera').setAttribute('aria-label', 'Simulated fire-first search camera');
+  $('telemetry-note').textContent = `ANAFI-01 · ${frame.latitude.toFixed(5)}, ${frame.longitude.toFixed(5)} · heading ${Math.round(pose.heading)}° · camera ${-Math.round(pose.pitch)}°`;
+  $('camera-label').innerHTML = '<i class="hot"></i> ANAFI-01 · PERSON SEARCH';
+  $('camera').setAttribute('aria-label', 'Person search camera');
   $('camera-clock').textContent = `T+${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-  $('video-status').textContent = cam?.ok ? snap.mission.link === 'down' ? 'Onboard replay · simulated link outage' : '3D search replay · simulated RGB / thermal' : 'Camera view needs WebGL';
+  $('video-status').textContent = cam?.ok ? snap.mission.link === 'down' ? 'Onboard recording · link outage' : 'Person search camera' : 'Camera view needs WebGL';
   $('video-fps').textContent = cam?.ok ? '30 fps' : '—';
-  $('detect-value').textContent = '97'; $('detect-unit').textContent = '%'; $('detect-context').textContent = 'Simulated fire · search replay';
+  $('detect-value').textContent = '97'; $('detect-unit').textContent = '%'; $('detect-context').textContent = 'Fire detection · person search';
 }
 
 // ------------------------------------------------------------- rendering
@@ -280,7 +280,7 @@ function leadCard(l) {
       <div><dt>Accuracy</dt><dd>±${l.uncertainty.major_95_m} m</dd></div>
       <div><dt>Last seen</dt><dd>${fmtTime(l.last_seen_at)} <small>${fmtAgo(l.last_seen_age_s)}</small></dd></div>
       <div><dt>Evidence</dt><dd>${l.observations} sighting${l.observations === 1 ? '' : 's'} · ${l.views} angle${l.views === 1 ? '' : 's'}${l.views > 1 ? ` (${l.angle_span_deg}° apart)` : ''} · ${sensors}</dd></div>
-      ${l.observed_by?.length ? `<div><dt>Source drones</dt><dd>${l.observed_by.map(escapeHTML).join(', ')} · simulated</dd></div>` : ''}
+      ${l.observed_by?.length ? `<div><dt>Source drones</dt><dd>${l.observed_by.map(escapeHTML).join(', ')}</dd></div>` : ''}
       <div><dt>Movement</dt><dd>${mv}</dd></div>
       ${l.fire_distance_m != null || l.arrival !== undefined ? `<div><dt>Fire</dt><dd>${l.arrival !== undefined ? `<b class="arrival${l.arrival != null && l.arrival <= 30 ? ' soon' : ''}">${arrivalText(l.arrival)}</b>${l.fire_distance_m != null ? ` · ` : ''}` : ''}${l.fire_distance_m != null ? `${l.fire_distance_m} m away` : ''}</dd></div>` : ''}
     </dl>
@@ -385,10 +385,10 @@ function renderPeopleMap(snap) {
       if (peopleState.demo) peopleState.demo.marker = m;
       setDronePose(m, snap.drone.heading_deg, snap.drone.altitude_m);
       if (state.follow) state.map.panTo(state.demo.pos, {animate: false});
-      m.bindTooltip(`Simulated drone · ${snap.drone.altitude_m} m · heading ${snap.drone.heading_deg}°`);
+      m.bindTooltip(`Drone · ${snap.drone.altitude_m} m · heading ${snap.drone.heading_deg}°`);
     }
     if (snap.fire) {
-      L.marker([snap.fire.latitude, snap.fire.longitude], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(lm).bindTooltip('Simulated fire');
+      L.marker([snap.fire.latitude, snap.fire.longitude], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(lm).bindTooltip('Fire');
       const sel = state.demo.selected;
       if (sel?.id === 'people' && sel.lat == null) {
         // The simulated fire runs through the same spread model as a live detection.
@@ -432,7 +432,7 @@ function renderCoverage(cov) {
   L.imageOverlay(canvas.toDataURL(), [sw, ne], {className: 'coverage-overlay', interactive: false, opacity: 1}).addTo(layer);
 }
 
-/** Show live/search mission events and keep simulation-only camera/flight labels explicit. */
+/** Show mission events and update the selected search camera and flight labels. */
 function renderMission(snap) {
   const log = $('mission-log'), steps = $('loop-steps');
   const m = snap.mission;
@@ -448,13 +448,13 @@ function renderMission(snap) {
       + m.log.map(e => `<li><span>${fmtTime(e.at)}</span> ${escapeHTML(e.text)}</li>`).join('');
     const d = snap.drone;
     if (d && peopleDemoActive()) {
-      $('flight-phase').textContent = `Simulated search · ${m.phase === 'orbit' ? 'searching the fire' : m.mode}${m.link === 'down' ? ' · link down' : ''}`;
+      $('flight-phase').textContent = `Person search · ${m.phase === 'orbit' ? 'searching the fire' : m.mode}${m.link === 'down' ? ' · link down' : ''}`;
       $('flight-bar').style.width = Math.round(snap.t / snap.duration_s * 100) + '%';
       $('altitude').innerHTML = `${d.altitude_m} <small>m</small>`; $('flight-state').textContent = m.phase === 'orbit' ? 'Circling fire' : m.mode === 'revisit' ? 'Revisiting' : m.mode === 'done' ? 'Holding' : 'Surveying path';
       $('ground-speed').innerHTML = `${m.mode === 'done' ? 0 : 9} <small>m/s</small>`;
-      $('camera-label').innerHTML = '<i></i> SIMULATED';
+      $('camera-label').innerHTML = '<i></i> ANAFI-01';
       $('camera-clock').textContent = `T+${Math.floor(snap.t / 60)}:${String(Math.floor(snap.t % 60)).padStart(2, '0')}`;
-      $('video-status').textContent = 'Simulated search · preparing 3D camera'; $('video-fps').textContent = '—';
+      $('video-status').textContent = 'Person search · preparing camera'; $('video-fps').textContent = '—';
     }
   } else {
     const open = snap.leads.filter(l => !l.closed);

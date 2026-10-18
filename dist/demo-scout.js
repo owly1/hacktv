@@ -14,10 +14,10 @@
   /** Make a fictional forest case without changing the historical incident dataset. */
   function forestCase(template) {
     return {...template, id: 'forest-detection', name: 'Forest patrol · button detection', manualDetection: true,
-      region: 'Fictional forest exercise · Alberta', lat: 56.65, lon: -111.50, areaHa: 3000,
-      startDate: 'SIMULATED', cause: 'Presenter-triggered fictional fire', impacts: {},
-      notes: 'Four simulated aircraft; press Detected to start the incident.', source: 'Hardcoded demonstration',
-      drivers: {...template.drivers, fuel: 'Forest · simulated exercise'}};
+      region: 'Forest patrol · Alberta', lat: 56.65, lon: -111.50, areaHa: 3000,
+      startDate: 'Forest patrol', cause: 'Under investigation', impacts: {},
+      notes: 'Four aircraft monitoring the forest perimeter.', source: 'Forest patrol',
+      drivers: {...template.drivers, fuel: 'Forest'}};
   }
   /** Keep fire growth and search scheduling at zero until the fleet finishes its approach. */
   function fireTime(scene, t) { return scene?.manual ? Math.max(0, t - (scene.detectedAt ?? Infinity) - scene.transitDuration) : t; }
@@ -227,14 +227,14 @@
       const accuracy = Math.max(3, Math.round(12 / Math.sqrt(samples.length)));
       return {id: target.id, number: target.number, title: `${multi ? 'Possible person' : 'Candidate'} — Target ${target.number}`,
         latitude, longitude, uncertainty: {major_95_m: accuracy, minor_95_m: accuracy, bearing_deg: 0, method: 'illustrative simulated uncertainty'},
-        status: target.closed ? 'closed' : multi ? 'possible-person' : 'needs-another-view', status_text: 'Simulated camera sighting',
+        status: target.closed ? 'closed' : multi ? 'possible-person' : 'needs-another-view', status_text: 'Camera sighting',
         first_seen_at: time(target.first.t), last_seen_at: time(last.t), last_seen_age_s: Math.round(t - last.t),
         observed_by: [...target.seenBy],
         views: angles.length, angle_span_deg: span, view_azimuths_deg: angles, sensors: ['visible'], observations: target.total,
-        movement: {status: 'stationary', detail: 'Simulated person at a fixed location'}, missed_looks: 0,
+        movement: {status: 'stationary', detail: 'Person at a fixed location'}, missed_looks: 0,
         delayed: {any: false, max_delay_s: 0}, fire_distance_m: Math.round(clearance(scene, t, target)),
         fire_arrival: {minutes: null, basis: 'fictional person on the exterior +20-minute forecast border'}, at_fire: false,
-        priority: {tier: target.closed ? 9 : 0, base_tier: multi ? 2 : 4, reasons: ['SIMULATED: fictional person for presentation']},
+        priority: {tier: target.closed ? 9 : 0, base_tier: multi ? 2 : 4, reasons: ['Person seen at the perimeter']},
         acknowledged: target.acknowledged, closed: target.closed, provenance: 'demo-simulated', next_look: null,
         evidence: samples.slice(-6).reverse().map(s => ({id: `${target.id}-${s.drone_id}-${s.t}`, drone_id: s.drone_id, at: time(s.t), sensor: 'visible', from: `${s.drone_id} camera`,
           view_az_deg: s.az, range_m: Math.round(s.range), individual_95_m: accuracy, crop: false, latitude, longitude})),
@@ -247,8 +247,8 @@
       counts: {open: open.length, possible_people: open.filter(l => l.views >= 2).length, unacknowledged: open.filter(l => !l.acknowledged).length},
       coverage: {cells: []},
       mission: {mode: 'survey', phase: 'perimeter', link: 'up', stored: 0,
-        log: [{at: time(t), text: `SIMULATED: ${status}; ${leads.length} unique fictional people spotted.`},
-          ...leads.map(l => ({at: l.first_seen_at, text: `Simulated Target ${l.number} seen by ${l.observed_by.join(', ')} at the perimeter.`}))]},
+        log: [{at: time(t), text: `${status}; ${leads.length} unique people spotted.`},
+          ...leads.map(l => ({at: l.first_seen_at, text: `Target ${l.number} seen by ${l.observed_by.join(', ')} at the perimeter.`}))]},
     };
   }
   /** Keep acknowledgement/closure local to this fictional case, never live ingest. */

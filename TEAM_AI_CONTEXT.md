@@ -167,3 +167,8 @@ forest approach completing in about 17 presentation seconds. Detection opens
 a +30-minute forecast; arrival refits the map. Drones continuously orbit the
 roughly +20-minute forecast contour even during searches; only actual flown
 trails are drawn, never a prewritten patrol ring. Live aircraft are unaffected.
+
+Presentation copy: dashboard labels use Fleet / Person search / ANAFI and omit
+simulated/fictional wording from banners, POV HUDs, cards, dropdown groups and
+forest incident text. This is a wording-only change; API provenance, demo mode
+isolation and exported source metadata remain explicit.

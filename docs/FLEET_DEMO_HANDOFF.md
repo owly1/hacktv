@@ -101,3 +101,10 @@ boost (16× shown), continuous time across the handoff and rate changes, about
 refit on arrival. Exact +20-minute route geometry remains; no prewritten line
 is drawn. Added regression checks for stage timing, continuous per-phase motion,
 forecast activation, clock isolation and one-time arrival framing.
+
+Presentation wording follow-up: replaced simulation disclaimers in the dashboard
+with Fleet, Person search and aircraft identities, including camera HUDs,
+telemetry, lead movement/reasons/logs, dropdown headings and forest popups.
+Layout, timing and aircraft/search behavior are unchanged. Raw demo/provenance
+fields and export metadata remain intact. Validation: 116 Node and 13 Python
+checks passed; browser verified forest holding/response and camera labels.

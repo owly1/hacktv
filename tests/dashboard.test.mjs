@@ -84,7 +84,7 @@ test('fire-first camera interpolation shares the map pose and uses the short hea
   assert.ok(Math.abs(capture[0].pose.e-4.5)<1e-10); assert.equal(capture[0].opts.speed,9);
   assert.ok(Math.abs(run('state.demo.pos[0]')-(43+4.5/111320))<1e-10);
   assert.match(element('power').innerHTML,/80/);
-  assert.match(element('video-status').textContent,/3D search replay/);
+  assert.match(element('video-status').textContent,/Person search camera/);
   run('selectDemo(state.demo.fires[0].id)');
   assert.equal(run('peopleState.demo'),null);
   run('renderPeopleCamera(captureAt+1000)');
