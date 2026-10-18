@@ -23,6 +23,15 @@ const trailCache = new Map();
 /* Minutes until the projected fire reaches a point, at the conditions on the map now.
    undefined = no modelled fire; null = not within 3 h; 0 = inside the fire now. */
 function fireArrivalAt(lat, lon) {
+  const f = demoCase();
+  if (f && state.demo.located) {
+    const point = [lat, lon];
+    if (M.insidePolygon(point, demoOutline(f, 0))) return 0;
+    if (!M.insidePolygon(point, demoOutline(f, 60))) return null;
+    let lo = 0, hi = 60;
+    while (hi - lo > .5) { const mid = (lo + hi) / 2; if (M.insidePolygon(point, demoOutline(f, mid))) hi = mid; else lo = mid; }
+    return Math.round(hi);
+  }
   const o = origin();
   if (!o || !modelledFire()) return undefined;
   return M.arrivalMinutes(o, [lat, lon], state.scenario, fireDetails());
@@ -287,7 +296,7 @@ function renderPeopleMap(snap) {
     }
   }
   renderCoverage(snap.coverage);
-  if (snap.simulated) {
+  if (snap.simulated && !snap.historical_scout) {
     if (snap.track?.length) { const tl = L.layerGroup().addTo(lm); drawTrail(tl, snap.track); }
     if (snap.drone) {
       state.demo.pos = [snap.drone.latitude, snap.drone.longitude];
@@ -412,6 +421,10 @@ async function onLeadAction(event) {
   }
   btn.disabled = true;
   try {
+    if (demoCase() && state.demo.scout) {
+      BoscoScout.action(state.demo.scout, id, action, by, body.outcome);
+      peopleState.listKey = ''; updateDemoScout(); return;
+    }
     await api(action === 'ack' ? '/api/people/ack' : '/api/people/close', {method: 'POST', body});
     toast(action === 'ack' ? `${l.title} acknowledged by ${by}.` : `${l.title} closed.`);
     peopleState.listKey = '';

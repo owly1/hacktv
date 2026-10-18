@@ -39,6 +39,15 @@ Replay offers simulated person searches, historical incidents, and a flight
 pattern. Its Gemini calls require a configured key; replay results stay out
 of live storage. The Windows wrapper is `.\demo.ps1 -Port 9000`.
 
+Historical fire cases now include a simulated rescue scout. ANAFI-01 flies
+into the rendered fire footprint, finds 3–7 fictional people, and shows the
+same position and camera orientation on the map, footage and telemetry.
+People appear only when the simulated camera sees them. Review, acknowledge,
+close and export these leads locally; demo observations never enter live
+storage. Switching cases preserves each case's own scout and review state.
+If another checkout already serves port 8787, the launcher reports that
+mismatch; use port 9000 or stop the old backend before relaunching.
+
 ## Source map
 
 | Path | Responsibility |

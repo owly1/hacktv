@@ -606,7 +606,7 @@ function simTrack(f, t) {
   return {bearing, R, e: R * Math.sin(b), n: R * Math.cos(b), alt: SIM.alt0 + (f.drone.telemetry.altitude_m - SIM.alt0) * ease((t - 2) / SIM.climbS)};
 }
 /** Compute replay camera/drone pose and display measurements at the elapsed simulation time. */
-function simPose(f, t) {
+function surveyPose(f, t) {
   const tel = f.drone.telemetry, {bearing, R, e, n, alt: climb} = simTrack(f, t), next = simTrack(f, t + .2);
   const phase = t < 2 ? 'Detection hover' : t < 2 + SIM.climbS ? 'Climb to survey' : 'Survey orbit';
   const alt = climb + .3 * Math.sin(t * .7), fire = simFire(f, t), wd = f.directionDeg * Math.PI / 180;
@@ -615,13 +615,27 @@ function simPose(f, t) {
     speed: Math.hypot(next.e - e, next.n - n) / .2, climbRate: (next.alt - climb) / .2,
     heading: (Math.atan2(te, tn) * 180 / Math.PI + 360) % 360, pitch: Math.atan2(alt, Math.hypot(te, tn)) * 180 / Math.PI};
 }
+/** Use one simulated scouting pose for the map, video, telemetry and observations. */
+function simPose(f, t) {
+  const scout = state.demo.scout;
+  const p = scout && BoscoScout.pose(scout, t, surveyPose(f, BoscoScout.START));
+  return p ? {...p, fire: simFire(f, t)} : surveyPose(f, t);
+}
+
+/** Refresh historical-case leads without touching live person-search storage. */
+function updateDemoScout(t = demoT()) {
+  const f = demoCase(), scout = state.demo.scout;
+  if (!f || !scout) return;
+  renderPeople(BoscoScout.snapshot(scout, t, surveyPose(f, BoscoScout.START)));
+  $('people-source').textContent = 'Simulated · case';
+}
 /* The detector locks on over the first seconds, then firms up as the view opens out. */
 function simConfidence(f, t) {
   const c = f.drone.detection.confidence * (.55 + .45 * ease(t / SIM_DELAY.confirm)) + .03 * ease((t - 2) / SIM.climbS);
   return Math.max(.3, Math.min(.99, c + .012 * Math.sin(t * 5.3) + .008 * Math.sin(t * 11.1)));
 }
 /** Return elapsed time in the current historical replay, in seconds. */
-const demoT = () => (performance.now() - state.demo.started) / 1000;
+const demoT = () => Math.max(0, (performance.now() - state.demo.started) / 1000);
 /* Spread outline at `minute`: the live fire at T + 0, growing geometrically to
    the recorded final burn area at T + 60, in the recorded burn's shape. */
 function demoOutline(f, minute, scale = 1) {
@@ -676,8 +690,9 @@ function simCase(f) {
     id: f.id, name: f.name, region: f.region, latitude: f.lat, longitude: f.lon,
     observed: {temp_c: f.drivers.tempC, wind_kmh: f.drivers.windKmh, wind_toward_deg: f.directionDeg, rh_pct: f.drivers.rhPct, fuel: f.drivers.fuel},
     estimated_area_ha: +M.areaHa(demoOutline(f, 0)).toFixed(1),
+    provenance: 'demo-simulated', rescue_leads: peopleState.snap?.historical_scout ? peopleState.snap.leads : [],
     drone: {
-      telemetry: {drone_id: tel.drone_id, latitude: +p.lat.toFixed(6), longitude: +p.lon.toFixed(6), altitude_m: +p.alt.toFixed(1), ground_speed_mps: +p.speed.toFixed(1), battery_pct: Math.round(p.battery), state: 'flying', extra: {heading_deg: Math.round(p.heading), gimbal_pitch_deg: -Math.round(p.pitch), position_source: 'gps', flight_phase: p.phase.toLowerCase()}},
+      telemetry: {provenance: 'demo-simulated', drone_id: tel.drone_id, latitude: +p.lat.toFixed(6), longitude: +p.lon.toFixed(6), altitude_m: +p.alt.toFixed(1), ground_speed_mps: +p.speed.toFixed(1), battery_pct: Math.round(p.battery), state: 'flying', extra: {heading_deg: Math.round(p.heading), gimbal_pitch_deg: -Math.round(p.pitch), position_source: 'simulated', flight_phase: p.phase.toLowerCase()}},
       detection: {source: det.source, label: det.label, confidence: +simConfidence(f, t).toFixed(2), seconds_since_first_sighting: Math.round(t), fire: {...det.fire, distance_m: Math.round(p.range), bearing_deg: Math.round(p.heading)}},
     },
   };
@@ -712,7 +727,9 @@ let lastPanel = 0;
 /** Advance only the selected historical camera case, detection timing and automatic analysis. */
 function animateDemoCase(now) {
   const f = demoCase(); if (!f || !state.demo.marker) return;
-  const t = (now - state.demo.started) / 1000, p = simPose(f, t), conf = simConfidence(f, t), confirmed = t >= SIM_DELAY.confirm;
+  const t = Math.max(0, (now - state.demo.started) / 1000), p = simPose(f, t), conf = simConfidence(f, t), confirmed = t >= SIM_DELAY.confirm;
+  if (state.demo.scout && now - (state.demo.lastScout ?? -2000) > 1000) { state.demo.lastScout = now; updateDemoScout(t); }
+  if (t >= BoscoScout.START && state.demo.video) setDemoVideo(null);
   state.demo.pos = [p.lat, p.lon];
   state.demo.marker.setLatLng(state.demo.pos); setDronePose(state.demo.marker, p.heading, p.alt);
   if (!state.demo.located && t >= SIM_DELAY.locate) locateDemoFire(f);
@@ -724,7 +741,7 @@ function animateDemoCase(now) {
   const cam = camera(), video = !!state.demo.video && state.demo.video.readyState >= 2;
   if (cam && now - (state.demo.lastCam ?? 0) > 33) {
     state.demo.lastCam = now;
-    const seen = EmberCamera.render($('camera').getContext('2d'), cam, p, {t, fire: p.fire, confidence: conf, label: confirmed ? 'FIRE' : 'POSSIBLE FIRE', speed: p.speed, battery: p.battery, range: p.range, footer: video ? 'REFERENCE FOOTAGE · NOT RECORDED BY ANAFI-01' : `${p.phase.toUpperCase()} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`});
+    const seen = EmberCamera.render($('camera').getContext('2d'), cam, p, {t, fire: p.fire, confidence: conf, label: confirmed ? 'FIRE' : 'POSSIBLE FIRE', people: state.demo.scout?.targets, speed: p.speed, battery: p.battery, range: p.range, footer: video ? 'REFERENCE FOOTAGE · NOT RECORDED BY ANAFI-01' : `SIMULATED · ${p.phase.toUpperCase()} · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`});
     state.demo.inView = !!seen;
   }
   if (now - lastPanel < 250) return; lastPanel = now;
@@ -734,7 +751,7 @@ function animateDemoCase(now) {
   $('telemetry-note').textContent = `ANAFI-01 · GPS · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${Math.round(p.range)} m from ignition`;
   $('detect-value').textContent = confirmed ? Math.round(conf * 100) : '…'; $('detect-unit').textContent = confirmed ? '%' : '';
   $('detect-context').textContent = confirmed ? `fire model · ${Math.round(p.range)} m · ${Math.floor(t * 4) + 1} sightings` : 'fire model · confirming possible fire…';
-  $('camera-label').innerHTML = video ? '<i class="hot"></i> REFERENCE FOOTAGE · NOT ANAFI-01' : state.demo.inView && confirmed ? '<i class="hot"></i> FIRE IN VIEW' : '<i></i> POSSIBLE FIRE';
+  $('camera-label').innerHTML = t >= BoscoScout.START ? '<i class="hot"></i> SIMULATED · PEOPLE SCOUT' : video ? '<i class="hot"></i> REFERENCE FOOTAGE · NOT ANAFI-01' : state.demo.inView && confirmed ? '<i class="hot"></i> FIRE IN VIEW' : '<i></i> POSSIBLE FIRE';
   $('camera-clock').textContent = `${f.startDate} · T+${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   $('video-fps').textContent = cam?.ok ? '30 fps' : '—';
   $('video-status').textContent = video ? `Reference clip · ${state.demo.videoCredit}` : cam?.ok ? 'ANAFI-01 camera · replay' : 'Camera view needs WebGL';
@@ -783,20 +800,23 @@ async function toggleDemo() {
   const yr = f => escapeHTML(f.startDate.slice(0, 4));
   sel.innerHTML = '<optgroup label="Person search · fire first (simulated)"><option value="people">UTSC · Highland Creek ravine</option>'
     + state.demo.fires.map(f => `<option value="people:${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>'
-    + '<optgroup label="Recorded burns"><option value="flight">ANAFI demo flight pattern · UTSC</option>'
+    + '<optgroup label="Historical fire scouting (simulated)"><option value="flight">ANAFI demo flight pattern · UTSC</option>'
     + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>';
   state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.trail.clearLayers();
   state.layers.path.setLatLngs([]);
   for (const f of state.demo.fires) L.circleMarker([f.lat, f.lon], {radius: 6, color: '#d9480f', weight: 2, fillColor: '#d9480f', fillOpacity: .85}).addTo(state.layers.demo).bindTooltip(f.name).on('click', () => { sel.value = f.id; selectDemo(f.id); });
-  selectDemo('people'); sel.value = 'people';
+  selectDemo(state.demo.fires[0].id); sel.value = state.demo.fires[0].id;
 }
 
 /** Reset incompatible replay state before starting a search, historical case or flight pattern. */
 function selectDemo(id) {
+  if (state.demo.scout) state.demo.scout.elapsed = demoT();
+  state.demo.scout = null;
   state.demo.layer?.remove();
   state.demo.layer = L.layerGroup().addTo(state.map);
   state.layers.ask?.clearLayers(); $('ask-answer').hidden = true;
   stopPeopleDemo();
+  peopleState.listKey = ''; renderPeople({leads: [], counts: {}, coverage: {cells: []}});
   state.demo.marker = null; state.demo.pos = null; state.demo.located = false;
   setDemoVideo(null);
   state.layers.fire.clearLayers();
@@ -847,9 +867,12 @@ function selectDemo(id) {
     state.detectedScenario = {...state.scenario};
     L.polygon(M.recordedPerimeter(f), {color: '#c2410c', weight: 1.2, fill: false, dashArray: '2 4'}).addTo(state.demo.layer).bindTooltip('Recorded final burn area (approx.)');
     // A fresh sighting: the fire pin, spread and Gemini follow as the simulated detection firms up.
-    state.demo.started = performance.now(); state.demo.lastTrail = null; state.demo.inView = false;
+    state.demo.scoutSessions ??= {};
+    state.demo.scout = state.demo.scoutSessions[f.id] ??= BoscoScout.create(f);
+    state.demo.started = performance.now() - state.demo.scout.elapsed * 1000; state.demo.lastTrail = null; state.demo.inView = false;
+    state.demo.lastScout = -2000;
     state.demo.located = false; state.demo.autoAsked = false; state.demo.sight = null; state.demo.lastSpread = 0;
-    const start = simPose(f, 0); state.demo.pos = [start.lat, start.lon];
+    const start = simPose(f, state.demo.scout.elapsed); state.demo.pos = [start.lat, start.lon];
     state.demo.trail = L.polyline([], {color: '#3A372E', weight: 2.5, opacity: .85}).addTo(state.demo.layer);
     state.demo.marker = droneMarker(state.demo.pos).addTo(state.demo.layer);
     const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'fire', lat: f.lat, lon: f.lon, windDeg: f.directionDeg, windKmh: f.drivers.windKmh});
@@ -857,7 +880,10 @@ function selectDemo(id) {
     $('incident-eyebrow').textContent = 'INCIDENT · ANAFI-01'; $('incident-title').textContent = f.name; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
     $('incident-sub').textContent = `${f.region} · ${f.lat.toFixed(4)}, ${f.lon.toFixed(4)} · ${f.drivers.fuel}`;
     setBanner('demo', `<strong>Possible fire · ${escapeHTML(f.name)}.</strong> ANAFI-01, patrolling at ${SIM.alt0} m, has spotted smoke about ${SIM.r0} m ahead and is confirming the detection.`);
-    $('telemetry-tag').textContent = 'REPLAY'; $('drone-source').textContent = 'GPS · telemetry'; $('telemetry-note').classList.remove('error-text'); $('flight-progress').hidden = true;
+    $('telemetry-tag').textContent = 'SIMULATED'; $('drone-source').textContent = 'Simulated scout'; $('telemetry-note').classList.remove('error-text'); $('flight-progress').hidden = true;
+    if ($('map-subtitle')) $('map-subtitle').textContent = 'Simulated drone scouting inside the fire · fictional rescue leads';
+    setBanner('demo', `<strong>Historical fire + simulated rescue scout.</strong> ${escapeHTML(f.name)} · the drone enters the rendered fire area and looks for fictional people. Map, camera and telemetry follow the same simulation.`);
+    updateDemoScout(state.demo.scout.elapsed);
     $('map-location').textContent = `${f.name} · ${f.region}`;
     state.minute = 0; state.playing = false; setPlayButton();
     fitToFire();
@@ -868,6 +894,8 @@ function selectDemo(id) {
 
 /** Stop simulations and restore saved live evidence, plan, basemap and polling state. */
 function exitDemo() {
+  if (state.demo.scout) state.demo.scout.elapsed = demoT();
+  state.demo.scout = null;
   stopPeopleDemo();
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.layers.ask?.clearLayers(); $('ask-answer').hidden = true; state.map.closePopup();
   setDemoVideo(null); setBasemap(state.basemapBeforeDemo ?? 'osm'); setFollow(false);
@@ -1008,11 +1036,13 @@ function bindUi() {
 /** Export the current evidence, lead review, projection and plan with source labels. */
 function exportBrief() {
   const inc = activeFire(), a = state.analysis, p = state.plan, proj = projection();
+  const simulatedCase = demoCase() ? simCase(demoCase()) : null;
+  const telemetry = simulatedCase?.drone.telemetry ?? (peopleDemoActive() ? peopleState.snap?.drone : state.telemetry);
   const lines = ['# BOSCO incident brief', '', `Generated: ${new Date().toISOString()}`, `Site: ${state.site.name} (${state.site.latitude}, ${state.site.longitude})`, `Mode: ${state.mode === 'demo' ? 'incident replay' : state.mode}`, '',
     '## People · rescue leads', peopleBrief(), '',
-    '## Fire', inc ? [`Detected ${inc.first_detected_at} by ANAFI-01 (${inc.latest.source}, ${inc.latest.label}, max confidence ${Math.round(inc.max_confidence * 100)}%), ${inc.sightings} sightings.`, `Position: ${inc.latest.fire.latitude}, ${inc.latest.fire.longitude} — ${inc.latest.fire.distance_m} m from the drone, bearing ${inc.latest.fire.bearing_deg}° (${inc.latest.fire.position_source}).`, `Details: ${JSON.stringify(inc.latest.details)}`].join('\n') : 'No active fire.', '',
+    '## Fire', simulatedCase ? `SIMULATED SCOUT: ${simulatedCase.name} at ${simulatedCase.latitude}, ${simulatedCase.longitude}; historical context with fictional people and flight.` : inc ? [`Detected ${inc.first_detected_at} by ANAFI-01 (${inc.latest.source}, ${inc.latest.label}, max confidence ${Math.round(inc.max_confidence * 100)}%), ${inc.sightings} sightings.`, `Position: ${inc.latest.fire.latitude}, ${inc.latest.fire.longitude} — ${inc.latest.fire.distance_m} m from the drone, bearing ${inc.latest.fire.bearing_deg}° (${inc.latest.fire.position_source}).`, `Details: ${JSON.stringify(inc.latest.details)}`].join('\n') : 'No active fire.', '',
     '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
-    '## Drone telemetry', state.telemetry ? '```json\n' + JSON.stringify(state.telemetry, null, 2) + '\n```' : 'No telemetry.', '',
+    '## Drone telemetry', telemetry ? '```json\n' + JSON.stringify(telemetry, null, 2) + '\n```' : 'No telemetry.', '',
     '## Gemini analysis', a ? `${a.summary}\n\nSeverity: ${a.severity ?? '—'}\nSpread outlook: ${a.spread_outlook ?? '—'}\nUnknowns: ${(a.unknowns || []).join('; ') || '—'}\nLimitations: ${a.limitations ?? '—'}\n(${a.model}, ${a.created_at})` : 'None yet.', '',
     '## Operational plan', p ? `${p.title}\n\n${p.situation}\n\nAdvantage: ${p.advantage}\n\n${p.actions.map(x => `${x.priority}. ${x.action} — ${x.owner || ''} (${x.timing || ''})`).join('\n')}\n\n${p.approvedBy ? `Approved by ${p.approvedBy} at ${p.approvedAt}` : 'Not yet approved.'}${state.planDirty ? '\n(Conditions changed after this plan was generated.)' : ''}` : 'None yet.'];
   download('bosco-incident-brief.md', lines.join('\n'), 'text/markdown'); toast('Incident brief exported.');

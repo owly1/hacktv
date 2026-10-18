@@ -30,7 +30,7 @@ async function dashboard() {
     L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, /* Preserve icon options without constructing a real map icon. */ divIcon: value => value},
     window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
   });
-  for (const name of ['model.js', 'demo-cases.js', 'people.js', 'app.js']) {
+  for (const name of ['model.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'app.js']) {
     let source = await readFile(new URL(`../dist/${name}`, import.meta.url), 'utf8');
     if (name === 'app.js') source = source.replace(/\nboot\(\);\s*$/, '\n');
     vm.runInContext(source, context, {filename: name});
