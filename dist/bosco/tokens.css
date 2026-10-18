@@ -69,6 +69,7 @@
   --feed-chip: rgba(8, 8, 10, 0.6);
   --cover-bg: #08080A;
   --cover-ring: #D8D7D2;
+  --cover-accent: #E2574C;
 
   --font-sans: 'Archivo', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
