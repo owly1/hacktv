@@ -27,6 +27,7 @@ import {
   validateDetection,
   validateFlightEvent,
   validateFrame,
+  validateOverlays,
   validateSnapshotEnvelope,
   validateTelemetry,
   parseIsoTimestamp,
@@ -845,6 +846,7 @@ export function createApp({
   const state = {
     latestSnapshot: null, // { jpeg, capturedAtMs } — latest frame or snapshot, used as Gemini evidence
     latestFrame: null,    // { jpeg, capturedAtMs, detections }
+    overlays: null,       // laptop inference, expires independently of the incident
     frameTimes: [],
     videoClients: new Set(),
     lastGeminiStart: -Infinity,
@@ -1091,9 +1093,13 @@ export function createApp({
   }
 
   function broadcastFrame(frame) {
+    const overlay = state.overlays;
+    const lag = overlay ? frame.capturedAtMs - overlay.capturedAtMs : Infinity;
+    const detections = frame.detections === '[]' && lag >= 0 && lag < 1500
+      && now() - overlay.capturedAtMs < 2000 ? JSON.stringify(overlay.detections) : frame.detections;
     const head = `--${VIDEO_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.jpeg.length}\r\n`
       + `X-Captured-At: ${new Date(frame.capturedAtMs).toISOString()}\r\n`
-      + `X-Detections: ${frame.detections}\r\n\r\n`;
+      + `X-Detections: ${detections}\r\n\r\n`;
     for (const client of state.videoClients) {
       if (client.writableNeedDrain) continue; // slow viewer: drop this frame for them only
       client.write(head);
@@ -1340,6 +1346,22 @@ export function createApp({
       acceptCameraFrame(jpeg, capturedAtMs, detections);
       res.writeHead(204, { 'cache-control': 'no-store' });
       res.end();
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/ingest/overlays') {
+      requireAuth(req, 'ingest');
+      const overlay = validateOverlays(await readJson(req), now());
+      const accepted = now() - overlay.capturedAtMs < 2000
+        && overlay.capturedAtMs <= now() + 1000
+        && (!state.overlays || overlay.capturedAtMs > state.overlays.capturedAtMs);
+      if (accepted) {
+        state.overlays = overlay;
+        // Redraw the latest image after inference finishes; do not refresh
+        // its capture time, evidence freshness or the camera FPS counter.
+        if (state.latestFrame) broadcastFrame(state.latestFrame);
+      }
+      sendJson(res, 200, {accepted});
       return;
     }
 

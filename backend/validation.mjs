@@ -249,6 +249,28 @@ export function validateFrame(body, capturedAtHeader, nowMs) {
   return capturedAtMs;
 }
 
+// A detector running on the laptop can annotate the Pi's camera stream
+// without uploading the image again or turning an unconfirmed box into an incident.
+export function validateOverlays(body, nowMs) {
+  const capturedAtMs = parseIsoTimestamp(body?.captured_at, 'captured_at');
+  assertWithinClockWindow(capturedAtMs, nowMs, 'captured_at');
+  if (!Array.isArray(body.detections) || body.detections.length > 10) {
+    throw new ApiError(400, 'detections must be an array of at most 10 boxes');
+  }
+  const detections = body.detections.map(d => {
+    if (!d || !DETECTION_SOURCES.has(d.source) || !['fire', 'smoke', 'person'].includes(d.label)
+        || (d.source === 'qr-test' && d.label !== 'fire')
+        || !Number.isFinite(d.confidence) || d.confidence < 0 || d.confidence > 1
+        || !Array.isArray(d.bbox) || d.bbox.length !== 4
+        || !d.bbox.every(v => Number.isFinite(v) && v >= 0 && v <= 1)
+        || d.bbox[0] >= d.bbox[2] || d.bbox[1] >= d.bbox[3]) {
+      throw new ApiError(400, 'invalid normalized detection overlay');
+    }
+    return {source: d.source, label: d.label, confidence: d.confidence, bbox: [...d.bbox]};
+  });
+  return {capturedAtMs, detections};
+}
+
 function finiteOrNull(value, name, range = {}) {
   checkNumberOrNull(value, name, range);
   return value ?? null;

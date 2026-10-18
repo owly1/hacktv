@@ -31,6 +31,18 @@ headers `X-Captured-At: <ISO>` and optional `X-Detections: [{source, label,
 confidence, bbox}]` with boxes normalized 0..1 for the dashboard overlay.
 Returns 204. The bridge reuses one keep-alive connection per thread.
 
+### Laptop detection overlays — `POST /api/ingest/overlays`
+
+Authenticated with the ingest token. Body:
+`{ "captured_at": "<ISO UTC>", "detections": [{ "source": "yolo", "label": "smoke", "confidence": 0.85, "bbox": [0.2, 0.3, 0.6, 0.7] }] }`.
+Send an empty array for a negative inference. At most ten ordered normalized
+boxes are accepted; source is `qr-test|yolo`, label is `fire|smoke|person`
+(QR must be fire), confidence is 0–1. Returns `{accepted}`. Results more than
+two seconds old or older than the latest overlay are ignored. An overlay
+can annotate matching/newer frames for up to 1.5 seconds of camera motion;
+embedded frame detections take precedence. A redraw retains the image's
+original timestamp and does not count as a new frame or incident.
+
 ## Fire detection — `POST /api/ingest/detection`
 
 Sent when a fire has been seen in **3 consecutive** detector passes (~5 Hz)

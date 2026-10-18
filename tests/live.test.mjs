@@ -78,6 +78,48 @@ const waitFor = async (fn, ms = 3000) => {
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 25)); }
 };
 
+test('laptop overlays reach video, clear on a negative frame, expire and never create incidents', async () => {
+  let clock = Date.now();
+  const t = await startApp({noGemini: true, now: () => clock});
+  const abort = new AbortController();
+  try {
+    const viewer = await fetch(t.base + '/api/video', {headers: {authorization: `Bearer ${DASH}`}, signal: abort.signal});
+    const reader = viewer.body.getReader();
+    const part = async () => {
+      let payload = '';
+      while (!payload.includes('\xff\xd9')) payload += Buffer.from((await reader.read()).value).toString('latin1');
+      return JSON.parse(/X-Detections: (.*)\r\n/.exec(payload)[1]);
+    };
+    const frame = () => t.req('POST', '/api/ingest/frame', {token: INGEST, body: JPEG,
+      headers: {'content-type': 'image/jpeg', 'x-captured-at': new Date(clock).toISOString()}});
+    const boxes = [{source: 'yolo', label: 'smoke', confidence: .85, bbox: [.2, .3, .6, .7]}];
+    const overlay = (detections = boxes, at = clock, token = INGEST) => t.req('POST', '/api/ingest/overlays', {
+      token, body: {captured_at: new Date(at).toISOString(), detections}});
+    await frame(); assert.deepEqual(await part(), []);
+    assert.equal((await overlay(boxes, clock, DASH)).status, 401);
+    assert.equal((await (await overlay()).json()).accepted, true);
+    assert.deepEqual(await part(), boxes);
+    assert.equal((await t.req('GET', '/api/incident', {token: DASH}).then(r => r.json())).incident, null);
+    const fps = (await t.req('GET', '/api/status', {token: DASH}).then(r => r.json())).video.fps;
+    assert.equal(fps, .5, 'overlay redraw does not increase camera FPS');
+    clock += 100;
+    await frame(); assert.deepEqual(await part(), boxes);
+    await overlay([]); assert.deepEqual(await part(), []);
+    assert.equal((await (await overlay(boxes, clock - 50)).json()).accepted, false);
+    clock += 100;
+    await overlay(); assert.deepEqual(await part(), []); // inference belongs to a newer image
+    await frame(); assert.deepEqual(await part(), boxes);
+    clock += 2100;
+    await frame(); assert.deepEqual(await part(), []);
+    assert.equal((await (await overlay(boxes, clock - 2100)).json()).accepted, false);
+    for (const detections of [null, [{...boxes[0], bbox: [.8, .3, .6, .7]}],
+      [{...boxes[0], confidence: 2}], [{...boxes[0], bbox: [0, 0, 2, 1]}],
+      [{...boxes[0], source: 'unknown'}], Array(11).fill(boxes[0])]) {
+      assert.equal((await overlay(detections)).status, 400);
+    }
+  } finally {abort.abort(); await t.close();}
+});
+
 test('Gemini retries timed-out inference and keeps the response-body timeout active', async () => {
   let calls = 0;
   const transport = makeGeminiTransport({ apiKey:'test', model:'fake', retryDelayMs:0, timeoutMs:5,

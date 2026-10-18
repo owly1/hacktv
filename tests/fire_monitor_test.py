@@ -88,6 +88,34 @@ class FireMonitorTests(unittest.TestCase):
         self.assertIsNone(rgb['fire']['latitude'])
         self.assertIsNone(rgb['fire']['longitude'])
 
+    def test_rgb_camera_ray_uses_real_pose_and_estimates_initial_area(self):
+        pose = {'latitude': 43.78, 'longitude': -79.19, 'altitude_m': 30,
+                'extra': {'heading_deg': 90, 'gimbal_pitch_deg': -45, 'position_source': 'gps'}}
+        hit = {**HIT, 'source': 'yolo', 'label': 'smoke', 'bbox': [.4, .4, .6, .6], 'details': None}
+        payload = detection_payload(hit, b'jpeg', 100, 'test', pose, frame_shape=(540, 960))
+        self.assertAlmostEqual(payload['fire']['distance_m'], 30)
+        self.assertGreater(payload['fire']['longitude'], pose['longitude'])
+        self.assertAlmostEqual(payload['fire']['latitude'], pose['latitude'])
+        self.assertIn('camera-ray', payload['fire']['position_source'])
+        self.assertGreater(payload['details']['area_ha'], 0)
+        pose['extra']['gimbal_pitch_deg'] = 0
+        self.assertIsNone(detection_payload(hit, b'jpeg', 100, 'test', pose)['fire']['latitude'])
+        del pose['extra']['gimbal_pitch_deg']
+        self.assertIsNone(detection_payload(hit, b'jpeg', 100, 'test', pose)['fire']['latitude'])
+
+    def test_smoke_is_enabled_only_when_requested(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        detector = FireDetector('', use_yolo=False)
+        boxes = SimpleNamespace(xyxyn=Mock(tolist=lambda: [[.2, .2, .6, .6]]),
+                                cls=Mock(tolist=lambda: [0]), conf=Mock(tolist=lambda: [.9]))
+        detector.model = Mock(return_value=[SimpleNamespace(boxes=boxes)])
+        detector.model.names = {0: 'smoke'}
+        image = np.zeros((100, 100, 3), np.uint8)
+        self.assertIsNone(detector.detect(image))
+        detector.labels = ('fire', 'smoke')
+        self.assertEqual(detector.detect(image)['label'], 'smoke')
+
     def test_real_decoder_reaches_incident_and_auto_analysis_on_isolated_backend(self):
         # Real QR decoding and HTTP ingest, with a fake Gemini transport and
         # memory-only storage so no test image is submitted to production.
