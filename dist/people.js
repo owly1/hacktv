@@ -157,8 +157,9 @@ function tickPeopleDemo(now) {
 function renderPeople(snap) {
   const prev = peopleState.snap; peopleState.snap = snap;
   const open = snap.leads.filter(l => !l.closed);
+  const unlocated = (snap.unlocated_sightings || []).filter(l => !l.closed);
   const multi = open.filter(l => l.views >= 2).length;
-  $('people-open').textContent = open.length; $('people-multi').textContent = multi; $('people-unack').textContent = snap.counts?.unacknowledged ?? 0;
+  $('people-open').textContent = open.length + unlocated.length; $('people-multi').textContent = multi; $('people-unack').textContent = (snap.counts?.unacknowledged ?? 0) + unlocated.filter(l => !l.acknowledged).length;
   const sec = snap.coverage?.sector;
   // With an assigned sector: the share of it observed. Without one: the ground area observed so far.
   const cov = snap.coverage, cellHa = (cov?.cell_m ?? 5) ** 2 / 10000;
@@ -168,9 +169,9 @@ function renderPeople(snap) {
   $('people-coverage').textContent = sec ? `${Math.round(sec.well_pct + sec.partial_pct)}%` : cov?.cells?.length ? haText(cov.cells.length) : '—';
   $('people-coverage').title = sec ? `${sec.well_pct}% from 2+ directions, ${sec.partial_pct}% from one, ${sec.hidden_pct}% not yet observed`
     : cov?.cells?.length ? `${haText(cov.well_cells)} from 2+ directions, ${haText(cov.partial_cells)} from one direction. Set SEARCH_SECTOR to track an assigned area.` : '';
-  $('people-value').textContent = open.length; $('people-unit').textContent = open.length === 1 ? 'lead' : 'leads';
-  $('people-context').textContent = open.length ? `${multi} seen from 2+ angles · ${snap.counts?.unacknowledged ?? 0} need acknowledging` : 'no one reported yet';
-  const badge = $('rail-people-badge'), unack = snap.counts?.unacknowledged ?? 0;
+  $('people-value').textContent = open.length + unlocated.length; $('people-unit').textContent = 'leads';
+  $('people-context').textContent = unlocated.length ? `${open.length} located · ${unlocated.length} camera-only observations` : open.length ? `${multi} seen from 2+ angles · ${snap.counts?.unacknowledged ?? 0} need acknowledging` : 'no one reported yet';
+  const badge = $('rail-people-badge'), unack = (snap.counts?.unacknowledged ?? 0) + unlocated.filter(l => !l.acknowledged).length;
   badge.hidden = !unack; badge.textContent = unack;
   for (const l of open) {
     if (l.views >= 2 && !peopleState.seen.has(l.id)) {
@@ -241,18 +242,30 @@ function withArrival(leads) {
 /** Refresh changed cards while preserving an in-progress outcome selection. */
 function renderLeadList(snap) {
   const leads = withArrival(snap.leads);
-  const key = JSON.stringify(leads.map(l => [l.id, l.atFire, l.status, l.observations, l.acknowledged?.at, l.closed?.at, l.uncertainty.major_95_m, l.movement.status, l.missed_looks, l.next_look?.from, Math.floor(l.last_seen_age_s / 15), l.arrival]));
+  const camera = snap.unlocated_sightings || [];
+  const key = JSON.stringify([leads.map(l => [l.id, l.atFire, l.status, l.observations, l.acknowledged?.at, l.closed?.at, l.uncertainty.major_95_m, l.movement.status, l.missed_looks, l.next_look?.from, Math.floor(l.last_seen_age_s / 15), l.arrival]), camera]);
   if (key === peopleState.listKey) return;
   // Don't wipe a half-chosen close outcome out from under the responder.
   if (document.activeElement?.closest?.('#lead-list select')) return;
   peopleState.listKey = key;
   const list = $('lead-list');
-  if (!snap.leads.length) {
+  if (!snap.leads.length && !camera.length) {
     list.innerHTML = '<div class="lead-empty"><h3>No one found yet</h3></div>';
     return;
   }
-  list.innerHTML = leads.map(leadCard).join('');
+  list.innerHTML = leads.map(leadCard).join('') + camera.map(cameraSightingCard).join('');
   for (const img of list.querySelectorAll('img[data-crop]')) loadCrop(img);
+}
+
+/** Keep actual camera-only detections visible without inventing map coordinates. */
+function cameraSightingCard(s) {
+  const id = escapeHTML(s.track_id), reason = s.location_reason === 'pose-unavailable' ? 'Drone position or camera pose unavailable' : 'Camera ray does not intersect the ground';
+  const outcomes = CLOSE_OUTCOMES.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+  return `<article class="lead-card"><header><div><h3>Person seen · location unavailable</h3><p class="lead-status">${s.closed ? 'Closed' : 'Camera observation'} · visible RGB</p></div></header>
+    <p>${reason}. This sighting is recorded without a map pin.</p>
+    <dl class="lead-facts"><div><dt>Last seen</dt><dd>${escapeHTML(fmtTime(s.observed_at))}</dd></div><div><dt>Evidence</dt><dd>${s.sightings} delivered observations · one camera track</dd></div></dl>
+    ${s.acknowledged ? `<p>Acknowledged by ${escapeHTML(s.acknowledged.by)}</p>` : ''}
+    ${s.closed ? `<p>Closed by ${escapeHTML(s.closed.by)} · ${escapeHTML(s.closed.outcome)}</p>` : `<footer>${!s.acknowledged ? `<button class="button compact" data-action="ack-camera" data-camera-track="${id}">Acknowledge</button>` : ''}<select data-camera-outcome="${id}" aria-label="Close camera sighting with outcome"><option value="">Close sighting…</option>${outcomes}</select><button class="button compact" data-action="close-camera" data-camera-track="${id}">Close</button></footer>`}</article>`;
 }
 
 /** Fetch an authenticated observation JPEG once and reuse its browser-local object URL. */
@@ -377,9 +390,11 @@ function renderMission(snap) {
     }
   } else {
     const open = snap.leads.filter(l => !l.closed);
-    active = open.some(l => l.next_look) ? 'propose' : open.length ? 'report' : 'survey';
-    log.innerHTML = open.length
+    const camera = (snap.unlocated_sightings || []).filter(l => !l.closed);
+    active = open.some(l => l.next_look) ? 'propose' : open.length || camera.length ? 'report' : 'survey';
+    log.innerHTML = open.length || camera.length
       ? open.slice(0, 8).map(l => `<li><span>${fmtTime(l.last_seen_at)}</span> ${escapeHTML(l.title)}: ${escapeHTML(l.status_text.toLowerCase())}.</li>`).join('')
+        + camera.slice(0, 8).map(l => `<li><span>${fmtTime(l.observed_at)}</span> Person seen by the camera; location unavailable.</li>`).join('')
       : '<li class="muted-text">No events yet</li>';
   }
   for (const li of steps.children) li.classList.toggle('active', li.dataset.step === active);
@@ -407,6 +422,19 @@ function fitPeople() {
 /** Handle locate/copy or named acknowledgement/closure for the correct live/demo search. */
 async function onLeadAction(event) {
   const btn = event.target.closest('[data-action]'); if (!btn) return;
+  if (btn.dataset.cameraTrack) {
+    if (state.mode !== 'live') return;
+    const by = $('responder-name').value.trim();
+    if (!by) { toast('Enter your name or call sign first.'); return; }
+    const closing = btn.dataset.action === 'close-camera';
+    const outcome = closing ? document.querySelector(`select[data-camera-outcome="${CSS.escape(btn.dataset.cameraTrack)}"]`)?.value : null;
+    if (closing && !outcome) { toast('Choose an outcome to close the sighting.'); return; }
+    try {
+      await api(`/api/people/sighting/${closing ? 'close' : 'ack'}`, {method: 'POST', body: {track_id: btn.dataset.cameraTrack, by, outcome}});
+      peopleState.listKey = ''; await pollPeople();
+    } catch (error) { toast(error.message); }
+    return;
+  }
   const id = btn.dataset.id, l = peopleState.snap?.leads.find(x => x.id === id); if (!l) return;
   const action = btn.dataset.action;
   if (action === 'locate') { focusLead(id); return; }
@@ -435,8 +463,9 @@ async function onLeadAction(event) {
 /** Format open rescue leads and their evidence/acknowledgement for the exported brief. */
 function peopleBrief() {
   const snap = peopleState.snap, open = snap?.leads.filter(l => !l.closed) || [];
-  if (!open.length) return 'No open rescue leads.';
-  return open.map(l => [
+  const camera = (snap?.unlocated_sightings || []).filter(l => !l.closed);
+  if (!open.length && !camera.length) return 'No open rescue leads.';
+  return [...open.map(l => [
     `### ${l.title}${snap.simulated ? ' (simulated)' : ''}`,
     `- Location: ${fmtCoord(l)} ±${l.uncertainty.major_95_m} m (95% area from the error model)`,
     `- Status: ${l.status_text}`,
@@ -445,5 +474,5 @@ function peopleBrief() {
     (() => { const a = fireArrivalAt(l.latitude, l.longitude); return a === undefined ? null : `- Fire: ${arrivalText(a)} (projection at current conditions)`; })(),
     l.delayed.any ? `- Includes observations delivered up to ${l.delayed.max_delay_s} s late (link outage)` : null,
     `- ${l.acknowledged ? `Acknowledged by ${l.acknowledged.by} at ${l.acknowledged.at}` : 'NOT YET ACKNOWLEDGED'}`,
-  ].filter(Boolean).join('\n')).join('\n\n');
+  ].filter(Boolean).join('\n')), ...camera.map(s => `### Camera person sighting (unlocated)\n- Last seen: ${s.observed_at}\n- ${s.sightings} delivered observations; no geographic pose available.\n- ${s.acknowledged ? 'Acknowledged by ' + s.acknowledged.by : 'NOT YET ACKNOWLEDGED'}`)].join('\n\n');
 }

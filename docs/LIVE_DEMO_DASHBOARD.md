@@ -1,5 +1,38 @@
 # Live detection dashboard
 
+On `dive-dashboard`, the laptop monitor also recognizes **actual people** in
+the incoming video. Random people exist only in historical Replay cases.
+
+Install the existing laptop inference dependencies and provide a YOLO model
+containing a `person` class. The default path is
+`~/emberwatch-models/yolov8n.pt` (the same COCO person model used by the full
+ANAFI bridge). Use `npm run vision -- --person-model /path/to/yolov8n.pt`
+to choose an installed file. Missing weights are reported as unavailable;
+the monitor never substitutes fictional detections. `--no-people` disables
+person recognition while retaining the fire/QR monitor.
+
+With the observer streaming, run `npm run live-demo` and `npm run vision`.
+The existing Mac observation launcher also starts this monitor automatically;
+run only one monitor/receiver for that stream. Full ANAFI bridge users already
+have a separate person detector and need not run a second laptop detector.
+
+Three distinct fresh frames confirm a person camera track. Every two seconds
+the monitor posts its evidence, with a crop and synchronized pose when
+available (within two seconds of the frame; an explicitly absent GPS fix
+cannot supply GPS coordinates). Located leads go through the existing uncertainty/multi-view
+pipeline, map markers, acknowledgement and closure. Without usable pose, or
+when the camera ray cannot meet the ground, the dashboard records a
+**location unavailable** camera sighting with no map pin. It can be reviewed,
+acknowledged, closed and exported. If that same camera track later acquires
+usable pose, its unlocated note is replaced by the located lead.
+
+Camera tracks are candidate observations, not a verified count of distinct
+people. Person detection does not require an active fire; people surrounding
+the drone can be recorded before the fire/QR incident arrives. The monitor
+does not command takeoff, navigation or entry into fire. Existing fire
+location demo anchoring never supplies a geographic pose for real people.
+Located and unlocated observations persist in `data/people/state.json`.
+
 The live demo runs the existing workspace with real camera frames, telemetry
 and confirmed QR/fire/smoke incidents. It never starts a flight or selects a
 historical case. Replay remains available through the Replay button.

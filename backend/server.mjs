@@ -16,6 +16,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PersonSearch, validatePersonObservation, describeLeadsForPlan, MAX_CROP_BYTES } from './people.mjs';
+import {validateCameraSighting, recordCameraSighting} from './person-sightings.mjs';
 import SITE_LANDMARKS from './site-landmarks.json' with { type: 'json' };
 import { PersonSearchSim, scenarioFromExample } from './people-sim.mjs';
 import {
@@ -1023,13 +1024,17 @@ export function createApp({
     autoTimer: null,
     vision: null,
     peopleSaveTimer: null,
+    unlocatedPeople: new Map(),
     demoSims: new Map(), // scenario id -> PersonSearchSim
   };
   const peopleFile = dataDir ? path.join(dataDir, 'people', 'state.json') : null;
   let people = new PersonSearch(personSearch);
   // Leads survive a backend restart: they are written to data/people/state.json.
   const peopleReady = peopleFile
-    ? readFile(peopleFile, 'utf8').then((text) => { people = PersonSearch.fromJSON(JSON.parse(text), personSearch); }).catch(() => {})
+    ? readFile(peopleFile, 'utf8').then((text) => {
+      const saved = JSON.parse(text); people = PersonSearch.fromJSON(saved, personSearch);
+      for (const record of (saved.unlocated_sightings || []).slice(-200)) state.unlocatedPeople.set(record.track_id, record);
+    }).catch(() => {})
     : Promise.resolve();
 
   /** Debounce an atomic local search-state save without keeping the process alive. */
@@ -1039,7 +1044,7 @@ export function createApp({
       state.peopleSaveTimer = null;
       try {
         await mkdir(path.dirname(peopleFile), { recursive: true });
-        await writeFile(`${peopleFile}.tmp`, JSON.stringify(people));
+        await writeFile(`${peopleFile}.tmp`, JSON.stringify({...people.toJSON(), unlocated_sightings: [...state.unlocatedPeople.values()]}));
         await rename(`${peopleFile}.tmp`, peopleFile);
       } catch (err) {
         console.error(`person search: could not save leads: ${err.message}`);
@@ -1523,6 +1528,8 @@ export function createApp({
         throw new ApiError(400, 'invalid vision health state');
       }
       state.vision = { observed_at: new Date(at).toISOString(), model_status: body.model_status,
+        people_model_status: ['ready', 'missing', 'error', 'disabled'].includes(body.people_model_status) ? body.people_model_status : 'disabled',
+        last_person_at: typeof body.last_person_at === 'string' ? body.last_person_at.slice(0, 40) : null,
         camera_state: body.camera_state,
         last_frame_at: typeof body.last_frame_at === 'string' ? body.last_frame_at.slice(0, 40) : null,
         last_detection_at: typeof body.last_detection_at === 'string' ? body.last_detection_at.slice(0, 40) : null,
@@ -1848,6 +1855,7 @@ export function createApp({
         { text: `Scenario conditions: ${JSON.stringify(scenario)}. Projected spread: ${JSON.stringify(projection)}.` },
         { text: `Latest drone telemetry: ${JSON.stringify(telemetry)}.` },
         { text: describeLeadsForPlan(people.snapshot(nowMs, await peopleContext())) },
+        { text: `Unlocated person camera sightings (no verified map location): ${JSON.stringify([...state.unlocatedPeople.values()].slice(-10))}` },
         { text: `Latest Gemini scene analysis: ${JSON.stringify(analyses[0] ? {
           summary: analyses[0].summary, severity: analyses[0].severity, spread_outlook: analyses[0].spread_outlook,
         } : null)}.` },
@@ -1892,12 +1900,23 @@ export function createApp({
     }
 
     // ---- person search: rescue leads for people who cannot ask for help
+    if (req.method === 'POST' && pathname === '/api/ingest/person/sighting') {
+      requireAuth(req, 'ingest');
+      await peopleReady;
+      const sighting = validateCameraSighting(await readJson(req), now());
+      const accepted = recordCameraSighting(state.unlocatedPeople, sighting);
+      if (accepted) savePeople();
+      sendJson(res, 200, {accepted, track_id: sighting.track_id, location_status: 'unavailable'});
+      return;
+    }
+
     if (req.method === 'POST' && pathname === '/api/ingest/person') {
       requireAuth(req, 'ingest');
       await peopleReady;
       const nowMs = now();
       const { obs, crop } = validatePersonObservation(await readJson(req), nowMs);
       const result = people.addObservation(obs, nowMs);
+      if (obs.track_id) state.unlocatedPeople.delete(obs.track_id);
       if (!result.duplicate && crop && await saveCrop(result.observation.id, crop)) people.attachCrop(result.observation.id);
       savePeople();
       const summary = people.summarize(result.lead, nowMs, await peopleContext());
@@ -1925,8 +1944,24 @@ export function createApp({
     if (req.method === 'GET' && pathname === '/api/people') {
       requireAuth(req, 'dashboard');
       await peopleReady;
-      sendJson(res, 200, { simulated: false, ...people.snapshot(now(), await peopleContext()) });
+      sendJson(res, 200, { simulated: false, ...people.snapshot(now(), await peopleContext()),
+        unlocated_sightings: [...state.unlocatedPeople.values()].reverse() });
       return;
+    }
+
+    if (req.method === 'POST' && ['/api/people/sighting/ack', '/api/people/sighting/close'].includes(pathname)) {
+      requireAuth(req, 'dashboard');
+      await peopleReady;
+      const body = await readJson(req), record = state.unlocatedPeople.get(body.track_id);
+      if (!record) throw new ApiError(404, 'no camera sighting with that track_id');
+      if (typeof body.by !== 'string' || !body.by.trim()) throw new ApiError(400, 'a named responder is required');
+      const review = {by: body.by.trim().slice(0, 80), at: new Date(now()).toISOString()};
+      if (pathname.endsWith('/ack')) record.acknowledged = review;
+      else {
+        if (!['found', 'not-a-person', 'duplicate', 'handed-off'].includes(body.outcome)) throw new ApiError(400, 'choose a supported outcome');
+        record.closed = {...review, outcome: body.outcome};
+      }
+      savePeople(); sendJson(res, 200, {accepted: true}); return;
     }
 
     if (req.method === 'POST' && (pathname === '/api/people/ack' || pathname === '/api/people/close')) {

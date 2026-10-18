@@ -131,7 +131,8 @@ function renderHeading() {
     else {
       const v = state.status?.vision;
       const vision = !v?.fresh ? 'Fire detector is offline; video reception is active.' : v.error ? 'Fire detector reported an error; check its terminal.' : v.camera_state !== 'live' ? 'Fire detector is waiting for fresh camera frames.' : v.model_status === 'ready' ? 'RGB fire/smoke classification and QR fire testing are active.' : 'QR fire testing is active; RGB fire model is unavailable.';
-      setBanner('info', `<strong>${state.liveDemo ? 'Live demo' : 'Live'} · monitoring.</strong> ${vision}`); setModePill('live-badge', state.liveDemo ? 'Live demo · monitoring' : 'Live · monitoring');
+      const peopleVision = v?.people_model_status === 'ready' ? 'Person recognition is active.' : 'Person recognition is unavailable.';
+      setBanner('info', `<strong>${state.liveDemo ? 'Live demo' : 'Live'} · monitoring.</strong> ${vision} ${peopleVision}`); setModePill('live-badge', state.liveDemo ? 'Live demo · monitoring' : 'Live · monitoring');
     }
   }
 }

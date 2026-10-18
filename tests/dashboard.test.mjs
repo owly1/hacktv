@@ -171,3 +171,16 @@ test('an in-flight live lead poll cannot overwrite a newly selected demo', async
   await pending;
   assert.equal(run('rendered'), 0);
 });
+
+test('camera-only person evidence stays unlocated in cards and the exported brief', async () => {
+  const {context, run} = await dashboard();
+  context.cameraNote = {track_id:'camera-1', observed_at:new Date().toISOString(), sightings:3,
+    location_reason:'pose-unavailable', acknowledged:{by:'<observer>',at:new Date().toISOString()}};
+  const card = run('cameraSightingCard(cameraNote)');
+  assert.match(card, /location unavailable/);
+  assert.match(card, /without a map pin/);
+  assert.match(card, /&lt;observer&gt;/);
+  run("state.mode = 'live'; peopleState.snap = {leads:[],unlocated_sightings:[cameraNote]}");
+  assert.match(run('peopleBrief()'), /Camera person sighting \(unlocated\)/);
+  assert.match(run('peopleBrief()'), /no geographic pose available/);
+});

@@ -9,11 +9,13 @@ from pathlib import Path
 import secrets
 import time
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 import cv2
 import numpy as np
 from fire_detection import FireDetector, confirm_hits, same_spot
 from fire_location import locate_fire
+from person_detection import PersonDetector, PersonTracks, person_payload
 
 
 def iso(at):
@@ -92,15 +94,19 @@ def detection_payload(hit, jpeg, captured, episode, telemetry=None, site=None, f
 
 
 class Monitor:
-    def __init__(self, backend, dashboard_token, ingest_token, detector):
+    def __init__(self, backend, dashboard_token, ingest_token, detector, person_detector=None):
         """Configure authenticated snapshot reads, detection and health publishing."""
         self.backend = backend.rstrip('/')
         self.dashboard_token, self.ingest_token = dashboard_token, ingest_token
         self.detector = detector
+        self.person_detector = person_detector
+        self.person_tracks = PersonTracks()
         self.episodes = Episodes()
         self.last_capture = None
         self.last_health = 0
         self.health = {'model_status': detector.model_status, 'camera_state': 'waiting',
+                       'people_model_status': person_detector.model_status if person_detector else 'disabled',
+                       'last_person_at': None,
                        'last_frame_at': None, 'last_detection_at': None,
                        'last_source': None, 'error': None}
 
@@ -135,20 +141,56 @@ class Monitor:
         if image is None:
             raise ValueError('Invalid JPEG')
         hit = self.detector.detect(image)
+        people_hits = []
+        if self.person_detector:
+            try:
+                people_hits = self.person_detector.detect(image)
+            except Exception:
+                self.health['people_model_status'] = 'error'
         now = time.time()  # Inference itself must not make old evidence fresh.
         episode = self.episodes.observe(hit, captured, now)
+        person_tracks = self.person_tracks.observe(people_hits, captured, now)
         self.health.update(camera_state='live' if now-captured < 2 else 'stale',
                            last_frame_at=iso(captured), error=None)
         # Preview every fresh inference, including empty results. Incident
         # confirmation and its five-second repeat interval remain separate.
         overlays = [{k: hit[k] for k in ('source', 'label', 'confidence', 'bbox')}] if hit and now-captured < 2 else []
+        if 0 <= now-captured < 2:
+            overlays.extend(people_hits[:9])
         self.post('/api/ingest/overlays', {'captured_at': iso(captured), 'detections': overlays})
-        if episode:
-            with self.get('/api/status') as response:
-                status = json.load(response)
+        sample = None
+        if episode or person_tracks:
             with self.get('/api/telemetry/latest') as response:
                 telemetry = json.load(response)
             sample = telemetry.get('sample') if (telemetry.get('age_ms') is not None and 0 <= telemetry['age_ms'] < 10000) else None
+        for track in person_tracks:
+            payload = person_payload(track, iso(captured), sample, image.shape, self.person_detector.name)
+            if payload['drone']:
+                x1, y1, x2, y2 = track['bbox']
+                h, w = image.shape[:2]
+                crop = image[int(y1*h):max(int(y1*h)+1, int(y2*h)), int(x1*w):max(int(x1*w)+1, int(x2*w))]
+                if crop.size:
+                    scale = min(1, 160/max(crop.shape[:2]))
+                    crop = cv2.resize(crop, (max(1, int(crop.shape[1]*scale)), max(1, int(crop.shape[0]*scale))))
+                    ok, encoded = cv2.imencode('.jpg', crop)
+                    if ok:
+                        payload['crop_jpeg_base64'] = base64.b64encode(encoded).decode()
+                try:
+                    self.post('/api/ingest/person', payload)
+                except HTTPError as error:
+                    if error.code != 422:
+                        raise
+                    payload['location_reason'] = 'ground-intersection-unavailable'
+                    payload.pop('crop_jpeg_base64', None)
+                    self.post('/api/ingest/person/sighting', payload)
+            else:
+                self.post('/api/ingest/person/sighting', payload)
+            self.person_tracks.acknowledged(track['id'], time.time())
+            self.health['last_person_at'] = iso(captured)
+            print(f"Person observation accepted: {track['id']}", flush=True)
+        if episode:
+            with self.get('/api/status') as response:
+                status = json.load(response)
             payload = detection_payload(hit, jpeg, captured, episode, sample, status.get('site'), image.shape)
             self.post('/api/ingest/detection', payload)
             self.episodes.acknowledged(time.time())
@@ -180,6 +222,8 @@ def main():
     parser.add_argument('--model', default=os.environ.get('EMBERWATCH_MODEL', str(Path.home()/'emberwatch-models/fire-smoke-yolov8n.pt')))
     parser.add_argument('--detect-smoke', action='store_true', default=os.environ.get('EMBERWATCH_DETECT_SMOKE') == '1',
                         help='Also confirm smoke-only sightings (more prone to false alarms)')
+    parser.add_argument('--person-model', default=os.environ.get('EMBERWATCH_PERSON_MODEL', str(Path.home()/'emberwatch-models/yolov8n.pt')))
+    parser.add_argument('--no-people', action='store_true', help='Disable laptop person recognition')
     args = parser.parse_args()
     from urllib.parse import urlparse
     url = urlparse(args.backend)
@@ -204,8 +248,9 @@ def main():
         except ImportError:
             pass  # The QR detector still works; model health reports the gap.
         detector = FireDetector(args.model, detect_smoke=args.detect_smoke)
-        print('Fire monitor: QR + RGB inference; no flight commands.', flush=True)
-        Monitor(args.backend, os.environ['DASHBOARD_TOKEN'], os.environ['INGEST_TOKEN'], detector).run()
+        people_detector = None if args.no_people else PersonDetector(args.person_model)
+        print('Vision monitor: QR + fire/smoke + people; no flight commands.', flush=True)
+        Monitor(args.backend, os.environ['DASHBOARD_TOKEN'], os.environ['INGEST_TOKEN'], detector, people_detector).run()
 
 
 if __name__ == '__main__':

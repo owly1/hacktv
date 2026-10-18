@@ -123,3 +123,21 @@ can annotate matching/newer frames for up to 1.5 seconds of camera motion;
 embedded frame detections take precedence. A redraw retains the image's
 original timestamp and does not count as a new frame or incident.
 
+### Camera-only person evidence — `POST /api/ingest/person/sighting`
+
+Ingest authentication; `obs_id`, `track_id`, `observed_at` (up to six hours
+old, at most 30 seconds ahead), `provenance: live`, `sensor: visible`,
+`label: person`, `detector`, `detector_score` (0–1), ordered normalized `bbox`,
+and `location_reason: pose-unavailable|ground-intersection-unavailable`.
+No geographic position is accepted or inferred by this endpoint. At most
+200 camera tracks are retained. Repeated observation ids/older captures are
+idempotent. `/api/people` includes `unlocated_sightings`; these are saved
+alongside located leads. An accepted `/api/ingest/person` observation for the
+same `track_id` removes the unlocated note.
+
+Dashboard-authenticated `POST /api/people/sighting/ack` and `/close` accept
+`track_id` and a named responder `by`; closure also requires `outcome`
+(`found|not-a-person|duplicate|handed-off`). Reviews survive repeat sightings
+and backend restart. Vision health adds `people_model_status` and
+`last_person_at`. None of these routes commands the aircraft.
+
