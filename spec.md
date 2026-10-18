@@ -1,67 +1,165 @@
-# Proposed orbit loop and person-search descent
+# Fleet fire monitoring and perimeter person search
 
-**Proposal, not the implemented flight mode.** Current measured flight makes
-one lap; the automatic preset repeats fixed launch-relative laps. Neither
-implements the hotkey-driven descent described here. Use the current
-[mode guides](README.md#choose-a-hardware-workflow) to operate existing code.
+## Direction and implementation status
 
-## Intended behavior
+BOSCO / Emberwatch is moving to a fleet of drones that surrounds a fire,
+collects camera and telemetry evidence, and displays a shared predictive fire
+model. Individual drones intermittently descend to search for people along
+the fire's **perimeter**, then return to their observation sectors.
 
-Recognize the selected floor QR, take off, acquire its calibrated position,
-enter a 1 m-radius orbit and repeatedly face the marker. Proposed controls:
-S stops to a hold (a second S lands); D makes a controlled person-detection
-descent and return; R resumes from hold; X/Esc always requests landing first.
-These are proposed extensions, not keys currently accepted by every runtime.
+This is the current product specification. It supersedes this file's earlier
+single-drone, floor-QR orbit-loop proposal. Existing QR workflows remain
+separate development tools; their one-metre orbit and proposed hotkeys do not
+define the fleet mission.
 
-## Proposed states
+Current `main` provides a primarily single-drone dashboard, live camera and
+telemetry ingest, fire/QR/person detection, illustrative spread, incident Q&A
+and historical replay. Isolated fleet streams, combined perimeter observations,
+a scrollable fleet camera area and coordinated search descents are planned
+work. This document specifies intended behavior, not implemented autonomy.
+Use the [existing workflow guides](README.md#choose-a-hardware-workflow) for
+current operation and [shared context](TEAM_AI_CONTEXT.md) for team work.
+
+## Observe the fire as a fleet
+
+- Distribute drones across sectors around the evolving fire perimeter to collect
+  views from multiple directions. Encircling means observation coverage; it
+  does not claim that drones physically contain or extinguish the fire.
+- Show each drone's position, sector, role, camera viewing direction and recent
+  coverage on one shared incident map.
+- Refresh assignments as the observed boundary changes. Show gaps, stale sectors
+  and uncertain boundary segments rather than assuming complete coverage.
+- Maintain fire observation while individual drones search for people. Coordinate
+  sector handoffs and simultaneous descents so search activity does not remove
+  all perimeter coverage.
+
+Fleet size, spacing, observation heights and permitted standoff remain
+configuration and validation decisions. Earlier indoor QR dimensions do not
+set the fleet's field mission limits.
+
+## Build a shared predictive fire model
+
+Combine the fleet's camera observations and telemetry with available wind,
+temperature, humidity and fuel information to update a common incident picture.
+Camera evidence needs capture time, source drone, viewing geometry and confidence;
+image boxes alone are not a geographic fire boundary. Missing measurements
+remain unknown, and measured, estimated and scenario inputs retain source labels.
+
+Display the observed or estimated perimeter separately from predicted future
+extent, spread direction and spread rate at the chosen forecast horizon.
+Expose the update time, uncertainty and environmental assumptions. New usable
+observations refresh the shared model without resetting the chosen time horizon
+or silently replacing manual scenario edits.
+
+Associate observations by incident, drone and capture time before combining
+views. Avoid counting repeated reports as independent evidence; retain conflicts
+and unobserved areas. Keep the current spread model labeled illustrative until
+a replacement has supporting validation. Gemini analysis and incident Q&A use
+the same shared evidence and its limitations; they do not pilot aircraft.
+
+## Scroll through drones in the existing drone area
+
+Extend the existing main ANAFI camera/telemetry area into a scrollable fleet
+view. Scrolling moves between drone cards/feeds; the fire forecast timeline
+remains a separate control.
+
+Each drone card shows its stable identity, assigned sector/role and flight phase,
+its own camera input with capture clock and detection overlays, and matching
+telemetry: position, altitude, speed, heading, camera orientation and battery
+where available. Show connection/freshness state and whether it is observing,
+descending, searching, ascending or holding.
+
+Focusing a card highlights the same drone and camera footprint on the map.
+Camera, telemetry, overlays and status must stay attached to the correct drone
+while scrolling, reconnecting or receiving delayed results. A missing feed keeps
+its identity and stale/unknown state; it must not silently show another drone's
+picture or telemetry. Off-screen drones still contribute to the shared model.
+Support one connected drone as well as multiple drones. Scroll orientation and
+visible card count are layout decisions within the existing drone area.
+
+## Intermittent perimeter person-search dives
+
+"Dive" or "dive bomb" means a **controlled descent for observation**, followed
+by a brief search and ascent, not an impact maneuver. Search along the perimeter
+and adjacent exterior; the fire interior is not the search destination.
+
+The intended mission phases are:
 
 ```text
-DISARMED → ARMED → TAKEOFF → CLIMB → ACQUIRE → ENTRY → ORBIT
-ORBIT ↔ HOLD
-ORBIT/HOLD → DESCEND → DWELL → ASCEND → prior state
-any airborne state → LANDING → confirmed LANDED (or unconfirmed error)
+PERIMETER_OBSERVATION -> SEARCH_ASSIGNED -> DESCENDING
+-> PERIMETER_SEARCH -> ASCENDING -> PERIMETER_OBSERVATION
 ```
 
-Typed `ARM ORBIT LOOP` would expire after 20 seconds. It would be one session
-per process with explicit execution and a physical operator terminal. S/D
-would only become immediate keys airborne, with priority X/Esc > S > D.
+Searches occur at intermittent moments and may appear sporadic across the fleet.
+Record a reason such as a sector revisit, coverage gap, candidate sighting or
+operator request. Exact cadence and trigger policy remain configurable design
+decisions; this specification does not prescribe a fixed interval or random
+real-aircraft commands.
 
-## Proposed limits
+- Assign a particular drone and perimeter sector to each search. Record its
+  reason, start/end times, phases and resulting observations.
+- Coordinate with other drones to preserve fire coverage and avoid conflicting
+  sector assignments or flight paths.
+- Continue that drone's camera and telemetry stream during the descent/search.
+  Attribute person observations to their source drone and capture time.
+- Ascend and resume or hand back its perimeter sector after the search. Keep
+  interruptions visible instead of marking an aborted search completed.
+- Keep hold, abort and landing handling in the separately enabled flight runtime,
+  with validated geometry, freshness, energy and movement limits.
 
-| Parameter | Default / permitted range |
-|---|---|
-| Radius | 1 m / 0.75–1.5 m |
-| Orbit height | 1.5 m / 1–1.7 m |
-| Segments | 12 / 12–24 |
-| Horizontal speed | 0.25 m/s / 0.1–0.3 |
-| Climb speed | 0.3 m/s / 0.1–0.5 |
-| Descent height / standoff | 0.7 m / 0.5–1; 0.5 m / 0.4–0.8 |
-| Descent speed / dwell | 0.4 m/s / 0.2–0.5; 4 s / 2–8 |
-| Flight deadline | 300 s / 60–600 |
-| Start / next-lap / land battery | 50% / 35% / 25% (ranges 40–100 / 30–60 / 20–40) |
-| Consecutive blind chords | 4 / 2–6; then hold, land after another 5 s without pose |
-| Correction caps | 0.15 m / 0.05–0.2; 10° / 3–15 |
+All drones contribute to shared rescue leads. Agreeing views may strengthen a
+lead, but camera track IDs are not identities or a count of distinct people.
+Preserve location uncertainty, source views, delayed delivery and named human
+acknowledgement/closure. Without usable synchronized pose, retain an unlocated
+sighting without a map pin. A sighting does not itself dispatch responders or
+command a maneuver.
 
-Use a flat floor marker and measured camera/offset. Proposed entry accepts
-0.6–2.5 m target distance, splits corrections into ≤0.5 m moves, and requires
-radius error ≤0.15 m and bearing error ≤10°. No horizontal target search.
-Each new pose must follow the previous move; cap vertical correction at 0.1 m.
+## Data and implementation boundaries
 
-The descent would require fresh geometry, sufficient battery and ≥20 seconds
-remaining; dwell runs a report-only person detector. Person sightings must not
-steer the aircraft. S aborts descent through ascent; D during a descent is ignored.
+- Carry stable `drone_id` and capture time through frames, telemetry, overlays,
+  detector health, fire/person observations and flight events. Scope track and
+  observation identifiers by drone/session to prevent collisions.
+- Isolate latest state, freshness, stream buffers and asynchronous responses per
+  drone. One connection loss must not clear another drone's state. Bound storage
+  and connections as the fleet grows.
+- Coordinate compatible API changes with [the bridge contract](docs/BRIDGE_CONTRACT.md)
+  and all producers/consumers. Existing global camera/latest-state routes are
+  not sufficient fleet isolation simply because telemetry has a drone identifier.
+  Preserve the single-drone workflow during migration.
+- Keep distinct ingest/dashboard authentication and server-side credentials.
+  Maintain one SDK owner per aircraft; dashboard/Gemini remain observation and
+  planning clients, with explicit flight enablement elsewhere.
+- Keep live, simulated and historical evidence visibly separate. Fleet replay
+  must use the same simulation clock for map positions, cameras, telemetry and
+  dive phases, including when switching between drones.
+- The older historical scout can enter the rendered fire footprint. Revise that
+  legacy simulation for the fleet demo; it does not define perimeter search or
+  establish real flight capability.
+- Every teammate branches from updated `main`. `codex/autonomous-fire-response`
+  remains excluded; this specification does not authorize merging its commits.
 
-## Work before implementation
+## Acceptance criteria and next work
 
-- Extend pure geometry/state logic separately from SDK commands. Reuse existing
-  QR gate, calibrated pose, movement results and landing confirmation.
-- Add explicit S/D/R input states without weakening landing priority.
-- Bound every move/hold and check sensors ≤1 s, video ≤1.5 s, height/speed/tilt,
-  marker loss, battery, mission time and camera-command failures.
-- Test entry/chord math, correction clamps, blind-marker transitions, key priority,
-  inverse descent/ascent, aborts and no-execute behavior with fake drivers/clocks.
-- Only then run physical calibration, terminal landing, one arc/lap, drift,
-  hold and descent checks in stages; retain recordings and measured results.
+1. Ingest at least two distinguishable mocked/simulated drones. Interleave and
+   delay their frames, telemetry, overlays, health and observations without
+   crossing identities or corrupting another drone's state.
+2. Show those drones around one incident with sectors, coverage gaps and a shared
+   observed perimeter. Refresh predictions with source labels and uncertainty
+   while retaining the selected forecast horizon.
+3. Scroll through the existing drone area and focus each drone on the map. Drop
+   and reconnect one feed without changing another card's identity or content.
+4. Demonstrate intermittent perimeter-only search descents with visible reasons
+   and phases while other drones observe the fire. Test return/handback,
+   coordination and hold/abort behavior with fake drivers and clocks.
+5. Combine agreeing cross-drone person evidence into shared leads with uncertainty;
+   retain unlocated sightings and named review actions without counting tracks
+   as distinct people.
+6. Preserve single-drone live operation and clearly labeled historical replay.
+   Validate real multi-aircraft coordination and measured behavior in stages
+   before claiming hardware support; a rendered demo is not flight evidence.
 
-The earlier proposed new filenames and branch ownership were never an API
-contract. Coordinate changes against current source and [shared context](TEAM_AI_CONTEXT.md).
+Implement per-drone ingest/state isolation first, then the scrollable fleet
+view, combined perimeter/model inputs and simulated search coordination. Test
+those paths with fixtures before extending the real flight runtime. Fleet size,
+dive cadence, flight limits and prediction accuracy remain open engineering
+decisions, not features delivered by this documentation.
