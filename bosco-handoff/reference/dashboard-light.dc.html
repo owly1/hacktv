@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BOSCO incident workspace — light</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#F4F3EF}
+a{color:#111114}a:hover{color:#FFFFFF}
+@keyframes bx-cover{from{opacity:0}to{opacity:1}}
+@keyframes bx-spin-in{from{transform:scale(1.25) rotate(-120deg);opacity:0}to{transform:scale(1) rotate(0deg);opacity:1}}
+@keyframes bx-recede{to{transform:scale(.985);opacity:0}}
+.bx-cover{animation:bx-cover .4s ease-in both}
+.bx-spin-in{animation:bx-spin-in .45s cubic-bezier(.2,.7,.2,1) both}
+.bx-leave{animation:bx-recede .4s cubic-bezier(.4,0,.2,1) both}
+@keyframes ledpulse{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes bx-sway{0%,100%{transform:scale(1,1) skewX(0deg)}25%{transform:scale(.95,1.06) skewX(-4deg)}50%{transform:scale(1.03,.96) skewX(2.5deg)}75%{transform:scale(.97,1.04) skewX(-1.5deg)}}
+@keyframes bx-orbit{to{transform:rotate(360deg)}}
+@keyframes bx-veil{0%,30%{opacity:1}100%{opacity:0;visibility:hidden}}
+@keyframes bx-spin-out{from{transform:scale(1) rotate(0deg);opacity:1}to{transform:scale(.35) rotate(150deg);opacity:0}}
+@keyframes bx-rise{from{transform:translateY(12px)}to{transform:none}}
+@keyframes bx-scan{0%{transform:translateY(-100%)}100%{transform:translateY(100%)}}
+.bx-flame{transform-origin:50px 67px;animation:bx-sway 2.6s ease-in-out infinite}
+.bx-orbit{transform-origin:50px 50px;animation:bx-orbit 9s linear infinite}
+.bx-led{animation:ledpulse 1.6s ease-in-out infinite}
+.bx-intro{animation:bx-veil .8s cubic-bezier(.4,0,.2,1) forwards}
+.bx-spin-out{animation:bx-spin-out .6s cubic-bezier(.6,0,.4,1) forwards}
+.bx-rise{animation:bx-rise .7s cubic-bezier(.2,.7,.2,1) both}
+.bx-scanline{animation:bx-scan 4s linear infinite}
+.bx-carousel::-webkit-scrollbar{height:6px}.bx-carousel::-webkit-scrollbar-thumb{background:#D3D1CA;border-radius:3px}
+details>summary{cursor:pointer;list-style:none}details>summary::-webkit-details-marker{display:none}
+@media (prefers-reduced-motion:reduce){.bx-intro{display:none}.bx-rise,.bx-led,.bx-flame,.bx-orbit,.bx-scanline{animation:none}}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-wrap: wrap; background: #F4F3EF; color: #111114; font-family: 'Archivo', system-ui, sans-serif">
+
+  <!-- RAIL -->
+  <nav aria-label="Workspace" style="flex: 1 0 72px; max-width: 100%; background: #F4F3EF; border-right: 1px solid #E6E4DE; padding: 16px 12px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-content: flex-start; justify-content: center; gap: 10px">
+    <a href="home.dc.html" aria-label="BOSCO home" onClick="{{goHome}}" ref="{{setHomeLink}}" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: #FFFFFF; box-shadow: 0 0 0 1px #DAD8D1">
+      <svg viewBox="0 0 100 100" width="30" height="30" aria-hidden="true" style="overflow: visible">
+        <circle cx="50" cy="50" r="40" fill="none" stroke="#111114" stroke-width="15" stroke-dasharray="52.8 10" stroke-dashoffset="-5" transform="rotate(-90 50 50)"></circle>
+        <g class="bx-flame"><path d="M50 32.5 C52.2 39.5 61.5 44.5 61.5 55.6 C61.5 62.4 56.3 67.5 50 67.5 C43.7 67.5 38.5 62.4 38.5 55.6 C38.5 50.2 41.4 46.4 44.6 43.8 C44.6 47.9 46.2 50.6 48.3 51.6 C47.7 45.2 48.3 38.6 50 32.5 Z M50 52.2 C52.6 55.1 54.6 57.3 54.6 60.2 C54.6 62.8 52.5 64.8 50 64.8 C47.5 64.8 45.4 62.8 45.4 60.2 C45.4 57.4 47.4 55.1 50 52.2 Z" fill="{{accent}}" fill-rule="evenodd" transform="translate(50 50) scale(1.091) translate(-50 -50)"></path></g>
+        <g class="bx-orbit"><circle cx="50" cy="3" r="7" fill="#4C7DFF" stroke="#FFFFFF" stroke-width="3"></circle></g>
+      </svg>
+    </a>
+    <a href="#map" aria-label="Fire spread explorer" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: #EDECE7; color: #111114"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c2 4-1 5 2 8 1-1 2-3 2-4 7 7 4 14-4 14S2 14 7 8c0 3 1 4 2 4 3-3-1-5 3-9Z"></path></svg></a>
+    <a href="#leads" aria-label="Rescue leads, {{openCount}} open" style="position: relative; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: #64666C"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"></circle><path d="M12 8v7m0 0-3 6m3-6 3 6M7 11h10"></path></svg><span style="position: absolute; top: 6px; right: 6px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 999px; background: {{accent}}; color: #F4F3EF; font: 700 10px/16px 'IBM Plex Mono', monospace; text-align: center">{{openCount}}</span></a>
+    <a href="#fleet" aria-label="Fleet" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: #64666C"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="9" width="6" height="6" rx="2"></rect><path d="m9 9-3-3m9 3 3-3M9 15l-3 3m9-3 3 3"></path><circle cx="5" cy="5" r="3"></circle><circle cx="19" cy="5" r="3"></circle><circle cx="5" cy="19" r="3"></circle><circle cx="19" cy="19" r="3"></circle></svg></a>
+  </nav>
+
+  <!-- CONTENT -->
+  <div class="bx-rise {{leaveClass}}" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+
+    <!-- TOP BAR -->
+    <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 14px 28px; background: #F4F3EF; border-bottom: 1px solid #E6E4DE">
+      <div style="display: flex; align-items: baseline; gap: 12px; flex-grow: 1">
+        <span style="font-weight: 900; font-stretch: 125%; font-size: 20px; letter-spacing: 0.02em">BOSCO</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">/ Incident workspace</span>
+      </div>
+      <span role="status" style="display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 12px; border-radius: 999px; background: #FFFFFF; box-shadow: 0 0 0 1px #DAD8D1; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: {{modeColor}}"><span class="bx-led" style="width: 6px; height: 6px; border-radius: 50%; background: {{modeColor}}"></span>{{modeLabel}}</span>
+      <button onClick="{{goLive}}" aria-pressed="{{livePressed}}" style="border: 0; cursor: pointer; min-height: 40px; padding: 0 16px; border-radius: 999px; background: {{liveBtnBg}}; color: {{liveBtnFg}}; box-shadow: 0 0 0 1px #D3D1CA; font: 600 14px 'Archivo', sans-serif; display: flex; align-items: center; gap: 8px">Live demo<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"></circle><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4"></path></svg></button>
+      <a href="home.dc.html" style="min-height: 40px; padding: 0 16px; border-radius: 999px; box-shadow: 0 0 0 1px #D3D1CA; font: 600 14px 'Archivo', sans-serif; color: #111114; text-decoration: none; display: flex; align-items: center; gap: 8px">Exit replay<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"></path></svg></a>
+      <div style="display: flex; gap: 12px; padding: 0 12px; min-height: 32px; align-items: center; border-radius: 999px; box-shadow: 0 0 0 1px #DAD8D1; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.06em; color: #55575D">
+        <span style="display: flex; align-items: center; gap: 6px"><span style="width: 7px; height: 7px; border-radius: 50%; background: #111114"></span>ANAFI</span>
+        <span style="display: flex; align-items: center; gap: 6px"><span style="width: 7px; height: 7px; border-radius: 50%; border: 1.5px dashed #7A7C82; box-sizing: border-box"></span>TigerData</span>
+      </div>
+    </header>
+
+    <main style="width: 100%; max-width: 1440px; margin: 0 auto; box-sizing: border-box; padding: 24px 28px 32px; display: flex; flex-direction: column; gap: 18px">
+
+      <!-- INCIDENT HEADING -->
+      <section style="display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: flex-end; justify-content: space-between">
+        <div style="flex: 1 1 480px; display: flex; flex-direction: column; gap: 8px">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #C42A1D; display: flex; align-items: center; gap: 8px"><span class="bx-led" style="width: 8px; height: 8px; border-radius: 50%; background: {{accent}}"></span>Historical incident · Fleet</span>
+          <h1 style="margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 900; font-stretch: 125%; font-size: 40px; line-height: 1; letter-spacing: -0.01em">Horse River (Fort McMurray) <span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-stretch: 100%; font-size: 11px; letter-spacing: 0.12em; padding: 6px 10px; border-radius: 6px; background: {{accent}}; color: #F4F3EF">FIRE DETECTED</span></h1>
+          <span style="font-size: 15px; color: #55575D">Alberta, Canada · historical replay · boreal forest fuels</span>
+        </div>
+        <button style="border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: transparent; cursor: pointer; min-height: 44px; padding: 0 18px; border-radius: 999px; font: 600 14px 'Archivo', sans-serif; color: #111114; display: flex; align-items: center; gap: 8px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"></path></svg>Export brief</button>
+      </section>
+
+      <!-- FLEET BANNER -->
+      <div role="status" style="display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 12px 16px; border-radius: 12px; background: repeating-linear-gradient(135deg, rgba(229,57,45,0.16) 0 8px, rgba(229,57,45,0.07) 8px 16px); box-shadow: 0 0 0 1px rgba(229,57,45,0.35); color: #8A1D14; font-size: 14px">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#C42A1D" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c2 4-1 5 2 8 1-1 2-3 2-4 7 7 4 14-4 14S2 14 7 8c0 3 1 4 2 4 3-3-1-5 3-9Z"></path></svg>
+        <strong style="font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 11px; letter-spacing: 0.12em; color: #C42A1D">FLEET · HORSE RIVER (FORT MCMURRAY)</strong>
+        <span style="flex: 1 1 300px">{{bannerText}}</span>
+      </div>
+
+      <!-- KPIs -->
+      <section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px">
+        <div style="padding: 14px 16px; border-radius: 14px; background: #FFFFFF; box-shadow: 0 0 0 1px #E2E0DA; display: flex; flex-direction: column; gap: 8px">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Fire area</span>
+          <span style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px"><span style="font-weight: 800; font-stretch: 125%; font-size: 28px; line-height: 1">{{areaText}} <small style="font-weight: 500; font-stretch: 100%; font-size: 14px; color: #55575D">ha</small></span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64666C">{{areaWhen}}</span></span>
+        </div>
+        <div style="padding: 14px 16px; border-radius: 14px; background: #FFFFFF; box-shadow: 0 0 0 1px #E2E0DA; display: flex; flex-direction: column; gap: 8px">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Wind</span>
+          <span style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px"><span style="font-weight: 800; font-stretch: 125%; font-size: 28px; line-height: 1">40 <small style="font-weight: 500; font-stretch: 100%; font-size: 14px; color: #55575D">km/h</small></span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64666C">toward NE ↗</span></span>
+        </div>
+        <div style="padding: 14px 16px; border-radius: 14px; background: #FFFFFF; box-shadow: 0 0 0 1px #E2E0DA; display: flex; flex-direction: column; gap: 8px">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Detection</span>
+          <span style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px"><span style="font-weight: 800; font-stretch: 125%; font-size: 28px; line-height: 1">96 <small style="font-weight: 500; font-stretch: 100%; font-size: 14px; color: #55575D">%</small></span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64666C">fire model confidence</span></span>
+        </div>
+        <a href="#leads" style="padding: 14px 16px; border-radius: 14px; background: rgba(229,57,45,0.08); box-shadow: 0 0 0 1.5px {{accent}}; display: flex; flex-direction: column; gap: 8px; text-decoration: none; color: #111114">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #C42A1D">People found</span>
+          <span style="font-weight: 800; font-stretch: 125%; font-size: 28px; line-height: 1">{{openCount}} <small style="font-weight: 500; font-stretch: 100%; font-size: 14px; color: #55575D">leads</small></span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #55575D">{{multiAngle}} seen from 2+ angles · {{unackCount}} not acknowledged</span>
+        </a>
+        <div style="padding: 14px 16px; border-radius: 14px; background: #FFFFFF; box-shadow: 0 0 0 1px #E2E0DA; display: flex; flex-direction: column; gap: 8px">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C; display: flex; justify-content: space-between">Drone power <b style="font-weight: 600; color: #64666C">FLEET</b></span>
+          <span style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px"><span style="font-weight: 800; font-stretch: 125%; font-size: 28px; line-height: 1">{{cur.bat}} <small style="font-weight: 500; font-stretch: 100%; font-size: 14px; color: #55575D">%</small></span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64666C">{{cur.id}} battery</span></span>
+        </div>
+      </section>
+
+      <!-- PRIMARY ROW -->
+      <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: stretch">
+
+        <!-- MAP PANEL -->
+        <section id="map" style="flex: 999 1 640px; min-width: 0; border-radius: 16px; background: #FFFFFF; box-shadow: 0 0 0 1px #E2E0DA; overflow: hidden; display: flex; flex-direction: column">
+          <div style="display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 16px 18px">
+            <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 4px">
+              <h2 style="margin: 0; display: flex; align-items: center; gap: 10px; font-weight: 800; font-stretch: 110%; font-size: 20px">Fire spread explorer <span style="font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-stretch: 100%; font-size: 10px; letter-spacing: 0.1em; padding: 4px 8px; border-radius: 999px; background: rgba(229,57,45,0.16); color: #B42318">{{modeTag}}</span></h2>
+              <span style="font-size: 13px; color: #64666C">Fleet perimeter patrol and outlined fire area</span>
+            </div>
+            <button onClick="{{toggleCond}}" aria-pressed="{{condPressed}}" style="cursor: pointer; min-height: 40px; padding: 0 14px; border-radius: 999px; border: 0; box-shadow: 0 0 0 1px {{condBorder}}; background: {{condBg}}; color: {{condFg}}; font: 600 13px 'Archivo', sans-serif; display: flex; align-items: center; gap: 8px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 8h11a3 3 0 1 0-3-3M3 16h15a3 3 0 1 1-3 3M3 12h7"></path></svg>Conditions</button>
+            <button aria-label="Expand map" style="cursor: pointer; width: 40px; height: 40px; border-radius: 10px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: transparent; color: #111114; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg></button>
+          </div>
+
+          <div style="margin: 0 14px; padding: 4px; border-radius: 14px; background: repeating-linear-gradient(135deg, #E5392D 0 7px, #FBE3DF 7px 14px)">
+            <div style="position: relative; border-radius: 10px; overflow: hidden; height: 480px; background: #E9E8E3">
+              <svg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Illustrative terrain map of the Horse River fire area with the fire outline, four fleet drones and seven rescue leads. Not for navigation." style="position: absolute; inset: 0; width: 100%; height: 100%">
+                <defs>
+                  <filter id="bx-glow"><feGaussianBlur stdDeviation="9"></feGaussianBlur></filter>
+                  <pattern id="bx-forest" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="6" cy="7" r="3.2" fill="#DDDCD6"></circle><circle cx="19" cy="17" r="3.6" fill="#E0DFD9"></circle><circle cx="11" cy="22" r="2.4" fill="#DCDBD5"></circle></pattern>
+                  <linearGradient id="bx-fov" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#111114" stop-opacity="0.22"></stop><stop offset="1" stop-color="#111114" stop-opacity="0"></stop></linearGradient>
+                </defs>
+                <rect width="1000" height="600" fill="#E9E8E3"></rect>
+                <rect width="1000" height="600" fill="url(#bx-forest)"></rect>
+                <path d="M0 0H420L380 120 250 170 120 140 0 210Z" fill="#E4E3DE" opacity="0.8"></path>
+                <path d="M640 600 700 470 860 420 1000 300V600Z" fill="#E5E4DF" opacity="0.8"></path>
+                <g fill="none" stroke="#111114" stroke-opacity="0.045" stroke-width="1"><path d="M0 150H1000M0 320H1000M0 470H1000M300 0V600M600 0V600M820 0V600"></path></g>
+                <path d="M-20 470 C80 440 140 500 220 470 S360 520 430 500 520 560 600 540" fill="none" stroke="#D2D5D9" stroke-width="16"></path>
+                <path d="M-20 470 C80 440 140 500 220 470 S360 520 430 500 520 560 600 540" fill="none" stroke="#C3C8CE" stroke-width="7"></path>
+                <path d="M760 60 C800 110 870 90 920 130 S990 140 1020 120" fill="none" stroke="#C3C8CE" stroke-width="6"></path>
+                <path d="M470 -10 C480 100 500 200 520 300 S560 520 580 610" fill="none" stroke="#C9C7C0" stroke-width="5"></path>
+                <path d="M470 -10 C480 100 500 200 520 300 S560 520 580 610" fill="none" stroke="#7A7C82" stroke-opacity="0.6" stroke-width="1.6" stroke-dasharray="6 6"></path>
+                <path d="M520 300 C640 260 760 180 1010 60" fill="none" stroke="#E5392D" stroke-opacity="0.35" stroke-width="1.4" stroke-dasharray="3 7"></path>
+                <path d="M630 590 C650 560 700 545 730 560 C755 575 735 600 720 610Z" fill="#DCDBD5" opacity="0.8"></path>
+                <g font-family="IBM Plex Mono, monospace" font-size="12" letter-spacing="2.2" fill="#8A8C92">
+                  <text x="60" y="436">HORSE RIVER</text>
+                  <text x="532" y="140">HWY 63</text>
+                  <text x="780" y="560">FORT MCMURRAY →</text>
+                </g>
+
+                <g transform="{{fireT}}">
+                  <path d="M-70 0 C-70 -50 30 -70 140 -50 C230 -30 235 25 140 52 C40 78 -70 50 -70 0Z" fill="#E5392D" opacity="0.3" filter="url(#bx-glow)"></path>
+                  <path d="M-60 0 C-60 -42 25 -60 125 -42 C205 -26 210 22 128 44 C38 66 -60 42 -60 0Z" fill="#E5392D" opacity="0.35"></path>
+                  <path d="M-40 0 C-40 -28 18 -40 90 -28 C145 -18 148 14 92 30 C26 44 -40 28 -40 0Z" fill="#E5392D" opacity="0.7"></path>
+                  <path d="M-60 0 C-60 -42 25 -60 125 -42 C205 -26 210 22 128 44 C38 66 -60 42 -60 0Z" fill="none" stroke="#C42A1D" stroke-width="1.4" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></path>
+                </g>
+                <g>
+                  <circle cx="380" cy="300" r="13" fill="#F4F3EF" stroke="#E5392D" stroke-width="1.6"></circle>
+                  <path d="M380 292 c1.5 3.5 6 5.5 6 10 0 3.3-2.6 5.6-6 5.6s-6-2.3-6-5.6c0-2.6 1.5-4.4 3.2-5.6 0 2 .8 3.3 1.8 3.8-.3-3.1 0-5.6 1-8.2Z" fill="#E5392D"></path>
+                </g>
+                <sc-if value="{{showCond}}" hint-placeholder-val="{{false}}">
+                  <g transform="translate(700 300) rotate(-35)" fill="none" stroke="#55575D" stroke-width="2" stroke-linecap="round" opacity="0.7">
+                    <path d="M-40 -26h52m-10-9 10 9-10 9"></path>
+                    <path d="M-20 0h52m-10-9 10 9-10 9"></path>
+                    <path d="M-40 26h52m-10-9 10 9-10 9"></path>
+                  </g>
+                </sc-if>
+
+                <path d="M300 380 C260 300 330 210 450 205 C570 200 640 250 610 330 C585 400 470 420 380 400 Z" fill="none" stroke="#111114" stroke-width="1.2" stroke-dasharray="4 6" opacity="0.35"></path>
+
+                <sc-for list="{{leadDots}}" as="p" hint-placeholder-count="7">
+                  <g transform="{{p.t}}" opacity="{{p.op}}">
+                    <circle r="9" fill="#F4F3EF" stroke="#C42A1D" stroke-width="1.6"></circle>
+                    <text y="3.5" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600" fill="#B42318">{{p.n}}</text>
+                  </g>
+                </sc-for>
+
+                <sc-for list="{{droneDots}}" as="d" hint-placeholder-count="4">
+                  <g transform="{{d.t}}">
+                    <path d="M0 0 L120 -36 A126 126 0 0 1 120 36 Z" fill="url(#bx-fov)" transform="{{d.fovT}}" opacity="{{d.fovOp}}"></path>
+                    <circle r="{{d.ring}}" fill="none" stroke="{{d.color}}" stroke-width="1.5" opacity="0.5"></circle>
+                    <circle r="11" fill="#F4F3EF" stroke="{{d.color}}" stroke-width="2.2"></circle>
+                    <text y="3.5" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600" fill="{{d.color}}">{{d.n}}</text>
+                  </g>
+                </sc-for>
+              </svg>
+
+              <span aria-hidden="true" style="position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; border-left: 1.5px solid #111114; border-top: 1.5px solid #111114; opacity: 0.6"></span>
+              <span aria-hidden="true" style="position: absolute; right: 10px; top: 10px; width: 14px; height: 14px; border-right: 1.5px solid #111114; border-top: 1.5px solid #111114; opacity: 0.6"></span>
+              <span aria-hidden="true" style="position: absolute; left: 10px; bottom: 10px; width: 14px; height: 14px; border-left: 1.5px solid #111114; border-bottom: 1.5px solid #111114; opacity: 0.6"></span>
+              <span aria-hidden="true" style="position: absolute; right: 10px; bottom: 10px; width: 14px; height: 14px; border-right: 1.5px solid #111114; border-bottom: 1.5px solid #111114; opacity: 0.6"></span>
+
+              <div style="position: absolute; top: 18px; left: 18px; right: 18px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: flex-start">
+                <span style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: rgba(255,255,255,0.92); box-shadow: 0 0 0 1px #DAD8D1; font-size: 13px; font-weight: 600"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{accent}}"></span>Horse River (Fort McMurray) · Alberta, Canada</span>
+                <div style="display: flex; gap: 8px">
+                  <label style="position: relative; display: flex; align-items: center">
+                    <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Incident</span>
+                    <select style="appearance: none; min-height: 40px; padding: 0 36px 0 14px; border-radius: 10px; border: 0; box-shadow: 0 0 0 1px #DAD8D1; background: rgba(255,255,255,0.95); color: #111114; font: 500 13px 'Archivo', sans-serif; cursor: pointer">
+                      <option>Horse River (Fort McMurray)</option>
+                    </select>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#111114" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="position: absolute; right: 12px; pointer-events: none"><path d="m6 9 6 6 6-6"></path></svg>
+                  </label>
+                  <button aria-label="Recentre on incident" style="cursor: pointer; width: 40px; height: 40px; border-radius: 10px; border: 0; box-shadow: 0 0 0 1px #DAD8D1; background: rgba(255,255,255,0.95); color: #111114; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 11 12 4l8 7v9h-5v-6H9v6H4Z"></path></svg></button>
+                </div>
+              </div>
+
+              <div role="group" aria-label="Map controls" style="position: absolute; right: 18px; top: 50%; transform: translateY(-40%); display: flex; flex-direction: column; border-radius: 10px; overflow: hidden; background: rgba(255,255,255,0.95); box-shadow: 0 0 0 1px #DAD8D1">
+                <button aria-label="Zoom in" style="cursor: pointer; width: 40px; height: 40px; border: 0; border-bottom: 1px solid #DAD8D1; background: transparent; color: #111114; font: 500 18px 'Archivo', sans-serif">+</button>
+                <button aria-label="Zoom out" style="cursor: pointer; width: 40px; height: 40px; border: 0; border-bottom: 1px solid #DAD8D1; background: transparent; color: #111114; font: 500 18px 'Archivo', sans-serif">−</button>
+                <button aria-label="Locate fleet" style="cursor: pointer; width: 40px; height: 40px; border: 0; border-bottom: 1px solid #DAD8D1; background: transparent; color: #111114; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v4m0 12v4M2 12h4m12 0h4"></path></svg></button>
+                <button aria-label="Fit fire area" style="cursor: pointer; width: 40px; height: 40px; border: 0; background: transparent; color: #111114; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg></button>
+              </div>
+
+              <div style="position: absolute; left: 18px; bottom: 18px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.92); box-shadow: 0 0 0 1px #DAD8D1; display: flex; flex-direction: column; gap: 6px; min-width: 200px">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #64666C">Relative spread intensity</span>
+                <span style="height: 6px; border-radius: 3px; background: linear-gradient(90deg, rgba(229,57,45,0.15), #E5392D)"></span>
+                <span style="display: flex; justify-content: space-between; font-size: 11px; color: #55575D">Low<span>High</span></span>
+              </div>
+              <div style="position: absolute; right: 18px; bottom: 18px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.92); box-shadow: 0 0 0 1px #DAD8D1; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #55575D; text-align: right; line-height: 1.5">Illustrative terrain · not for navigation<br>├────┤ 500 m</div>
+            </div>
+          </div>
+
+          <div style="padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 10px">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center">
+              <span style="font-weight: 900; font-stretch: 125%; font-size: 22px">T + {{minuteText}} min</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C; flex-grow: 1">Projected from now</span>
+              <div style="display: flex; gap: 6px">
+                <sc-for list="{{presets}}" as="p" hint-placeholder-count="3">
+                  <button onClick="{{p.go}}" aria-pressed="{{p.pressed}}" style="cursor: pointer; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 0; box-shadow: 0 0 0 1px {{p.border}}; background: {{p.bg}}; font: 500 12px 'IBM Plex Mono', monospace; color: {{p.fg}}">{{p.label}}</button>
+                </sc-for>
+              </div>
+            </div>
+            <div style="display: flex; gap: 14px; align-items: center">
+              <button onClick="{{togglePlay}}" aria-label="{{playLabel}}" style="flex-shrink: 0; cursor: pointer; width: 48px; height: 48px; border-radius: 50%; border: 0; background: {{accent}}; color: #F4F3EF; display: flex; align-items: center; justify-content: center">
+                <sc-if value="{{notPlaying}}" hint-placeholder-val="{{true}}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M7 4v16l13-8Z"></path></svg></sc-if>
+                <sc-if value="{{playing}}" hint-placeholder-val="{{false}}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg></sc-if>
+              </button>
+              <div style="position: relative; flex-grow: 1; display: flex; flex-direction: column; gap: 2px">
+                <svg viewBox="0 0 600 40" preserveAspectRatio="none" aria-hidden="true" style="width: 100%; height: 30px; display: block">
+                  <path d="M0 38 C120 36 200 32 300 24 C400 15 500 8 600 2 L600 40 L0 40Z" fill="#E5392D" fill-opacity="0.14"></path>
+                  <path d="M0 38 C120 36 200 32 300 24 C400 15 500 8 600 2" fill="none" stroke="#E5392D" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+                </svg>
+                <input type="range" min="0" max="60" step="0.5" value="{{minute}}" onChange="{{onMinute}}" aria-label="Minutes from now" style="width: 100%; margin: 0; accent-color: #E5392D; height: 24px">
+                <div style="display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64666C"><span>Now</span><span>+15</span><span>+30</span><span>+45</span><span>+60 min</span></div>
+              </div>
+              <button onClick="{{cycleSpeed}}" aria-label="Playback speed {{speedLabel}}" style="flex-shrink: 0; cursor: pointer; min-width: 44px; height: 40px; border-radius: 10px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: transparent; color: #111114; font: 500 12px 'IBM Plex Mono', monospace">{{speedLabel}}</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- FLEET POV -->
+        <section id="fleet" style="flex: 1 1 360px; min-width: 0; border-radius: 16px; background: #FAFAF8; box-shadow: 0 0 0 1px #E2E0DA; overflow: hidden; display: flex; flex-direction: column">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 16px">
+            <h2 style="margin: 0; font-weight: 800; font-stretch: 110%; font-size: 19px; flex-grow: 1">{{cur.id}} · Fleet POV</h2>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; padding: 5px 9px; border-radius: 999px; border: 1px dashed #B5B3AC; color: #55575D">4 DRONE FLEET</span>
+            <button aria-label="Expand fleet view" style="cursor: pointer; width: 36px; height: 36px; border-radius: 10px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: transparent; color: #111114; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg></button>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 0 16px 12px">
+            <button onClick="{{toggleFollow}}" aria-pressed="{{followPressed}}" style="cursor: pointer; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 0; box-shadow: 0 0 0 1.5px {{followBorder}}; background: {{followBg}}; color: {{followFg}}; font: 500 12px 'IBM Plex Mono', monospace; letter-spacing: 0.04em">Follow searcher</button>
+            <label style="display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64666C">Replay speed
+              <select value="{{replaySpeed}}" onChange="{{onReplaySpeed}}" style="min-height: 36px; padding: 0 10px; border-radius: 8px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: #FFFFFF; color: #111114; font: 500 12px 'IBM Plex Mono', monospace">
+                <option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="bx-carousel" role="group" aria-label="Fleet drones" style="display: flex; gap: 10px; overflow-x: auto; padding: 2px 16px 12px; scroll-snap-type: x mandatory">
+            <sc-for list="{{drones}}" as="d" hint-placeholder-count="4">
+              <button onClick="{{d.pick}}" aria-pressed="{{d.pressed}}" style="flex: 0 0 168px; scroll-snap-align: start; cursor: pointer; text-align: left; padding: 8px; border-radius: 12px; border: 0; box-shadow: 0 0 0 {{d.ringW}} {{d.ringC}}; background: #FFFFFF; color: #111114; display: flex; flex-direction: column; gap: 8px">
+                <span style="display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em"><b style="color: {{d.color}}; font-weight: 600">{{d.id}}</b><span style="color: #64666C">{{d.bat}}%</span></span>
+                <span style="position: relative; display: block; height: 78px; border-radius: 6px; overflow: hidden; background: {{d.feedBg}}">
+                  <svg viewBox="0 0 160 78" preserveAspectRatio="none" aria-hidden="true" style="position: absolute; inset: 0; width: 100%; height: 100%"><path d="{{d.ridge}}" fill="#000" fill-opacity="0.25"></path><path d="{{d.burn}}" fill="#E5392D" fill-opacity="0.75"></path></svg>
+                  <span aria-hidden="true" style="position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 1px solid rgba(236,235,231,0.7); border-radius: 50%"></span>
+                  <span aria-hidden="true" style="position: absolute; left: 6px; top: 5px; font: 8px/1.3 'IBM Plex Mono', monospace; color: rgba(236,235,231,0.85)">ALT {{d.alt}}<br>SPD {{d.spd}}</span>
+                </span>
+                <span style="font-size: 12px; font-weight: 700; color: {{d.color}}">{{d.state}}</span>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; line-height: 1.5; color: #55575D">{{d.alt}} high · {{d.spd}}<br>{{d.people}} people spotted</span>
+              </button>
+            </sc-for>
+          </div>
+          <span style="padding: 0 16px 12px; font-size: 12px; color: #64666C">Perimeter patrol · {{openCount}} unique people · {{cur.id}} {{cur.stateLower}} · {{replaySpeed}}× replay</span>
+
+          <div style="position: relative; margin: 0 12px; border-radius: 10px; overflow: hidden; height: 220px; background: {{cur.feedBg}}; box-shadow: 0 0 0 1px #2A2B30">
+            <svg viewBox="0 0 400 220" preserveAspectRatio="none" aria-hidden="true" style="position: absolute; inset: 0; width: 100%; height: 100%">
+              <path d="M0 120 L70 96 L150 112 L230 82 L320 104 L400 90 L400 220 L0 220Z" fill="#000" fill-opacity="0.22"></path>
+              <path d="{{cur.burnL}}" fill="#E5392D" fill-opacity="{{cur.burnOp}}"></path>
+            </svg>
+            <div class="bx-scanline" aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 0; height: 100%; background: linear-gradient(180deg, transparent 0%, rgba(236,235,231,0.05) 50%, transparent 100%)"></div>
+            <span aria-hidden="true" style="position: absolute; left: 8px; top: 8px; width: 12px; height: 12px; border-left: 1.5px solid #ECEBE7; border-top: 1.5px solid #ECEBE7"></span>
+            <span aria-hidden="true" style="position: absolute; right: 8px; top: 8px; width: 12px; height: 12px; border-right: 1.5px solid #ECEBE7; border-top: 1.5px solid #ECEBE7"></span>
+            <span aria-hidden="true" style="position: absolute; left: 8px; bottom: 8px; width: 12px; height: 12px; border-left: 1.5px solid #ECEBE7; border-bottom: 1.5px solid #ECEBE7"></span>
+            <span aria-hidden="true" style="position: absolute; right: 8px; bottom: 8px; width: 12px; height: 12px; border-right: 1.5px solid #ECEBE7; border-bottom: 1.5px solid #ECEBE7"></span>
+            <div aria-hidden="true" style="position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border: 1.5px solid rgba(236,235,231,0.75); border-radius: 50%"></div>
+            <div style="position: absolute; top: 12px; left: 28px; right: 28px; display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #ECEBE7">
+              <span style="display: flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 5px; background: rgba(8,8,10,0.6)"><span class="bx-led" style="width: 6px; height: 6px; border-radius: 50%; background: #E5392D"></span>REC · {{cur.idLower}}</span>
+              <span style="padding: 3px 7px; border-radius: 5px; background: rgba(8,8,10,0.6)">HDG {{cur.hdg}}° · CAM −45°</span>
+            </div>
+            <div style="position: absolute; left: 28px; top: 50%; transform: translateY(-50%); font: 10px/1.6 'IBM Plex Mono', monospace; color: rgba(236,235,231,0.9)">ALT {{cur.alt}}<br>SPD {{cur.spd}}<br>BAT {{cur.bat}}%<br>LNK OK</div>
+            <div style="position: absolute; right: 28px; top: 50%; transform: translateY(-50%); text-align: right; font: 10px/1.6 'IBM Plex Mono', monospace; color: rgba(236,235,231,0.9)">EDGE {{cur.edge}} m<br>PPL {{cur.people}}<br>T+{{minuteText}}:00</div>
+            <div style="position: absolute; left: 28px; right: 28px; bottom: 12px; display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #ECEBE7">
+              <span style="padding: 3px 7px; border-radius: 5px; background: rgba(8,8,10,0.6)">30 fps</span>
+              <span style="padding: 3px 7px; border-radius: 5px; background: rgba(8,8,10,0.6)">{{cur.idLower}} · {{cur.stateLower}}</span>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 12px; border-radius: 10px; overflow: hidden; background: #E2E0DA">
+            <div style="padding: 10px 12px; background: #FFFFFF; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Altitude above takeoff</span><strong style="font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 18px">{{cur.alt}}</strong></div>
+            <div style="padding: 10px 12px; background: #FFFFFF; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Ground speed</span><strong style="font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 18px">{{cur.spd}}</strong></div>
+            <div style="padding: 10px 12px; background: #FFFFFF; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Drone power</span><strong style="font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 18px">{{cur.bat}} %</strong></div>
+            <div style="padding: 10px 12px; background: #FFFFFF; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Flight state</span><strong style="font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 15px; color: {{cur.color}}">{{cur.state}}</strong></div>
+          </div>
+          <div style="margin-top: auto; padding: 10px 16px 14px; border-top: 1px solid #E6E4DE; display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: #64666C"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{cur.color}}; flex-shrink: 0"></span>{{cur.id}} · heading {{cur.hdg}}° · camera −45° · {{cur.edge}} m from fire edge</div>
+        </section>
+      </div>
+
+      <!-- PEOPLE · RESCUE LEADS -->
+      <section id="leads" style="border-radius: 16px; background: #FFFFFF; box-shadow: 0 0 0 1.5px {{accent}}; overflow: hidden; display: flex; flex-direction: column">
+        <div style="display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 16px 18px; border-bottom: 1px solid #E2E0DA">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#C42A1D" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"></circle><path d="M12 8v7m0 0-3 6m3-6 3 6M7 11h10"></path></svg>
+          <h2 style="margin: 0; font-weight: 800; font-stretch: 110%; font-size: 20px">People · rescue leads</h2>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; padding: 4px 9px; border-radius: 999px; border: 1px dashed #B5B3AC; color: #55575D">{{openCount}} OPEN</span>
+          <span style="flex-grow: 1"></span>
+          <label style="display: flex; align-items: center; gap: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Responder
+            <input type="text" value="{{responder}}" onChange="{{onResponder}}" placeholder="Your name or call sign" style="min-height: 40px; width: 220px; box-sizing: border-box; padding: 0 12px; border-radius: 10px; border: 1px solid #D3D1CA; background: #F4F3EF; font: 400 14px 'Archivo', sans-serif; letter-spacing: 0; text-transform: none; color: #111114">
+          </label>
+          <button aria-label="Expand leads" style="cursor: pointer; width: 40px; height: 40px; border-radius: 10px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: transparent; color: #111114; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg></button>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border-bottom: 1px solid #E2E0DA">
+          <div style="padding: 12px 18px; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid #E6E4DE"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Open leads</span><strong style="font-weight: 800; font-stretch: 125%; font-size: 24px; line-height: 1">{{openCount}}</strong></div>
+          <div style="padding: 12px 18px; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid #E6E4DE"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Seen from 2+ angles</span><strong style="font-weight: 800; font-stretch: 125%; font-size: 24px; line-height: 1">{{multiAngle}}</strong></div>
+          <div style="padding: 12px 18px; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid #E6E4DE"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Not acknowledged</span><strong style="font-weight: 800; font-stretch: 125%; font-size: 24px; line-height: 1; color: #C42A1D">{{unackCount}}</strong></div>
+          <div style="padding: 12px 18px; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #64666C">Ground observed</span><strong style="font-weight: 800; font-stretch: 125%; font-size: 24px; line-height: 1">{{groundText}}</strong></div>
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 14px; padding: 14px">
+          <div style="flex: 999 1 560px; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; align-content: start">
+            <sc-for list="{{leads}}" as="l" hint-placeholder-count="7">
+              <article style="position: relative; border-radius: 14px; background: #FAFAF8; box-shadow: 0 0 0 1px {{l.border}}; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px; opacity: {{l.op}}">
+                <div style="display: flex; align-items: flex-start; gap: 10px">
+                  <span style="flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: {{l.badgeBg}}; color: {{l.badgeFg}}; display: flex; align-items: center; justify-content: center; font: 700 12px 'IBM Plex Mono', monospace">{{l.n}}</span>
+                  <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+                    <h3 style="margin: 0; font-weight: 800; font-stretch: 110%; font-size: 15px; line-height: 1.2">{{l.title}}</h3>
+                    <span style="align-self: flex-start; font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 600; letter-spacing: 0.1em; padding: 3px 7px; border-radius: 4px; background: {{l.tagBg}}; color: {{l.tagFg}}">{{l.tag}}</span>
+                  </div>
+                  <svg viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Bearing {{l.brg}} degrees" style="flex-shrink: 0">
+                    <circle cx="16" cy="16" r="14" fill="none" stroke="#D3D1CA" stroke-width="1.5"></circle>
+                    <g transform="{{l.brgT}}"><path d="M16 5 19 16h-6Z" fill="#C42A1D"></path><path d="M16 27 13 16h6Z" fill="#B5B3AC"></path></g>
+                  </svg>
+                </div>
+                <dl style="margin: 0; display: grid; grid-template-columns: 84px 1fr; gap: 5px 10px; font-size: 12px; line-height: 1.4">
+                  <dt style="color: #64666C">Location</dt><dd style="margin: 0; font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-decoration: underline; text-decoration-color: #B5B3AC; text-underline-offset: 3px">{{l.loc}}</dd>
+                  <dt style="color: #64666C">Accuracy</dt><dd style="margin: 0">±{{l.acc}} m</dd>
+                  <dt style="color: #64666C">Last seen</dt><dd style="margin: 0">{{l.seen}} · <a href="#fleet" style="color: #111114; text-decoration-color: #7A7C82">image</a></dd>
+                  <dt style="color: #64666C">Evidence</dt><dd style="margin: 0">{{l.ev}}</dd>
+                  <dt style="color: #64666C">Source drones</dt><dd style="margin: 0">{{l.src}}</dd>
+                  <dt style="color: #64666C">Movement</dt><dd style="margin: 0">{{l.move}}</dd>
+                  <dt style="color: #64666C">Fire</dt><dd style="margin: 0; color: #C42A1D">{{l.fire}}</dd>
+                </dl>
+                <span style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #2A2B30"><span style="width: 5px; height: 5px; border-radius: 50%; background: #C42A1D; flex-shrink: 0"></span>Person seen at the perimeter</span>
+                <details style="font-size: 12px; color: #55575D">
+                  <summary style="display: flex; align-items: center; gap: 6px; min-height: 28px">▸ Sightings ({{l.sight}})</summary>
+                  <span style="display: block; padding: 4px 0 0 14px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; line-height: 1.6">{{l.sightDetail}}</span>
+                </details>
+                <sc-if value="{{l.showStatus}}" hint-placeholder-val="{{false}}">
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; color: {{l.statusColor}}">{{l.statusText}}</span>
+                </sc-if>
+                <div style="border-top: 1px solid #E6E4DE; padding-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+                  <button onClick="{{l.ack}}" disabled="{{l.ackDisabled}}" style="cursor: pointer; min-height: 36px; padding: 0 14px; border-radius: 999px; border: 0; background: {{l.ackBg}}; color: {{l.ackFg}}; font: 700 12px 'Archivo', sans-serif; display: flex; align-items: center; gap: 6px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>{{l.ackLabel}}</button>
+                  <span style="flex-grow: 1"></span>
+                  <label style="position: relative; display: flex; align-items: center">
+                    <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Close reason for target {{l.n}}</span>
+                    <select value="{{l.reason}}" onChange="{{l.onReason}}" style="appearance: none; min-height: 36px; padding: 0 28px 0 10px; border-radius: 8px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: #FFFFFF; color: #111114; font: 500 12px 'Archivo', sans-serif">
+                      <option value="">Close lead…</option><option value="rescued">Rescued</option><option value="safe">Confirmed safe</option><option value="duplicate">Duplicate</option><option value="false">Not a person</option>
+                    </select>
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#111114" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="position: absolute; right: 9px; pointer-events: none"><path d="m6 9 6 6 6-6"></path></svg>
+                  </label>
+                  <button onClick="{{l.close}}" disabled="{{l.closeDisabled}}" style="cursor: pointer; min-height: 36px; padding: 0 12px; border-radius: 8px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: transparent; color: {{l.closeFg}}; font: 600 12px 'Archivo', sans-serif">Close</button>
+                </div>
+              </article>
+            </sc-for>
+          </div>
+
+          <aside aria-label="Search log" style="flex: 1 1 280px; min-width: 0; align-self: stretch; border-radius: 14px; background: #FAFAF8; box-shadow: 0 0 0 1px #E2E0DA; padding: 14px; display: flex; flex-direction: column; gap: 12px">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.12em; color: #64666C">SEARCH LOG</span>
+            <div role="group" aria-label="Filter log" style="display: flex; flex-wrap: wrap; gap: 6px">
+              <sc-for list="{{filters}}" as="f" hint-placeholder-count="5">
+                <button onClick="{{f.pick}}" aria-pressed="{{f.pressed}}" style="cursor: pointer; min-height: 32px; padding: 0 11px; border-radius: 999px; border: 0; box-shadow: 0 0 0 1px {{f.border}}; background: {{f.bg}}; color: {{f.fg}}; font: 500 11px 'IBM Plex Mono', monospace">{{f.label}}</button>
+              </sc-for>
+              <button style="cursor: pointer; min-height: 32px; padding: 0 11px; border-radius: 999px; border: 0; box-shadow: 0 0 0 1px #D3D1CA; background: transparent; color: #111114; font: 500 11px 'IBM Plex Mono', monospace">Export</button>
+            </div>
+            <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px">
+              <sc-for list="{{log}}" as="e" hint-placeholder-count="8">
+                <li style="display: grid; grid-template-columns: 74px 1fr; gap: 8px; font-size: 12px; line-height: 1.45"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #7A7C82; padding-top: 1px">{{e.t}}</span><span style="color: #2A2B30"><span style="color: {{e.c}}">●</span> {{e.text}}</span></li>
+              </sc-for>
+            </ol>
+          </aside>
+        </div>
+      </section>
+
+      <footer style="display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; padding-top: 10px; border-top: 1px solid #E6E4DE; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #7A7C82">
+        <span style="font-family: 'Archivo', sans-serif; font-weight: 900; font-stretch: 125%; letter-spacing: 0.02em; color: #111114">BOSCO</span>
+        <a href="#map" style="color: #C42A1D">Data sources →</a>
+      </footer>
+    </main>
+  </div>
+
+  <!-- OUTRO: back to home -->
+  <sc-if value="{{leaving}}" hint-placeholder-val="{{false}}">
+    <div class="bx-cover" aria-hidden="true" style="position: fixed; inset: 0; z-index: 60; pointer-events: none; background: #08080A; display: flex; align-items: center; justify-content: center">
+      <svg class="bx-spin-in" viewBox="0 0 100 100" style="width: 132px; height: 132px; overflow: visible">
+        <circle cx="50" cy="50" r="40" fill="none" stroke="#D8D7D2" stroke-width="15" stroke-dasharray="52.8 10" stroke-dashoffset="-5" transform="rotate(-90 50 50)"></circle>
+        <path d="M50 32.5 C52.2 39.5 61.5 44.5 61.5 55.6 C61.5 62.4 56.3 67.5 50 67.5 C43.7 67.5 38.5 62.4 38.5 55.6 C38.5 50.2 41.4 46.4 44.6 43.8 C44.6 47.9 46.2 50.6 48.3 51.6 C47.7 45.2 48.3 38.6 50 32.5 Z M50 52.2 C52.6 55.1 54.6 57.3 54.6 60.2 C54.6 62.8 52.5 64.8 50 64.8 C47.5 64.8 45.4 62.8 45.4 60.2 C45.4 57.4 47.4 55.1 50 52.2 Z" fill="#E2574C" fill-rule="evenodd"></path>
+        <circle cx="50" cy="3" r="6" fill="#4C7DFF" stroke="#08080A" stroke-width="3"></circle>
+      </svg>
+    </div>
+  </sc-if>
+  <!-- INTRO: logo spins out as the workspace dissolves in -->
+  <div class="bx-intro" aria-hidden="true" style="position: fixed; inset: 0; z-index: 50; pointer-events: none; background: #08080A; display: flex; align-items: center; justify-content: center">
+    <svg class="bx-spin-out" viewBox="0 0 100 100" style="width: 132px; height: 132px; overflow: visible">
+      <circle cx="50" cy="50" r="40" fill="none" stroke="#D8D7D2" stroke-width="15" stroke-dasharray="52.8 10" stroke-dashoffset="-5" transform="rotate(-90 50 50)"></circle>
+      <path d="M50 32.5 C52.2 39.5 61.5 44.5 61.5 55.6 C61.5 62.4 56.3 67.5 50 67.5 C43.7 67.5 38.5 62.4 38.5 55.6 C38.5 50.2 41.4 46.4 44.6 43.8 C44.6 47.9 46.2 50.6 48.3 51.6 C47.7 45.2 48.3 38.6 50 32.5 Z M50 52.2 C52.6 55.1 54.6 57.3 54.6 60.2 C54.6 62.8 52.5 64.8 50 64.8 C47.5 64.8 45.4 62.8 45.4 60.2 C45.4 57.4 47.4 55.1 50 52.2 Z" fill="#E2574C" fill-rule="evenodd"></path>
+      <circle cx="50" cy="3" r="6" fill="#4C7DFF" stroke="#08080A" stroke-width="3"></circle>
+    </svg>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#D12F22","options":["#D12F22","#E04A12","#B8281C"]},"$preview":{"width":1440,"height":1900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      leaving: false, mode: 'replay', minute: 0, playing: false, speed: 0, showCond: false,
+      drone: 0, follow: true, replaySpeed: '8', responder: '', filter: 'all',
+      status: [0, 0, 0, 0, 0, 0, 0].map(() => ({ s: 'open', by: '', reason: '' })),
+      events: []
+    };
+    this.timer = null;
+  }
+  componentWillUnmount() { this.gone = true; if (this.timer) clearInterval(this.timer); }
+  stamp() {
+    const d = new Date();
+    let h = d.getHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+    return h + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0') + ' ' + ap;
+  }
+  addEvent(kind, text) {
+    this.setState({ events: [{ t: this.stamp(), k: kind, text }].concat(this.state.events) });
+  }
+  setLead(i, patch) {
+    const st = this.state.status.slice(); st[i] = Object.assign({}, st[i], patch); this.setState({ status: st });
+  }
+  renderVals() {
+    const s = this.state;
+    const accent = this.props.accent ?? '#D12F22';
+    const live = s.mode === 'live';
+
+    const D = [
+      { id: 'ANAFI-01', color: '#111114', state: 'Searching perimeter', alt: '36.0 m', spd: '4.2 m/s', bat: 76, hdg: 283, edge: 1000, people: 2, x: 300, y: 370, rot: -20, feedBg: '#25262A' },
+      { id: 'ANAFI-02', color: '#4A4B50', state: 'Observing', alt: '48.5 m', spd: '2.1 m/s', bat: 81, hdg: 214, edge: 640, people: 2, x: 640, y: 240, rot: 160, feedBg: '#2A2A2D' },
+      { id: 'ANAFI-03', color: '#64666C', state: 'Observing', alt: '52.0 m', spd: '1.8 m/s', bat: 69, hdg: 305, edge: 820, people: 1, x: 560, y: 420, rot: 220, feedBg: '#E2E0DA' },
+      { id: 'ANAFI-04', color: '#8A8C92', state: 'Returning to launch', alt: '40.2 m', spd: '6.5 m/s', bat: 34, hdg: 48, edge: 1450, people: 2, x: 830, y: 120, rot: 200, feedBg: '#1F2023' }
+    ];
+    const ridge = ['M0 52 L30 40 L60 48 L95 34 L130 44 L160 38 L160 78 L0 78Z', 'M0 46 L40 30 L80 42 L120 26 L160 36 L160 78 L0 78Z', 'M0 56 L35 46 L70 52 L110 40 L160 50 L160 78 L0 78Z', 'M0 40 L50 50 L90 36 L130 46 L160 32 L160 78 L0 78Z'];
+    const burn = ['M70 58 C80 50 96 50 104 56 C100 62 82 64 70 58Z', 'M40 44 C70 34 110 36 130 42 C110 50 70 52 40 44Z', 'M60 60 C76 54 92 56 100 60 C90 64 72 64 60 60Z', 'M120 50 C130 46 140 47 146 50 C140 53 128 54 120 50Z'];
+    const cur0 = D[s.drone];
+    const cur = Object.assign({}, cur0, {
+      idLower: cur0.id.toLowerCase(), stateLower: cur0.state.toLowerCase(),
+      burnL: s.drone === 1 ? 'M90 130 C170 96 290 104 340 122 C290 146 170 150 90 130Z' : 'M160 150 C190 128 236 128 258 144 C246 160 196 164 160 150Z',
+      burnOp: live ? 0.55 : 0.7
+    });
+    const drones = D.map((d, i) => {
+      const on = i === s.drone;
+      return Object.assign({}, d, {
+        pressed: on ? 'true' : 'false', ringW: on ? '2px' : '1px', ringC: on ? d.color : '#DAD8D1',
+        ridge: ridge[i], burn: burn[i],
+        pick: () => this.setState({ drone: i, follow: false })
+      });
+    });
+    const droneDots = D.map((d, i) => ({
+      n: String(i + 1), color: d.color, t: 'translate(' + d.x + ' ' + d.y + ')',
+      fovT: 'rotate(' + d.rot + ')', fovOp: i === s.drone ? 1 : 0, ring: i === s.drone ? 20 : 15
+    }));
+
+    const L = [
+      { type: 'p', x: 300, y: 330, loc: '56.62398, −111.37620', acc: 4, seen: '3:47:33 AM', sight: 11, angles: 3, sep: 60, src: 'ANAFI-01', move: 'Person at a fixed location', fireMin: 15, dist: 1026, brg: 132 },
+      { type: 'c', x: 345, y: 255, loc: '56.62815, −111.37104', acc: 5, seen: '3:47:21 AM', sight: 7, angles: 2, sep: 45, src: 'ANAFI-01', move: 'Person at a fixed location', fireMin: 22, dist: 1310, brg: 154 },
+      { type: 'c', x: 560, y: 205, loc: '56.63044, −111.35880', acc: 5, seen: '3:46:58 AM', sight: 6, angles: 2, sep: 40, src: 'ANAFI-02', move: 'Person moving slowly', fireMin: 28, dist: 1580, brg: 218 },
+      { type: 'p', x: 630, y: 300, loc: '56.62671, −111.35217', acc: 4, seen: '3:47:05 AM', sight: 12, angles: 3, sep: 55, src: 'ANAFI-02', move: 'Person at a fixed location', fireMin: 12, dist: 870, brg: 246 },
+      { type: 'c', x: 540, y: 395, loc: '56.62105, −111.35966', acc: 6, seen: '3:46:40 AM', sight: 5, angles: 2, sep: 35, src: 'ANAFI-03', move: 'Person moving away from fire', fireMin: 31, dist: 1720, brg: 288 },
+      { type: 'p', x: 760, y: 165, loc: '56.63390, −111.34472', acc: 4, seen: '3:47:12 AM', sight: 10, angles: 3, sep: 70, src: 'ANAFI-04', move: 'Person at a fixed location', fireMin: 18, dist: 1140, brg: 205 },
+      { type: 'p', x: 840, y: 210, loc: '56.63188, −111.33901', acc: 4, seen: '3:47:29 AM', sight: 9, angles: 3, sep: 50, src: 'ANAFI-04', move: 'Person at a fixed location', fireMin: 20, dist: 1260, brg: 232 }
+    ];
+    const name = s.responder.trim();
+    const reasons = { rescued: 'Rescued', safe: 'Confirmed safe', duplicate: 'Duplicate', false: 'Not a person' };
+    const leads = L.map((l, i) => {
+      const st = s.status[i];
+      const poss = l.type === 'p';
+      const closed = st.s === 'closed', acked = st.s === 'ack';
+      return {
+        n: String(i + 1), title: (poss ? 'Possible person' : 'Candidate') + ' — Target ' + (i + 1),
+        tag: poss ? 'POSSIBLE PERSON' : 'NEEDS ANOTHER ANGLE',
+        tagBg: poss ? 'rgba(229,57,45,0.18)' : '#E6E4DE', tagFg: poss ? '#B42318' : '#55575D',
+        badgeBg: poss ? accent : '#D3D1CA', badgeFg: poss ? '#F4F3EF' : '#111114',
+        border: closed ? '#E6E4DE' : (acked ? '#111114' : (poss ? 'rgba(229,57,45,0.5)' : '#DAD8D1')),
+        op: closed ? 0.5 : 1,
+        loc: l.loc, acc: l.acc, seen: l.seen, src: l.src, move: l.move, brg: l.brg,
+        brgT: 'rotate(' + l.brg + ' 16 16)',
+        ev: l.sight + ' sightings · ' + l.angles + ' angles (' + l.sep + '° apart) · visible',
+        fire: 'Fire in ~' + Math.max(1, Math.round(l.fireMin - s.minute * 0.4)) + ' min · ' + Math.max(50, Math.round(l.dist - s.minute * 12)) + ' m away',
+        sight: l.sight,
+        sightDetail: l.src + ' · ' + l.sight + ' frames · first ' + l.seen + ' · bearing ' + l.brg + '°',
+        showStatus: acked || closed,
+        statusText: closed ? 'CLOSED · ' + (reasons[st.reason] || '').toUpperCase() + (st.by ? ' · ' + st.by.toUpperCase() : '') : 'ACKNOWLEDGED' + (st.by ? ' · ' + st.by.toUpperCase() : ''),
+        statusColor: closed ? '#7A7C82' : '#111114',
+        ackLabel: acked ? 'Acknowledged' : 'Acknowledge',
+        ackDisabled: acked || closed,
+        ackBg: acked || closed ? '#EDECE7' : '#111114', ackFg: acked || closed ? '#7A7C82' : '#F4F3EF',
+        ack: () => { if (st.s !== 'open') return; this.setLead(i, { s: 'ack', by: name }); this.addEvent('review', 'Target ' + (i + 1) + ' acknowledged' + (name ? ' by ' + name : '') + '.'); },
+        reason: st.reason,
+        onReason: (e) => this.setLead(i, { reason: e.target.value }),
+        closeDisabled: closed || !st.reason, closeFg: closed || !st.reason ? '#7A7C82' : '#111114',
+        close: () => { if (closed || !st.reason) return; this.setLead(i, { s: 'closed', by: name }); this.addEvent('review', 'Target ' + (i + 1) + ' closed · ' + reasons[st.reason] + (name ? ' · ' + name : '') + '.'); }
+      };
+    });
+    const openIdx = s.status.map((x, i) => (x.s !== 'closed' ? i : -1)).filter((i) => i >= 0);
+    const openCount = openIdx.length;
+    const unackCount = s.status.filter((x) => x.s === 'open').length;
+    const multiAngle = openIdx.filter((i) => L[i].angles >= 2).length;
+    const grounded = s.status.filter((x) => x.s === 'closed' && (x.reason === 'rescued' || x.reason === 'safe')).length;
+    const leadDots = L.map((l, i) => ({ n: String(i + 1), t: 'translate(' + l.x + ' ' + l.y + ')', op: s.status[i].s === 'closed' ? 0.3 : 1 }));
+
+    const base = [
+      { t: '3:47:40 AM', k: 'drones', text: 'ANAFI-01 descending; 7 unique people spotted.' },
+      { t: '3:47:33 AM', k: 'people', text: 'Target 1 seen by ANAFI-01 at the perimeter.' },
+      { t: '3:47:29 AM', k: 'people', text: 'Target 7 seen by ANAFI-04 at the perimeter.' },
+      { t: '3:47:21 AM', k: 'people', text: 'Target 2 seen by ANAFI-01 at the perimeter.' },
+      { t: '3:47:12 AM', k: 'people', text: 'Target 6 seen by ANAFI-04 at the perimeter.' },
+      { t: '3:47:05 AM', k: 'people', text: 'Target 4 seen by ANAFI-02 at the perimeter.' },
+      { t: '3:46:58 AM', k: 'people', text: 'Target 3 seen by ANAFI-02 at the perimeter.' },
+      { t: '3:46:50 AM', k: 'fire', text: 'Fire outline refreshed from fleet sightings.' },
+      { t: '3:46:40 AM', k: 'people', text: 'Target 5 seen by ANAFI-03 at the perimeter.' },
+      { t: '3:46:20 AM', k: 'drones', text: 'ANAFI-04 returning to launch · battery 34%.' }
+    ];
+    const KC = { drones: '#7A7C82', people: '#C42A1D', fire: '#E5392D', review: '#111114' };
+    const log = s.events.concat(base).filter((e) => s.filter === 'all' || e.k === s.filter).map((e) => ({ t: e.t, text: e.text, c: KC[e.k] }));
+    const filters = [['all', 'All'], ['people', 'People'], ['fire', 'Fire'], ['drones', 'Drones'], ['review', 'Reviews']].map((f) => {
+      const on = f[0] === s.filter;
+      return { label: f[1], pressed: on ? 'true' : 'false', border: on ? '#111114' : '#D3D1CA', bg: on ? '#111114' : 'transparent', fg: on ? '#F4F3EF' : '#111114', pick: () => this.setState({ filter: f[0] }) };
+    });
+
+    const k = 1 + s.minute / 60 * 0.9;
+    const area = 9.6 * k * k;
+    const speeds = [1, 2, 4];
+    const presets = [0, 30, 60].map((m) => {
+      const on = Math.round(s.minute) === m;
+      return { label: m === 0 ? 'Now' : '+' + m + ' min', pressed: on ? 'true' : 'false', border: on ? '#111114' : '#D3D1CA', bg: on ? '#111114' : 'transparent', fg: on ? '#F4F3EF' : '#111114', go: () => this.setState({ minute: m }) };
+    });
+
+    return {
+      leaving: this.state.leaving,
+      leaveClass: this.state.leaving ? 'bx-leave' : '',
+      setHomeLink: (el) => { this.homeLink = el; },
+      goHome: (e) => {
+        if (this.passHome) { this.passHome = false; return; }
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        e.preventDefault();
+        if (this.state.leaving) return;
+        try { sessionStorage.setItem('bx-home-intro', '1'); } catch (err) {}
+        if (this.timer) { clearInterval(this.timer); this.timer = null; }
+        this.setState({ leaving: true, playing: false });
+        setTimeout(() => { this.passHome = true; if (this.homeLink) this.homeLink.click(); }, 420);
+        setTimeout(() => { this.passHome = false; if (!this.gone) this.setState({ leaving: false }); }, 2500);
+      },
+      accent, cur, drones, droneDots, leads, leadDots, log, filters, presets,
+      openCount: String(openCount), unackCount: String(unackCount), multiAngle: String(multiAngle),
+      groundText: grounded ? String(grounded) : '—',
+      bannerText: cur0.id + ' ' + cur0.state.toLowerCase() + '; 4 drones in aerial observation · ' + openCount + ' unique people spotted.',
+      modeLabel: live ? 'Live demo' : 'Replay', modeColor: live ? '#111114' : '#C42A1D', modeTag: live ? 'LIVE DEMO' : 'REPLAY',
+      livePressed: live ? 'true' : 'false', liveBtnBg: live ? '#111114' : 'transparent', liveBtnFg: live ? '#F4F3EF' : '#111114',
+      goLive: () => this.setState({ mode: live ? 'replay' : 'live' }),
+      areaText: area.toFixed(1), areaWhen: s.minute === 0 ? 'now' : 'projected',
+      fireT: 'translate(380 300) rotate(-35) scale(' + k.toFixed(3) + ')',
+      showCond: s.showCond, condPressed: s.showCond ? 'true' : 'false',
+      condBorder: s.showCond ? '#111114' : '#D3D1CA', condBg: s.showCond ? '#111114' : 'transparent', condFg: s.showCond ? '#F4F3EF' : '#111114',
+      toggleCond: () => this.setState({ showCond: !s.showCond }),
+      minute: s.minute, minuteText: String(Math.round(s.minute)),
+      onMinute: (e) => this.setState({ minute: Number(e.target.value) }),
+      speedLabel: speeds[s.speed] + '×',
+      cycleSpeed: () => this.setState({ speed: (s.speed + 1) % speeds.length }),
+      playing: s.playing, notPlaying: !s.playing, playLabel: s.playing ? 'Pause projection' : 'Play projection',
+      togglePlay: () => {
+        if (this.timer) { clearInterval(this.timer); this.timer = null; this.setState({ playing: false }); return; }
+        this.setState({ playing: true });
+        this.timer = setInterval(() => {
+          const step = 0.5 * speeds[this.state.speed];
+          const m = this.state.minute >= 60 ? 0 : Math.min(60, this.state.minute + step);
+          const next = { minute: m };
+          if (this.state.follow) next.drone = Math.floor(m / 15) % 4;
+          this.setState(next);
+        }, 120);
+      },
+      followPressed: s.follow ? 'true' : 'false', followBorder: s.follow ? '#111114' : '#D3D1CA',
+      followBg: s.follow ? 'rgba(17,17,20,0.08)' : 'transparent', followFg: s.follow ? '#111114' : '#111114',
+      toggleFollow: () => this.setState({ follow: !s.follow, drone: !s.follow ? 0 : s.drone }),
+      replaySpeed: s.replaySpeed, onReplaySpeed: (e) => this.setState({ replaySpeed: e.target.value }),
+      responder: s.responder, onResponder: (e) => this.setState({ responder: e.target.value })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+/* Page transition between Home and the Dashboard (transition.js).
+   Leaving: content recedes, a dark cover fades in and the mark spins in.
+   Arriving: the same cover holds, the mark spins out, the content rises.
+   The cover always stays dark, including in the Dashboard's light theme. */
+@keyframes bx-recede { to { transform: scale(.985); opacity: 0; } }
+@keyframes bx-cover { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bx-spin-in { from { transform: scale(1.25) rotate(-120deg); opacity: 0; } to { transform: scale(1) rotate(0deg); opacity: 1; } }
+@keyframes bx-veil { 0%, 30% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+@keyframes bx-spin-out { from { transform: scale(1) rotate(0deg); opacity: 1; } to { transform: scale(.35) rotate(150deg); opacity: 0; } }
+@keyframes bx-rise { from { transform: translateY(12px); } to { transform: none; } }
+
+.bx-leave { animation: bx-recede .4s cubic-bezier(.4, 0, .2, 1) both; transform-origin: 50% 30%; }
+.bx-rise { animation: bx-rise .7s cubic-bezier(.2, .7, .2, 1) both; }
+
+.bx-cover {
+  --accent: var(--cover-accent);
+  position: fixed; inset: 0; z-index: 60; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--cover-bg);
+}
+.bx-cover.is-in { animation: bx-cover .4s ease-in both; }
+.bx-cover.is-in .bx-mark { animation: bx-spin-in .45s cubic-bezier(.2, .7, .2, 1) both; }
+.bx-cover.is-out { animation: bx-veil .8s cubic-bezier(.4, 0, .2, 1) forwards; }
+.bx-cover.is-out .bx-mark { animation: bx-spin-out .6s cubic-bezier(.6, 0, .4, 1) forwards; }
+
+/* Set by an inline <head> script before first paint when an intro will play,
+   so the page never flashes before the cover mounts. */
+html.bx-pre-cover body::after {
+  content: ''; position: fixed; inset: 0; z-index: 59; background: var(--cover-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bx-cover { display: none; }
+  html.bx-pre-cover body::after { display: none; }
+  .bx-leave, .bx-rise { animation: none; }
+}

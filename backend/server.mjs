@@ -78,6 +78,7 @@ const MIME_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.md': 'text/markdown; charset=utf-8',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',

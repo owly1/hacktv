@@ -1,16 +1,19 @@
 /* Home page exploded view. Scroll position maps straight to one frame of the
    drone image sequence, drawn into a canvas; nothing plays on a timer.
    Scrolling down takes the drone from assembled to exploded, scrolling up
-   puts it back together. */
+   puts it back together. Between two frames the later one is blended over the
+   earlier by the fractional scroll position, so the motion stays smooth. */
 (function () {
   'use strict';
 
   // ---- settings
-  // Frames are FRAME_DIR/full/frame-0001.jpg … (1920×1080) and the same names in
-  // FRAME_DIR/small (960×540), numbered in playback order.
+  // Frames are FRAME_DIR/full/frame-0001.webp … (1920×1080) and the same names in
+  // FRAME_DIR/small (960×540), numbered in playback order. They are built from the
+  // teardown video by scripts/build_exploded_frames.py, which prints FRAME_COUNT.
   const FRAME_DIR = 'assets/exploded';
-  const FRAME_COUNT = 205;
-  const BACKDROP = `${FRAME_DIR}/backdrop.jpg`;  // the empty studio, for filling letterbox bars
+  const FRAME_COUNT = 239;
+  const BLEND_STEPS = 24;               // crossfade levels between two frames
+  const BACKDROP = `${FRAME_DIR}/backdrop.jpg`;  // a frame whose edges are plain backdrop, for filling letterbox bars
   const STILL_FRAME = FRAME_COUNT - 1;  // shown alone with reduced motion: the full exploded view
   const FULL_SET_MIN_PX = 1100;         // drawn width (device px) above which the 1920 set is used
   // The scroll length lives in home.html: --reveal-scroll on .reveal.
@@ -39,19 +42,20 @@
   let orderCursor = 0;
   let loadAll = false;     // true once the section is near the viewport
   let target = reducedMotion.matches ? STILL_FRAME : 0;  // frame the scroll position asks for
-  let drawn = -1;          // frame currently on the canvas
+  let drawn = -1;          // frame currently on the canvas (the stronger of a blended pair)
+  let drawnKey = -1;       // frame plus blend amount on the canvas, to skip identical repaints
   let dirty = true;        // canvas resized or cleared: repaint even if drawn === target
   let raf = 0;
   let stopped = false;
 
-  // Letterbox bars are filled by stretching the empty studio's edge pixels, so
+  // Letterbox bars are filled by stretching the backdrop image's edge pixels, so
   // the photo's own backdrop runs to the canvas edges without a seam.
   const backdrop = new Image();
   backdrop.onload = () => { dirty = true; schedule(); };
   backdrop.src = BACKDROP;
 
   const still = () => reducedMotion.matches;
-  const url = i => `${FRAME_DIR}/${set}/frame-${String(i + 1).padStart(4, '0')}.jpg`;
+  const url = i => `${FRAME_DIR}/${set}/frame-${String(i + 1).padStart(4, '0')}.webp`;
 
   function load(i) {
     status[i] = LOADING;
@@ -107,8 +111,16 @@
 
   function render() {
     raf = 0;
-    const want = still() ? STILL_FRAME : Math.round(progress() * (FRAME_COUNT - 1));
+    const pos = still() ? STILL_FRAME : progress() * (FRAME_COUNT - 1);  // fractional frame
+    const want = Math.round(pos);
     if (want !== target) { target = want; pump(); }
+    // Both neighbours loaded: blend them by the fractional position.
+    const a = Math.floor(pos), b = Math.min(a + 1, FRAME_COUNT - 1);
+    const t = b === a ? 0 : Math.round((pos - a) * BLEND_STEPS) / BLEND_STEPS;
+    if (status[a] === READY && (t === 0 || status[b] === READY)) {
+      if (a + t !== drawnKey || dirty) paint(a, b, t);
+      return;
+    }
     // Draw the requested frame; while it loads, keep whatever is on the canvas
     // unless a loaded frame closer to the request is available.
     let pick = status[target] === READY ? target : -1;
@@ -119,11 +131,13 @@
         else if (status[target + d] === READY) pick = target + d;
       }
     }
-    if (pick === -1 || (pick === drawn && !dirty)) return;
-    paint(pick);
+    if (pick === -1 || (pick === drawnKey && !dirty)) return;
+    paint(pick, pick, 0);
   }
 
-  function paint(i) {
+  /** Draw frame i, with frame j blended over it at opacity t (0-1), plus the
+      letterbox fill and top fade. Records what is on the canvas. */
+  function paint(i, j, t) {
     const img = images[i];
     const w = canvas.width, h = canvas.height;
     const scale = Math.min(w / img.naturalWidth, h / img.naturalHeight);
@@ -144,6 +158,11 @@
       }
     }
     ctx.drawImage(img, dx, dy, dw, dh);
+    if (t > 0 && j !== i) {
+      ctx.globalAlpha = t;
+      ctx.drawImage(images[j], dx, dy, dw, dh);
+      ctx.globalAlpha = 1;
+    }
     // Letterbox bars fade from the photo's edge to the flat backdrop grey.
     const clear = background.replace(/^rgb\((.*)\)$/, 'rgba($1, 0)');
     const band = (x0, y0, x1, y1, rx, ry, rw, rh) => {
@@ -160,11 +179,12 @@
     grad.addColorStop(1, clear);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, fade);
-    drawn = i;
+    drawn = t >= 0.5 ? j : i;
+    drawnKey = i + t;
     dirty = false;
-    canvas.dataset.frame = String(i + 1);
+    canvas.dataset.frame = String(drawn + 1);
     // Decode the neighbours ahead of time so the next scroll step draws without a stall.
-    for (const j of [i - 1, i + 1, i + 2]) if (status[j] === READY) images[j].decode().catch(() => {});
+    for (const k of [i - 1, i + 2, i + 3]) if (status[k] === READY) images[k].decode().catch(() => {});
   }
 
   function resize() {

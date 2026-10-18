@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BOSCO home</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#08080A}
+a{color:#D8D7D2}a:hover{color:#FFFFFF}
+@keyframes ledpulse{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes bx-contour{0%,100%{transform:scale(1) rotate(0deg)}50%{transform:scale(1.04) rotate(-1deg)}}
+@keyframes bx-spin{to{transform:rotate(360deg)}}
+@keyframes bx-cover{from{opacity:0}to{opacity:1}}
+@keyframes bx-spin-in{from{transform:scale(1.25) rotate(-120deg);opacity:0}to{transform:scale(1) rotate(0deg);opacity:1}}
+@keyframes bx-recede{to{transform:scale(.985);opacity:0}}
+@keyframes bx-brackets{from{transform:scale(1.35);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes bx-sway{0%,100%{transform:scale(1,1) skewX(0deg)}25%{transform:scale(.95,1.06) skewX(-4deg)}50%{transform:scale(1.03,.96) skewX(2.5deg)}75%{transform:scale(.97,1.04) skewX(-1.5deg)}}
+@keyframes bx-orbit{to{transform:rotate(360deg)}}
+.bx-flame{transform-origin:50px 67px;animation:bx-sway 2.6s ease-in-out infinite}
+.bx-orbit{transform-origin:50px 50px;animation:bx-orbit 9s linear infinite}
+@keyframes bx-veil{0%,30%{opacity:1}100%{opacity:0;visibility:hidden}}
+@keyframes bx-spin-out{from{transform:scale(1) rotate(0deg);opacity:1}to{transform:scale(.35) rotate(150deg);opacity:0}}
+@keyframes bx-rise{from{transform:translateY(12px)}to{transform:none}}
+.bx-intro{animation:bx-veil .8s cubic-bezier(.4,0,.2,1) forwards}
+.bx-spin-out{animation:bx-spin-out .6s cubic-bezier(.6,0,.4,1) forwards}
+.bx-rise{animation:bx-rise .7s cubic-bezier(.2,.7,.2,1) both}
+.bx-led{animation:ledpulse 1.6s ease-in-out infinite}
+.bx-c{transform-origin:1000px 470px;animation:bx-contour 9s ease-in-out infinite}
+.bx-ring{transform-origin:50px 50px;animation:bx-spin 24s linear infinite}
+@keyframes hover{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+.bx-cover{animation:bx-cover .4s ease-in both}
+.bx-spin-in{animation:bx-spin-in .45s cubic-bezier(.2,.7,.2,1) both}
+.bx-brk{animation:bx-brackets .55s cubic-bezier(.2,.7,.2,1) .05s both}
+.bx-leave{animation:bx-recede .4s cubic-bezier(.4,0,.2,1) both}
+@media (prefers-reduced-motion:reduce){.bx-intro{display:none}.bx-rise{animation:none}.bx-led,.bx-c,.bx-ring,.bx-flame,.bx-orbit{animation:none}}
+</style>
+</helmet>
+<div style="position: relative; min-height: 100vh; box-sizing: border-box; overflow: hidden; background: #08080A; color: #D8D7D2; font-family: 'Archivo', system-ui, sans-serif; display: flex; flex-direction: column">
+
+  <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none">
+    <g fill="none" stroke="#D8D7D2" stroke-opacity="0.06" stroke-width="1.2">
+      <path class="bx-c" d="M560 900 C 470 600, 600 220, 900 90 S 1400 40, 1400 40"></path>
+      <path class="bx-c" style="animation-delay: -2s" d="M660 900 C 590 640, 700 300, 980 180 S 1340 140, 1360 380 S 1180 760, 1000 900"></path>
+      <path class="bx-c" style="animation-delay: -4s" d="M760 860 C 720 640, 800 380, 1050 290 S 1300 300, 1270 470 S 1080 700, 960 700"></path>
+      <path class="bx-c" style="animation-delay: -6s" d="M850 760 C 840 600, 900 440, 1080 400 S 1230 430, 1190 520 S 1060 620, 990 600"></path>
+    </g>
+  </svg>
+
+  <div class="{{leaveClass}} {{riseClass}}" style="position: relative; flex-grow: 1; display: flex; flex-direction: column">
+
+    <header style="width: 100%; max-width: 1280px; margin: 0 auto; box-sizing: border-box; padding: 28px 32px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between">
+      <span style="font-weight: 900; font-stretch: 125%; font-size: 20px; letter-spacing: 0.02em">BOSCO</span>
+      <span style="display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #94959B"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: #4C7DFF"></span>Training exercise</span>
+    </header>
+
+    <main style="width: 100%; max-width: 1280px; margin: 0 auto; box-sizing: border-box; padding: 72px 32px 80px; flex-grow: 1; display: flex; flex-direction: column; justify-content: center">
+      <div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 40px">
+      <h1 aria-label="BOSCO" style="margin: 0; display: flex; align-items: center; font-weight: 900; font-stretch: 125%; font-size: clamp(76px, 12vw, 184px); line-height: 0.86; letter-spacing: -0.01em; color: #D8D7D2">
+        <span aria-hidden="true">B</span>
+        <svg viewBox="0 0 100 100" aria-hidden="true" style="width: 0.86em; height: 0.86em; margin: 0 0.04em; overflow: visible; flex-shrink: 0">
+          <circle cx="50" cy="50" r="40" fill="none" stroke="#D8D7D2" stroke-width="15" stroke-dasharray="52.8 10" stroke-dashoffset="-5" transform="rotate(-90 50 50)"></circle>
+          <g class="bx-flame"><path d="M50 32.5 C52.2 39.5 61.5 44.5 61.5 55.6 C61.5 62.4 56.3 67.5 50 67.5 C43.7 67.5 38.5 62.4 38.5 55.6 C38.5 50.2 41.4 46.4 44.6 43.8 C44.6 47.9 46.2 50.6 48.3 51.6 C47.7 45.2 48.3 38.6 50 32.5 Z M50 52.2 C52.6 55.1 54.6 57.3 54.6 60.2 C54.6 62.8 52.5 64.8 50 64.8 C47.5 64.8 45.4 62.8 45.4 60.2 C45.4 57.4 47.4 55.1 50 52.2 Z" fill="{{accent}}" fill-rule="evenodd"></path></g>
+          <g class="bx-orbit"><circle cx="50" cy="3" r="6" fill="#4C7DFF" stroke="#08080A" stroke-width="3"></circle></g>
+        </svg>
+        <span aria-hidden="true">SCO</span>
+      </h1>
+
+      <!-- drone chip -->
+      <button type="button" onClick="{{openTeardown}}" aria-label="Open the BOSCO drone teardown" style="all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px">
+        <span style="position: relative; display: block; width: 240px; height: 135px; overflow: hidden; background: transparent">
+          <video ref="{{vidRef}}" src="assets/drone-hover.mp4" poster="assets/drone-hover-poster.jpg" muted="" loop="" playsinline="" style="width: 100%; height: 100%; object-fit: cover; display: block; animation: hover 3.2s ease-in-out infinite; -webkit-mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 55%, transparent 100%); mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 55%, transparent 100%)"></video>
+          <span aria-hidden="true" style="position: absolute; left: 8px; top: 8px; width: 12px; height: 12px; border-left: 1.5px solid #D8D7D2; border-top: 1.5px solid #D8D7D2"></span>
+          <span aria-hidden="true" style="position: absolute; right: 8px; top: 8px; width: 12px; height: 12px; border-right: 1.5px solid #D8D7D2; border-top: 1.5px solid #D8D7D2"></span>
+          <span aria-hidden="true" style="position: absolute; left: 8px; bottom: 8px; width: 12px; height: 12px; border-left: 1.5px solid #D8D7D2; border-bottom: 1.5px solid #D8D7D2"></span>
+          <span aria-hidden="true" style="position: absolute; right: 8px; bottom: 8px; width: 12px; height: 12px; border-right: 1.5px solid #D8D7D2; border-bottom: 1.5px solid #D8D7D2"></span>
+          <span style="position: absolute; right: 26px; top: 10px; display: flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; color: #D8D7D2"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: #4C7DFF"></span>BSC-01</span>
+        </span>
+        <span style="display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #94959B">Take it apart
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#D8D7D2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M9 21H3v-6"></path><path d="M21 3l-7 7"></path><path d="M3 21l7-7"></path></svg>
+        </span>
+      </button>
+      </div>
+
+      <p style="margin: 48px 0 0; font-size: clamp(20px, 2.2vw, 30px); font-weight: 600; line-height: 1.3; color: #D8D7D2"><span style="color: {{accent}}">B</span>ushfire <span style="color: {{accent}}">O</span>bservation, <span style="color: {{accent}}">S</span>imulation and <span style="color: {{accent}}">C</span>oordination <span style="color: {{accent}}">O</span>perations</p>
+
+      <div style="height: 1px; background: rgba(236,235,231,0.12); margin: 56px 0"></div>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 32px; align-items: center; justify-content: space-between">
+        <p style="margin: 0; flex: 1 1 420px; max-width: 560px; font-size: 20px; line-height: 1.55; color: #A9ABB0">Drone observation, fire-spread simulation and human-reviewed briefings in one wildfire workspace.</p>
+        <a href="dashboard.dc.html" onClick="{{go}}" ref="{{setLink}}" style="display: inline-flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 30px; border-radius: 999px; background: {{accent}}; color: #08080A; font-weight: 700; font-size: 18px; text-decoration: none">Get started
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#08080A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg>
+        </a>
+      </div>
+    </main>
+
+    <footer style="width: 100%; max-width: 1280px; margin: 0 auto; box-sizing: border-box; padding: 0 32px 28px; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: #7A7B81">
+      <span>Observe · Simulate · Coordinate</span>
+      <span>A person decides</span>
+    </footer>
+  </div>
+
+  <sc-if value="{{intro}}" hint-placeholder-val="{{false}}">
+    <div class="bx-intro" aria-hidden="true" style="position: fixed; inset: 0; z-index: 50; pointer-events: none; background: #08080A; display: flex; align-items: center; justify-content: center">
+      <svg class="bx-spin-out" viewBox="0 0 100 100" style="width: 132px; height: 132px; overflow: visible">
+        <circle cx="50" cy="50" r="40" fill="none" stroke="#D8D7D2" stroke-width="15" stroke-dasharray="52.8 10" stroke-dashoffset="-5" transform="rotate(-90 50 50)"></circle>
+        <path d="M50 32.5 C52.2 39.5 61.5 44.5 61.5 55.6 C61.5 62.4 56.3 67.5 50 67.5 C43.7 67.5 38.5 62.4 38.5 55.6 C38.5 50.2 41.4 46.4 44.6 43.8 C44.6 47.9 46.2 50.6 48.3 51.6 C47.7 45.2 48.3 38.6 50 32.5 Z M50 52.2 C52.6 55.1 54.6 57.3 54.6 60.2 C54.6 62.8 52.5 64.8 50 64.8 C47.5 64.8 45.4 62.8 45.4 60.2 C45.4 57.4 47.4 55.1 50 52.2 Z" fill="#E2574C" fill-rule="evenodd"></path>
+        <circle cx="50" cy="3" r="6" fill="#4C7DFF" stroke="#08080A" stroke-width="3"></circle>
+      </svg>
+    </div>
+  </sc-if>
+
+  <!-- teardown overlay -->
+  <sc-if value="{{isOpen}}" hint-placeholder-val="{{false}}">
+    <div role="dialog" aria-modal="true" aria-label="BOSCO drone teardown" onScroll="{{onScroll}}" style="position: fixed; inset: 0; z-index: 10; background: #08080A; overflow-y: auto">
+      <div style="height: 520vh; position: relative">
+        <div style="position: sticky; top: 0; height: 100vh; overflow: hidden">
+
+          <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 72px 24px">
+            <div style="position: relative; width: min(1100px, 100%); aspect-ratio: 16 / 9">
+              <canvas ref="{{canvasRef}}" role="img" aria-label="BSC-01 drone, exploding into its parts as you scroll" style="position: absolute; inset: 0; width: 100%; height: 100%; display: block"></canvas>
+            </div>
+          </div>
+
+          <div style="position: absolute; left: 0; right: 0; top: 0; padding: 24px 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: #9A9CA1">BSC-01 · Teardown · {{pct}}%</span>
+            <button type="button" onClick="{{closeTeardown}}" aria-label="Close teardown" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px rgba(236,235,231,0.2)">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#ECEBE7" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>
+            </button>
+          </div>
+
+          <ol aria-label="Stages" style="position: absolute; left: 32px; top: 50%; transform: translateY(-50%); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px">
+            <sc-for list="{{stages}}" as="s" hint-placeholder-count="5">
+              <li style="display: flex; align-items: center; gap: 12px; font-weight: 900; font-stretch: 125%; font-size: 28px; line-height: 1; color: {{s.letterColor}}">{{s.letter}}
+                <span style="font-family: 'IBM Plex Mono', monospace; font-weight: 400; font-stretch: 100%; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #9A9CA1; opacity: {{s.labelOp}}">{{s.word}}</span>
+              </li>
+            </sc-for>
+          </ol>
+
+          <div style="position: absolute; right: 32px; bottom: 48px; width: min(380px, calc(100% - 64px))">
+            <sc-for list="{{stages}}" as="s" hint-placeholder-count="1">
+              <div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 24px; border-radius: 14px; background: rgba(17,17,20,0.86); box-shadow: 0 0 0 1px rgba(236,235,231,0.12); opacity: {{s.op}}; transform: translateY({{s.ty}}px); transition: opacity .35s ease, transform .35s ease">
+                <div style="display: flex; align-items: center; gap: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: {{s.kickerColor}}"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: {{s.kickerColor}}"></span>{{s.word}}</div>
+                <h2 style="margin: 12px 0 8px; font-size: 26px; font-weight: 800; font-stretch: 110%; line-height: 1.15; color: #ECEBE7">{{s.title}}</h2>
+                <p style="margin: 0; font-size: 16px; line-height: 1.55; color: #A9ABB0">{{s.body}}</p>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); display: flex; gap: 12px; opacity: {{endOp}}; pointer-events: {{endPe}}">
+            <a href="dashboard.dc.html" onClick="{{go}}" style="display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 24px; border-radius: 999px; background: {{accent}}; color: #08080A; font-weight: 700; text-decoration: none">Get started
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#08080A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg>
+            </a>
+          </div>
+
+          <div style="position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #9A9CA1; opacity: {{hintOp}}">Scroll to take it apart ↓</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{leaving}}" hint-placeholder-val="{{false}}">
+    <div class="bx-cover" aria-hidden="true" style="position: fixed; inset: 0; z-index: 50; pointer-events: none; background: #08080A; display: flex; align-items: center; justify-content: center">
+      <svg class="bx-spin-in" viewBox="0 0 100 100" style="width: 132px; height: 132px; overflow: visible">
+        <circle cx="50" cy="50" r="40" fill="none" stroke="#D8D7D2" stroke-width="15" stroke-dasharray="52.8 10" stroke-dashoffset="-5" transform="rotate(-90 50 50)"></circle>
+        <path d="M50 32.5 C52.2 39.5 61.5 44.5 61.5 55.6 C61.5 62.4 56.3 67.5 50 67.5 C43.7 67.5 38.5 62.4 38.5 55.6 C38.5 50.2 41.4 46.4 44.6 43.8 C44.6 47.9 46.2 50.6 48.3 51.6 C47.7 45.2 48.3 38.6 50 32.5 Z M50 52.2 C52.6 55.1 54.6 57.3 54.6 60.2 C54.6 62.8 52.5 64.8 50 64.8 C47.5 64.8 45.4 62.8 45.4 60.2 C45.4 57.4 47.4 55.1 50 52.2 Z" fill="{{accent}}" fill-rule="evenodd"></path>
+        <circle cx="50" cy="3" r="6" fill="#4C7DFF" stroke="#08080A" stroke-width="3"></circle>
+      </svg>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#E2574C","options":["#E2574C","#E86A3A","#D44A3F"]},"startOpen":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    let intro = false;
+    try { intro = sessionStorage.getItem('bx-home-intro') === '1'; if (intro) sessionStorage.removeItem('bx-home-intro'); } catch (err) {}
+    this.state = { leaving: false, open: null, si: 0, pct: 0, intro };
+    this.pass = false;
+    this.timers = [];
+    this.vidRef = (el) => {
+      if (!el) return;
+      el.muted = true; el.loop = true; el.playsInline = true;
+      try { const r = el.play(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
+    };
+    this.ids = ['frame-000.webp','frame-001.webp','frame-002.webp','frame-003.webp','frame-004.webp','frame-005.webp','frame-006.webp','frame-007.webp','frame-008.webp','frame-009.webp','frame-010.webp','frame-011.webp','frame-012.webp','frame-013.webp','frame-014.webp','frame-015.webp','frame-016.webp','frame-017.webp','frame-018.webp','frame-019.webp','frame-020.webp','frame-021.webp','frame-022.webp','frame-023.webp','frame-024.webp','frame-025.webp','frame-026.webp','frame-027.webp','frame-028.webp','frame-029.webp','frame-030.webp','frame-031.webp','frame-032.webp','frame-033.webp','frame-034.webp','frame-035.webp','frame-036.webp','frame-037.webp','frame-038.webp','frame-039.webp','frame-040.webp','frame-041.webp','frame-042.webp','frame-043.webp','frame-044.webp','frame-045.webp','frame-046.webp','frame-047.webp','frame-048.webp','frame-049.webp','frame-050.webp','frame-051.webp','frame-052.webp','frame-053.webp','frame-054.webp','frame-055.webp','frame-056.webp','frame-057.webp','frame-058.webp','frame-059.webp','frame-060.webp','frame-061.webp','frame-062.webp','frame-063.webp','frame-064.webp','frame-065.webp','frame-066.webp','frame-067.webp','frame-068.webp','frame-069.webp','frame-070.webp','frame-071.webp','frame-072.webp','frame-073.webp','frame-074.webp','frame-075.webp','frame-076.webp','frame-077.webp','frame-078.webp','frame-079.webp','frame-080.webp','frame-081.webp','frame-082.webp','frame-083.webp','frame-084.webp','frame-085.webp','frame-086.webp','frame-087.webp','frame-088.webp','frame-089.webp','frame-090.webp','frame-091.webp','frame-092.webp','frame-093.webp','frame-094.webp','frame-095.webp','frame-096.webp','frame-097.webp','frame-098.webp','frame-099.webp','frame-100.webp','frame-101.webp','frame-102.webp','frame-103.webp','frame-104.webp','frame-105.webp','frame-106.webp','frame-107.webp','frame-108.webp','frame-109.webp','frame-110.webp','frame-111.webp','frame-112.webp','frame-113.webp','frame-114.webp','frame-115.webp','frame-116.webp','frame-117.webp','frame-118.webp','frame-119.webp'];
+    // Frames are drawn straight onto one canvas, outside the render cycle.
+    this.imgs = [];
+    this.cur = -1;
+    this.want = 0;
+    this.preload = () => {
+      if (this.imgs.length) return;
+      this.imgs = this.ids.map(() => new Image());
+      // coarse-to-fine: every 8th frame first, then 4th, 2nd, then the rest
+      const n = this.ids.length, order = [], seen = {};
+      [8, 4, 2, 1].forEach((st) => { for (let i = 0; i < n; i += st) if (!seen[i]) { seen[i] = 1; order.push(i); } });
+      let next = 0, busy = 0;
+      const pump = () => {
+        while (busy < 6 && next < order.length) {
+          const i = order[next++], im = this.imgs[i];
+          busy++;
+          const done = () => {
+            busy--;
+            if (Math.abs(i - this.want) <= 1 || this.cur < 0) this.draw(this.want, true);
+            pump();
+          };
+          im.onload = () => { if (im.decode) im.decode().then(done, done); else done(); };
+          im.onerror = done;
+          im.src = 'assets/teardown/' + this.ids[i];
+        }
+      };
+      pump();
+    };
+    this.ready = (im) => im && im.complete && im.naturalWidth > 0;
+    this.size = () => {
+      const cv = this.cv;
+      if (!cv) return;
+      const r = cv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; this.cur = -1; }
+    };
+    this.draw = (i, force) => {
+      this.want = i;
+      const cv = this.cv;
+      if (!cv) return;
+      // nearest frame that has finished loading, so scrolling never shows a blank
+      let k = i;
+      for (let d = 0; d < this.imgs.length && !this.ready(this.imgs[k]); d++) {
+        const a = i - d - 1, b = i + d + 1;
+        if (a >= 0 && this.ready(this.imgs[a])) { k = a; break; }
+        if (b < this.imgs.length && this.ready(this.imgs[b])) { k = b; break; }
+      }
+      const im = this.imgs[k];
+      if (!this.ready(im) || (k === this.cur && !force)) return;
+      const ctx = cv.getContext('2d');
+      const s = Math.min(cv.width / im.naturalWidth, cv.height / im.naturalHeight);
+      const w = im.naturalWidth * s, h = im.naturalHeight * s;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(im, (cv.width - w) / 2, (cv.height - h) / 2, w, h);
+      this.cur = k;
+    };
+    this.canvasRef = (el) => {
+      this.cv = el;
+      if (el) { this.size(); this.draw(this.want, true); }
+    };
+    this.onResize = () => { this.size(); this.draw(this.want, true); };
+    this.openTeardown = () => { this.preload(); this.want = 0; this.cur = -1; this.setState({ open: true, si: 0, pct: 0 }); };
+    this.closeTeardown = () => this.setState({ open: false });
+    this.onScroll = (e) => {
+      const el = e.currentTarget;
+      if (this.raf) return;
+      this.raf = requestAnimationFrame(() => {
+        this.raf = null;
+        const max = el.scrollHeight - el.clientHeight;
+        const p = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
+        this.draw(Math.round(Math.min(1, p / 0.85) * (this.ids.length - 1)));
+        // only re-render the page when the stage or the 5% counter changes
+        const si = Math.min(4, Math.floor(Math.min(0.999, p / 0.9) * 5));
+        const pct = p > 0.96 ? 100 : Math.floor(p * 20) * 5;
+        if (si !== this.state.si || pct !== this.state.pct) this.setState({ si, pct });
+      });
+    };
+  }
+  componentDidMount() {
+    if (this.state.intro) this.timers.push(setTimeout(() => { if (!this.gone) this.setState({ intro: false }); }, 900));
+    window.addEventListener('resize', this.onResize);
+    if (this.props.startOpen) this.preload();
+  }
+  componentWillUnmount() {
+    this.gone = true;
+    window.removeEventListener('resize', this.onResize);
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.timers.forEach(clearTimeout);
+  }
+  renderVals() {
+    const leaving = this.state.leaving;
+    const accent = this.props.accent ?? '#E2574C';
+    const isOpen = this.state.open === null ? !!(this.props.startOpen ?? false) : this.state.open;
+    const si = this.state.si;
+    const pct = this.state.pct;
+    const copy = [
+      ['B', 'Bushfire', 'One airframe, five jobs.', 'Scroll to take BSC-01 apart. Each part maps to a stage of the BOSCO workflow.'],
+      ['O', 'Observation', 'Stabilised gimbal camera', 'Watches the fire edge from above and streams it straight into the workspace. [Sensor: RGB / thermal]'],
+      ['S', 'Simulation', 'Onboard flight computer', 'Tags every frame with position and time, so the fire-spread model starts from what the drone actually saw.'],
+      ['C', 'Coordination', 'Nav lights and radio link', 'Keeps the unit visible to ground crews and in contact with the incident team.'],
+      ['O', 'Operations', 'Swappable battery and airframe', 'Built to turn around fast between sorties. [Flight time per battery]']
+    ];
+    const stages = copy.map((c, i) => ({
+      letter: c[0], word: c[1], title: c[2], body: c[3],
+      letterColor: i === si ? accent : (i < si ? '#D8D7D2' : '#3A3B40'),
+      labelOp: i === si ? 1 : 0,
+      op: i === si ? 1 : 0,
+      ty: i === si ? 0 : 16,
+      kickerColor: i === 3 ? '#4C7DFF' : accent
+    }));
+    return {
+      accent,
+      intro: this.state.intro, riseClass: this.state.intro ? 'bx-rise' : '',
+      isOpen, stages, pct,
+      canvasRef: this.canvasRef,
+      hintOp: pct === 0 ? 1 : 0,
+      endOp: pct === 100 ? 1 : 0,
+      endPe: pct === 100 ? 'auto' : 'none',
+      vidRef: this.vidRef,
+      openTeardown: this.openTeardown,
+      closeTeardown: this.closeTeardown,
+      onScroll: this.onScroll,
+      leaving,
+      leaveClass: leaving ? 'bx-leave' : '',
+      setLink: (el) => { this.link = el; },
+      go: (e) => {
+        if (this.pass) { this.pass = false; return; }
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        e.preventDefault();
+        if (leaving) return;
+        this.setState({ leaving: true });
+        this.timers.push(setTimeout(() => {
+          this.pass = true;
+          if (this.link) this.link.click();
+        }, 420));
+        this.timers.push(setTimeout(() => {
+          this.pass = false;
+          if (!this.gone) this.setState({ leaving: false });
+        }, 2500));
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
