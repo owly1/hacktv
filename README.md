@@ -161,6 +161,24 @@ up to 4 m below the camera. The entire QR must stay visible.
 screen size fixed. A failed or ambiguous QR pose never falls back to an assumed
 floor height. The dashboard rectangle can appear before flight geometry is ready.
 
+To evaluate a suspected constant QR height error, run the offline check:
+
+```bash
+.venv/bin/python scripts/check_qr_bias.py \
+  anafi_out/fire-ground-checks/qr-metric-check-results.local.json \
+  anafi_out/fire-ground-checks/measured-13cm-75cm-live-check.local.json \
+  --down-offset-m -0.20 --output /tmp/qr-bias-review.json
+```
+
+Use an output file that does not already exist. The check compares the requested
+vertical offset with offset/scale candidates fitted using only the first setup,
+reports errors on the remaining setups, and preserves horizontal errors. Repeated
+frames at one setup count once. Its default 5 cm tolerance is a diagnostic target,
+not a flight authorization threshold. Checks at one height cannot establish how
+either correction behaves after takeoff. The tool never changes flight calibration
+or marks a pose verified; add independently measured setups at different heights
+and camera angles before considering a correction for flight.
+
 RGB fire localization still uses the visible ground contact on a **verified
 launch ground plane**. It requires `ground_plane_offset_m` and
 `fire_ground_plane_verified: true`, supports an initial range of 0.5–3 m and a
