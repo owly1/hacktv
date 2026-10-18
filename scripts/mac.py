@@ -131,7 +131,7 @@ def prepare_command(config):
     """Build guarded service/Wi-Fi preparation that refuses competing aircraft receivers."""
     return '\n'.join([
         'set -eu',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle|real_fire_bridge)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         'systemctl --user stop emberwatch-bridge.service',
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
@@ -197,7 +197,7 @@ def runtime_command(config, mode, execute, native=False):
     # Recheck for competing receivers immediately before opening the SDK link.
     return '\n'.join([
         'set -eu', f'cd "$HOME"/{directory}', 'test -r mac.env',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle|real_fire_bridge)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
         "  echo 'Another observation receiver is running; stop it in its own terminal.' >&2; exit 73; fi",

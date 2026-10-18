@@ -99,6 +99,7 @@ for team work unless the user explicitly changes that decision.
 | Detection and common aircraft link | `bridge/anafi_bridge.py`, `bridge/fire_monitor.py` |
 | Laptop fire/person inference | `bridge/fire_location.py`, `bridge/person_detection.py`, `scripts/vision.mjs`, [live demo](docs/LIVE_DEMO_DASHBOARD.md) |
 | Flight gates, geometry, SDK adapter | `bridge/qr_*`, `bridge/hover_checkout.py` |
+| Experimental physical real-fire buffer | `bridge/real_fire_*`, [100 m controller](docs/REAL_FIRE_FLIGHT.md); separately enabled, requires physical validation |
 | Laptop startup | `scripts/`, [Windows](docs/RESTART_CURRENT_LAPTOP.md), [Mac](docs/MAC_SETUP.md) |
 | Evidence already recorded | [VERIFIED.md](docs/VERIFIED.md) |
 

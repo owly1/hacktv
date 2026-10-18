@@ -1,5 +1,10 @@
 # Real-fire distance advisory
 
+This guide describes the dashboard display. A separate [physical real-fire
+controller](REAL_FIRE_FLIGHT.md) now commands outward retreat to maintain the
+100 m estimated edge buffer when explicitly enabled and armed. The dashboard
+itself remains unable to pilot.
+
 The live dashboard displays a size-based distance recommendation for confirmed
 RGB fire detections. The requested **100 m** is interpreted as a buffer from
 the **estimated fire edge**, not a fixed distance from the centre.
@@ -53,7 +58,8 @@ flat ground plane. It is not a verified fire perimeter, a surveyed terrain
 model or a calibrated thermal/heat-distance model. The 100 m buffer is the
 operator-selected policy, not an established safe-flight clearance.
 
-There is no automatic retreat, path planning, obstacle checking, or guarantee
+This display performs no automatic retreat, path planning or obstacle checking,
+and offers no guarantee
 that the chosen distance is reachable. The existing indoor QR flight mode
 remains separately enabled and uses its bounded indoor scaling rule.
 

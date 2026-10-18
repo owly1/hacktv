@@ -1,5 +1,50 @@
 # Fire size handoff
 
+## Physical real-fire controller correction
+
+Task / owner: Implement actual outward aircraft movement to maintain the
+100 m real-fire edge buffer, retaining the scaled QR demo / Codex.
+
+Branch / commit: `fire-size`; controller implementation commit containing
+this section. Updated shared `origin/main` was merged before this extension.
+
+Changed files and behavior:
+- `real_fire_core.py`: conservative projected fire envelope, fixed 100 m edge
+  buffer plus uncertainty/control margin, bounded outward steps, continuous
+  growth response, fresh post-move feedback and one-use execution gates.
+- `real_fire_driver.py`: acknowledged bounded movement and explicit physical
+  stop/landing callbacks, independently testable without Olympe.
+- `real_fire_bridge.py`: actual SDK motion/stop/landing bindings on one owned
+  controller connection, real-event age checks, real camera projection,
+  verified configuration/preflight, terminal arming and nonblocking reporting.
+- False configuration/preflight examples and [flight guide](REAL_FIRE_FLIGHT.md).
+  Existing launchers refuse a competing real-fire receiver. The mode is not
+  included in the indoor demo menu and does not automatically take off.
+
+Contracts or decisions changed: The user clarified that real-fire standoff
+must physically move the aircraft, not only display advice. The dashboard
+still cannot pilot. The selected QR still commands its separate 1.25 m scaled
+radius sequence, never a 100 m retreat. Real-fire faults interrupt relative
+movement and latch stopped; no automatic landing location is chosen near fire.
+LAND remains an explicit operator action. Fire extent remains a camera/ground
+model estimate, not a physically verified wildfire perimeter.
+
+Checks run (including skips): 150 Node tests passed. New pure/controller and
+fake-SDK adapter tests: 28 passed. Existing Python fire tests: 22 passed; QR
+tests: 38 passed and 60 real-SDK-dependent checks skipped because Olympe is
+unavailable. WSL Mac launcher tests: 14 passed. Python compilation, PowerShell
+syntax and diff checks passed. New adapter tests exercise production wiring
+with a fake SDK surface; they do not establish actual SDK/firmware compatibility.
+
+Hardware/cloud evidence (or not checked): No aircraft connection, deployment,
+motor command, real fire or physical flight validation. Existing services were
+not changed. All command tests use a fake aircraft.
+
+Open issue / next step: Stage SDK/firmware binding checks, zero-move stop and
+controller override tests, surveyed camera/ground/error-bound checks and a
+cleared flight-area trial before real execution. The controller cannot claim
+100 m physical clearance outside its verified measurement/environment bounds.
+
 ## Real-fire advisory follow-up
 
 Task / owner: Display real-fire distance advice with the user-selected 100 m

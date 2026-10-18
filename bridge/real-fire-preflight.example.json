@@ -1,0 +1,14 @@
+{
+  "pilot_present": false,
+  "controller_override_tested": false,
+  "zero_move_stop_tested": false,
+  "landing_control_tested": false,
+  "flight_area_clear": false,
+  "flat_ground_verified": false,
+  "extent_and_gps_error_bound_verified": false,
+  "camera_unzoomed_yaw_aligned": false,
+  "wind_and_energy_checked": false,
+  "single_receiver_verified": false,
+  "checked_at_unix": 0,
+  "mission_limits": {}
+}
