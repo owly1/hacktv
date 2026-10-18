@@ -621,6 +621,7 @@
   // The Dashboard always mounts under the transition cover.
   T.arrive({ content: $('dash-content') });
 
-  // Exposed for the return transition (stop playback before leaving).
-  window.BoscoDashboard = { stopPlayback };
+  // Rail logo → Home: the mirror of Get started. Playback stops first, and the
+  // one-shot flag tells Home to play its arrive intro.
+  T.bindLink($('rail-home'), () => ({ content: $('dash-content'), beforeLeave: stopPlayback, flag: T.HOME_INTRO_FLAG }));
 })();

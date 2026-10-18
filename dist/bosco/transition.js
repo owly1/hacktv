@@ -40,7 +40,8 @@
     if (flag) { try { sessionStorage.setItem(flag, '1'); } catch (err) { /* storage blocked: next page skips its intro */ } }
     if (reducedMotion()) { location.href = href; return; }
     leaving = true;
-    for (const el of [].concat(content)) if (el) el.classList.add('bx-leave');
+    // Drop a finished arrive animation first; otherwise it would override the recede.
+    for (const el of [].concat(content)) if (el) { el.classList.remove('bx-rise'); el.classList.add('bx-leave'); }
     document.body.appendChild(makeCover('in'));
     leaveTimer = setTimeout(() => { location.href = href; }, NAVIGATE_AFTER_MS);
   }
