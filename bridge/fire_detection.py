@@ -6,6 +6,19 @@ import numpy as np
 
 QR_PREFIX = "EW1:"
 
+# YOLO false-alarm filters
+DEFAULT_CONF = 0.65           # minimum YOLO score
+MIN_BOX_AREA = 0.0005         # boxes smaller than this fraction of the frame are noise
+MAX_BOX_AREA = 0.6            # ...and larger than this are whole-frame washes (sky, sun, lens flare)
+FLAME_HSV_LO = (0, 100, 170)  # bright, saturated red-orange-yellow pixels
+FLAME_HSV_HI = (35, 255, 255)
+MIN_FLAME_FRACTION = 0.04     # share of a "fire" box that must be flame-coloured
+
+# Confirmation: a QR payload is exact, a YOLO box needs a longer, steadier run
+QR_CONFIRM_HITS = 3
+YOLO_CONFIRM_HITS = 5
+TRACK_MIN_IOU = 0.1           # a YOLO hit must overlap the previous one to extend the run
+
 INTENSITY_CODES = {"L": "low", "M": "moderate", "H": "high", "X": "extreme"}
 FUEL_CODES = {"F": "dry conifer forest", "G": "cured grass", "M": "dry mixed forest and grass", "S": "brush and shrub"}
 
@@ -48,10 +61,13 @@ def parse_marker(text):
 
 
 class FireDetector:
-    """One-frame YOLO/QR detection; the caller handles episode confirmation."""
+    """One-frame YOLO/QR detection; the caller handles episode confirmation.
+    YOLO boxes must be plausibly sized and, for fire, flame-coloured; smoke is
+    ignored unless detect_smoke (it fires on fog, dust, haze and clouds)."""
 
-    def __init__(self, model_path, conf, use_yolo=True):
+    def __init__(self, model_path, conf=DEFAULT_CONF, use_yolo=True, detect_smoke=False):
         self.conf = conf
+        self.labels = ('fire', 'smoke') if detect_smoke else ('fire',)
         # Two QR readers: the classic one is fast; the ArUco-based one finds
         # small, tilted or noisy codes the classic one misses.
         self.qr_readers = [cv2.QRCodeDetector()]
@@ -115,7 +131,12 @@ class FireDetector:
         for box, cls, score in zip(result.boxes.xyxyn.tolist(), result.boxes.cls.tolist(),
                                    result.boxes.conf.tolist()):
             label = str(self.model.names[int(cls)]).lower()
-            if label not in ('fire', 'smoke'):
+            if label not in self.labels:
+                continue
+            area = (box[2] - box[0]) * (box[3] - box[1])
+            if not MIN_BOX_AREA <= area <= MAX_BOX_AREA:
+                continue
+            if label == "fire" and flame_fraction(bgr, box) < MIN_FLAME_FRACTION:
                 continue
             # fire outranks smoke at equal confidence: it's the more specific evidence
             rank = score + (0.05 if label == "fire" else 0.0)
@@ -123,3 +144,31 @@ class FireDetector:
                 best = (rank, {"source": "yolo", "label": label, "confidence": round(float(score), 3),
                                "bbox": [round(v, 4) for v in box], "details": None})
         return best[1] if best else None
+
+
+def flame_fraction(bgr, box):
+    """Share of pixels inside a normalized box that look like flame (bright, warm, saturated)."""
+    h, w = bgr.shape[:2]
+    x1, y1 = int(box[0] * w), int(box[1] * h)
+    x2, y2 = max(x1 + 1, int(box[2] * w)), max(y1 + 1, int(box[3] * h))
+    mask = cv2.inRange(cv2.cvtColor(bgr[y1:y2, x1:x2], cv2.COLOR_BGR2HSV), FLAME_HSV_LO, FLAME_HSV_HI)
+    return float(np.count_nonzero(mask)) / mask.size
+
+
+def box_iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def confirm_hits(hit):
+    """Consecutive hits needed before this kind of hit opens an episode."""
+    return QR_CONFIRM_HITS if hit["source"] == "qr-test" else YOLO_CONFIRM_HITS
+
+
+def same_spot(hit, previous_bbox):
+    """QR hits are matched by payload; YOLO hits must stay in roughly the same place."""
+    return hit["source"] == "qr-test" or (previous_bbox is not None
+                                           and box_iou(hit["bbox"], previous_bbox) >= TRACK_MIN_IOU)

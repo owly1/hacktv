@@ -16,7 +16,8 @@ What it does, all at once:
     backend to the dashboard's ANAFI-01 panel.
   * Fire detection on the camera feed (~5 Hz): a YOLOv8 fire/smoke model, plus
     the Emberwatch QR test marker (bridge/make_test_marker.py) that stands in
-    for a large fire and carries its details. Three consecutive hits start a
+    for a large fire and carries its details. Three consecutive QR hits, or
+    five same-spot YOLO fire hits (smoke only with --detect-smoke), start a
     detection episode -> POST /api/ingest/detection with the frame and the
     fire's ground position, computed from drone position, altitude, heading,
     camera tilt and where the fire sits in the frame.
@@ -94,7 +95,6 @@ QR_PREFIX = "EW1:"
 
 # Detection episode rules
 DETECT_HZ = 5.0
-CONSECUTIVE_HITS = 3          # hits in a row before a fire counts
 EPISODE_UPDATE_S = 5.0        # re-post an ongoing fire this often
 EPISODE_END_S = 15.0          # unseen this long -> the episode is over
 OVERLAY_TTL_S = 1.0
@@ -122,7 +122,7 @@ def dest_point(lat, lon, bearing_deg, dist_m):
     return lat + dlat, lon + dlon
 
 
-from fire_detection import FireDetector, parse_marker
+from fire_detection import DEFAULT_CONF, FireDetector, confirm_hits, parse_marker, same_spot
 
 
 # ---------------------------------------------------------------- publishing
@@ -249,6 +249,7 @@ class AnafiBridge:
         self.odo_n = self.odo_e = 0.0
         # detection state
         self.hits = 0
+        self.last_hit_box = None
         self.episode = None  # dict(id, last_seen, last_post)
         self.overlay = []    # boxes drawn on the window + sent with each video frame
         self.overlay_time = 0.0
@@ -464,15 +465,17 @@ class AnafiBridge:
         now = time.time()
         if hit is None:
             self.hits = 0
+            self.last_hit_box = None
             if self.episode and now - self.episode["last_seen"] > EPISODE_END_S:
                 print(f"[*] Fire episode {self.episode['id']} ended (not seen for {EPISODE_END_S:.0f} s)")
                 self.episode = None
             return
         self.overlay = [{k: hit[k] for k in ("source", "label", "confidence", "bbox")}]
         self.overlay_time = now
-        self.hits += 1
+        self.hits = self.hits + 1 if self.hits == 0 or same_spot(hit, self.last_hit_box) else 1
+        self.last_hit_box = hit["bbox"]
         self._track(hit, img.shape)
-        if self.hits < CONSECUTIVE_HITS:
+        if self.hits < confirm_hits(hit):
             return
         new = self.episode is None
         if new:
@@ -891,7 +894,10 @@ def argument_parser():
     parser.add_argument("--home-lon", type=float, default=DEFAULT_HOME[1])
     parser.add_argument("--model", default=os.environ.get("EMBERWATCH_MODEL", DEFAULT_MODEL),
                         help="YOLO fire/smoke weights (bridge/setup.sh downloads them)")
-    parser.add_argument("--conf", type=float, default=0.5, help="minimum fire/smoke confidence (default 0.5)")
+    parser.add_argument("--conf", type=float, default=DEFAULT_CONF,
+                        help=f"minimum fire/smoke confidence (default {DEFAULT_CONF})")
+    parser.add_argument("--detect-smoke", action="store_true",
+                        help="also alert on smoke-only detections (off by default: prone to false alarms)")
     parser.add_argument("--no-yolo", action="store_true", help="QR test marker only (skip the fire model)")
     parser.add_argument("--hfov", type=float, default=69.0, help="camera horizontal field of view, degrees")
     parser.add_argument("--marker-size", type=float, default=0.18,
@@ -918,7 +924,7 @@ def main():
         raise SystemExit("--backend needs the ingest token: export INGEST_TOKEN=... "
                          "(the value from the backend's .env)")
     publisher = Publisher(args.out_dir, args.backend, token)
-    detector = FireDetector(args.model, args.conf, use_yolo=not args.no_yolo)
+    detector = FireDetector(args.model, args.conf, use_yolo=not args.no_yolo, detect_smoke=args.detect_smoke)
     print(f"[*] Writing telemetry, snapshots and detections to {os.path.abspath(args.out_dir)}")
     if args.backend:
         print(f"[*] Posting to backend at {args.backend}")

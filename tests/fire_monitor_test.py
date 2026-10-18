@@ -62,6 +62,23 @@ class FireMonitorTests(unittest.TestCase):
             self.assertIsNone(e.observe(HIT, at, at+.01))
         self.assertEqual(e.episode, episode)
 
+    def test_yolo_needs_five_hits_in_the_same_spot(self):
+        e = Episodes()
+        yolo = {'source': 'yolo', 'label': 'fire', 'confidence': .8, 'bbox': [.1, .1, .3, .3], 'details': None}
+        moved = {**yolo, 'bbox': [.6, .6, .8, .8]}
+        for at, hit in [(100, yolo), (100.2, yolo), (100.4, yolo), (100.6, moved)]:
+            self.assertIsNone(e.observe(hit, at, at+.01))
+        for at in [100.8, 101, 101.2]:
+            self.assertIsNone(e.observe(moved, at, at+.01))
+        self.assertTrue(e.observe(moved, 101.4, 101.41))
+
+    def test_yolo_filters_drop_non_flame_boxes(self):
+        from fire_detection import flame_fraction
+        frame = np.full((100, 100, 3), 200, np.uint8)  # grey: haze, sky, concrete
+        frame[:50, :50] = (0, 120, 255)                 # orange flame patch
+        self.assertGreater(flame_fraction(frame, [0, 0, .5, .5]), .9)
+        self.assertEqual(flame_fraction(frame, [.5, .5, 1, 1]), 0)
+
     def test_only_qr_uses_labeled_scenario_position(self):
         site = {'latitude': 43., 'longitude': -79.}
         qr = detection_payload(HIT, b'jpeg', 100, 'test', site=site)

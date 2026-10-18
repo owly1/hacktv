@@ -33,7 +33,10 @@ Returns 204. The bridge reuses one keep-alive connection per thread.
 
 ## Fire detection — `POST /api/ingest/detection`
 
-Sent when a fire has been seen in **3 consecutive** detector passes (~5 Hz),
+Sent when a fire has been seen in **3 consecutive** detector passes (~5 Hz)
+for a QR test marker, or **5 consecutive** passes at overlapping positions for
+a YOLO hit (score ≥ 0.65, plausible box size, flame-coloured pixels; smoke
+only with `--detect-smoke`),
 then every 5 s while it stays in view. A run of sightings shares one
 `episode_id`; it ends after 15 s unseen. The first sighting of an episode
 triggers one automatic Gemini analysis.

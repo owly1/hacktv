@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 import cv2
 import numpy as np
-from fire_detection import FireDetector
+from fire_detection import FireDetector, confirm_hits, same_spot
 
 
 def iso(at):
@@ -21,10 +21,11 @@ def iso(at):
 
 
 class Episodes:
-    """Confirm three distinct fresh frames; retry failed posts in one episode."""
+    """Confirm 3 fresh QR frames or 5 same-spot YOLO frames; retry failed posts in one episode."""
     def __init__(self):
         self.last_capture = None
         self.identity = None
+        self.last_bbox = None
         self.hits = 0
         self.episode = None
         self.last_seen = 0
@@ -49,9 +50,12 @@ class Episodes:
             self.hits = 0
             self.episode = None
             self.identity = identity
+        if self.hits and not same_spot(hit, self.last_bbox):
+            self.hits = 0
+        self.last_bbox = hit['bbox']
         self.hits += 1
         self.last_seen = now
-        if self.hits < 3:
+        if self.hits < confirm_hits(hit):
             return None
         if self.episode is None:
             self.episode = 'vision-' + secrets.token_hex(8)
@@ -170,7 +174,7 @@ def main():
             torch.set_num_threads(2)
         except ImportError:
             pass  # The QR detector still works; model health reports the gap.
-        detector = FireDetector(args.model, .5)
+        detector = FireDetector(args.model)
         print('Fire monitor: QR + RGB inference; no flight commands.', flush=True)
         Monitor(args.backend, os.environ['DASHBOARD_TOKEN'], os.environ['INGEST_TOKEN'], detector).run()
 
