@@ -16,6 +16,13 @@ spec.loader.exec_module(bridge)
 
 
 class BridgeContractTests(unittest.TestCase):
+    def test_camera_rate_allows_full_source_rate_or_explicit_throttling(self):
+        self.assertEqual(bridge.camera_fps('0'),0)
+        self.assertEqual(bridge.camera_fps('30'),30)
+        self.assertEqual(bridge.camera_fps('0.5'),.5)
+        for value in ('-1','nan','inf','0.1','61'):
+            with self.assertRaises(bridge.argparse.ArgumentTypeError):bridge.camera_fps(value)
+
     def test_camera_watchdog_covers_startup_and_stalled_stream(self):
         self.assertFalse(bridge.session_stalled(None, 100, 110))
         self.assertTrue(bridge.session_stalled(None, 100, 116))

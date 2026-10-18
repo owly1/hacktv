@@ -155,7 +155,7 @@ def runtime_command(config, mode, execute, native=False):
         if execute:
             raise ValueError('Observation mode cannot execute flight commands.')
         program = ['anafi_observer.py', '--camera', '--camera-transport', 'frame',
-                   '--camera-fps', '10', '--camera-width', '0' if native else '640']
+                   '--camera-fps', '0', '--camera-width', '0' if native else '640']
     else:
         program = [{'qr-preset': 'qr_preset_demo.py', 'hover': 'hover_checkout.py',
                     'qr-circle': 'qr_auto_circle.py'}[mode],

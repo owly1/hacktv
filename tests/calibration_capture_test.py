@@ -1,5 +1,6 @@
 """Calibration UX and geometry checks, with synthetic images and no aircraft."""
 import json
+import io
 import http.client
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -89,6 +90,57 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'resolution'):s.capture(10,7)
             self.assertEqual(s.count,1)
 
+    def test_resume_preserves_photos_and_uses_saved_board_dimensions(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);s=CaptureSession(root,8,8,lambda:(board(8,8),'1'));s.capture(8,8)
+            original=(root/'view-01.png').read_bytes()
+            resumed=CaptureSession(root,10,7,lambda:(board(8,8),'2'),resume=True)
+            self.assertEqual((resumed.count,resumed.columns,resumed.rows),(1,8,8))
+            self.assertEqual(resumed.capture(8,8)['count'],2)
+            self.assertEqual((root/'view-01.png').read_bytes(),original)
+            (root/'view-02.png').rename(root/'view-03.png')
+            with self.assertRaisesRegex(ValueError,'sequence'):
+                CaptureSession(root,10,7,s.camera,resume=True)
+
+    def test_new_set_keeps_old_photos_and_resets_coverage(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'session';s=CaptureSession(root,10,7,lambda:(board(),'1'))
+            s.capture(10,7)
+            self.assertIn('horizontal 0% / 25%',s.status()['coverage'])
+            original=(root/'view-01.png').read_bytes()
+            s.centers=[(0.2,0.2),(0.6,0.6)]
+            self.assertIn('Position coverage reached',s.status()['coverage'])
+            result=s.new_session()
+            self.assertEqual(result['count'],0)
+            self.assertEqual(s.centers,[])
+            self.assertNotEqual(s.root,root)
+            self.assertEqual((root/'view-01.png').read_bytes(),original)
+            self.assertEqual(s.capture(10,7)['count'],1)
+            self.assertTrue((s.root/'view-01.png').exists())
+
+    def test_video_proxy_streams_original_bytes_without_camera_decoding(self):
+        payload=b'--frame\r\nContent-Type: image/jpeg\r\n\r\nfirst\r\n--frame\r\nsecond\r\n'
+        with tempfile.TemporaryDirectory() as d:
+            def camera(): raise AssertionError('Video must not fetch/decode snapshots')
+            s=CaptureSession(Path(d),10,7,camera)
+            def stream():
+                upstream=io.BytesIO(payload)
+                upstream.headers={'Content-Type':'multipart/x-mixed-replace; boundary=frame'}
+                return upstream
+            server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(s,stream,lambda:{'fresh':True,'fps':30}))
+            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            conn=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
+            try:
+                conn.request('GET','/video');response=conn.getresponse()
+                self.assertEqual(response.status,200)
+                self.assertEqual(response.getheader('Content-Type'),'multipart/x-mixed-replace; boundary=frame')
+                self.assertEqual(response.read(),payload)
+                conn.request('GET','/video-status');response=conn.getresponse()
+                self.assertEqual(json.loads(response.read()),{'fresh':True,'fps':30})
+                conn.request('GET','/video',headers={'Sec-Fetch-Site':'cross-site'})
+                response=conn.getresponse();self.assertEqual(response.status,403);response.read()
+            finally:conn.close();server.shutdown();server.server_close();thread.join()
+
     def test_browser_capture_requires_same_origin_and_returns_feedback(self):
         with tempfile.TemporaryDirectory() as d:
             s=CaptureSession(Path(d),10,7,lambda:(board(),'1'))
@@ -105,6 +157,11 @@ class CaptureTests(unittest.TestCase):
                 self.assertEqual(json.loads(response.read())['count'],1)
                 conn.request('GET','/attempt.jpg');response=conn.getresponse()
                 self.assertEqual(response.status,200);self.assertTrue(response.read().startswith(b'\xff\xd8'))
+                conn.request('POST','/new-session','{}',{'Origin':'http://untrusted.example'})
+                response=conn.getresponse();self.assertEqual(response.status,403);response.read()
+                conn.request('POST','/new-session','{}',{'Origin':'http://'+host})
+                response=conn.getresponse();self.assertEqual(response.status,200)
+                self.assertEqual(json.loads(response.read())['count'],0)
             finally:conn.close();server.shutdown();server.server_close();thread.join()
 
 

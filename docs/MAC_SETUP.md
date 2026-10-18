@@ -244,11 +244,31 @@ accepted photo:
 .venv/bin/python bridge/calibrate_camera.py capture --web --directory anafi_out/calibration-browser
 ```
 
-Open <http://127.0.0.1:8791/> and click **Capture photo** for each view. The supplied
-sheet is 10 squares across and 7 down (54 inner corners). Other board dimensions
+Open <http://127.0.0.1:8791/> and click **Capture photo** for each view. Count the
+squares on your actual sheet: the default is 10 across and 7 down (54 inner
+corners); a 12 × 7 sheet needs 11 × 6 inner corners. Board dimensions
 can be selected before the first accepted photo. Dimensions are saved with the
 session and automatically used by `fit --directory anafi_out/calibration-browser`.
 Rejected photos are displayed but never included in calibration. The terminal
 capture mode also saves `last-attempt.jpg` and prints its path on rejection.
 The detector uses CPU processing, lighting normalization and a classic-corner
 fallback. Calibration quality and physical verification requirements remain.
+
+Attach the paper flat to a rigid board before capture. Bending paper changes the
+geometry even when every corner is detected. Vary tilt, distance and position;
+include the left, right, upper and lower portions of the image. Twenty detected
+photos do not guarantee a valid fit: coverage and reprojection error are checked
+separately. Preserve a failed set for diagnosis and choose a new `--directory`
+for replacement photos. Restarting the browser command with the same directory
+restores its saved board dimensions and photo count without overwriting views.
+The page shows horizontal and vertical board-position coverage after each photo.
+Use **Start new photo set** to create a separate retake folder without deleting
+previous photos or needing another terminal. Its path is shown on the page; use
+that path with `fit --directory` or to resume the new set after a server restart.
+
+The calibration preview streams the backend's original MJPEG frames continuously,
+without polling or JPEG re-encoding. Its FPS label measures incoming backend
+frames. The Mac observation receiver defaults to `--camera-fps 0` (all frames it
+can process); native resolution is preserved with `--native-video`. Actual FPS
+depends on the aircraft stream, Pi decoding/encoding and connection. Direct
+observer launches can explicitly throttle with `--camera-fps 0.5` through `60`.

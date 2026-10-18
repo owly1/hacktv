@@ -63,6 +63,7 @@ class MacLauncherTests(unittest.TestCase):
         command = mac.runtime_command(mac.DEFAULTS, 'observe', False)
         self.assertIn('anafi_observer.py', command)
         self.assertIn('--camera-transport frame', command)
+        self.assertIn('--camera-fps 0', command)
         self.assertNotIn('--execute', command)
         with self.assertRaises(ValueError):
             mac.runtime_command(mac.DEFAULTS, 'observe', True)
