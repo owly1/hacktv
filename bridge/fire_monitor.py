@@ -137,6 +137,13 @@ class Monitor:
             self.episodes.acknowledged(time.time())
             self.health.update(last_detection_at=iso(captured), last_source=hit['source'])
             print(f"Detection accepted: {hit['source']} / {hit['label']} ({episode})", flush=True)
+        # Send fresh rectangles independently of incident updates (which are
+        # deliberately rate-limited to five seconds). Missing hits clear lock.
+        self.post('/api/ingest/autonomy/target', {
+            'captured_at': iso(captured), 'width': image.shape[1], 'height': image.shape[0],
+            'episode_id': self.episodes.episode,
+            'hit': {k: hit[k] for k in ('source','label','confidence','bbox','qr_text') if k in hit}
+                   if hit and hit['label']=='fire' else None})
 
     def run(self):
         while True:

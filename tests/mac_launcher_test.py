@@ -107,6 +107,31 @@ class MacLauncherTests(unittest.TestCase):
             self.assertNotIn('--preflight-file',text)
             self.assertNotIn('ARM QR PRESET',text)
 
+    def test_fire_response_is_session_controlled_with_native_video(self):
+        command=mac.runtime_command(mac.DEFAULTS,'fire-response',False)
+        self.assertIn('python -u fire_response.py',command)
+        self.assertIn('--video-width 0',command)
+        self.assertIn('--video-fps 30',command)
+        self.assertIn('--camera-calibration camera.local.json',command)
+        self.assertNotIn('--execute',command)
+        self.assertIn('fire_response',mac.prepare_command(mac.DEFAULTS))
+        with self.assertRaisesRegex(ValueError,'dashboard session'):
+            mac.runtime_command(mac.DEFAULTS,'fire-response',True)
+
+    def test_fire_supervisor_restarts_monitor_and_receiver_without_enabling(self):
+        child=Mock(wait=Mock(side_effect=[subprocess.TimeoutExpired('receiver',1),0]))
+        monitor=Mock(poll=Mock(side_effect=[None,1]))
+        with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
+             patch.object(mac,'start_fire_monitor',side_effect=[monitor,Mock()]) as vision, \
+             patch.object(mac,'backend_status'),patch.object(mac,'remote'), \
+             patch.object(mac,'sync_clock'),patch.object(mac,'fetch_flights'), \
+             patch.object(mac.subprocess,'Popen',return_value=child) as launch, \
+             patch.object(mac.time,'sleep',side_effect=KeyboardInterrupt):
+            mac.supervise_fire_response(mac.DEFAULTS,{'PORT':8787},'fire_response.py')
+        self.assertEqual(vision.call_count,2)
+        self.assertIn('-T',launch.call_args.args[0])
+        self.assertNotIn('--execute',' '.join(launch.call_args.args[0]))
+
     def test_connection_guards_precede_runtime_start(self):
         preparation = mac.prepare_command(mac.DEFAULTS)
         self.assertLess(preparation.index('A flight checkout is already running'), preparation.index('systemctl --user stop'))
@@ -125,6 +150,14 @@ class MacLauncherTests(unittest.TestCase):
         self.assertIn('signal.SIGINT', code)
         self.assertNotIn('qr_preset_demo.py', code)
         compile(code, '<remote-stop-observer>', 'exec')
+
+    def test_fire_shutdown_signals_only_this_deployments_response_receiver(self):
+        code=shlex.split(mac.stop_receiver_command(mac.DEFAULTS,'fire_response.py','fire response'))[-1]
+        self.assertIn("b'fire_response.py' in argv",code)
+        self.assertIn("(process / 'cwd').resolve() == root.resolve()",code)
+        self.assertIn('signal.SIGINT',code)
+        self.assertNotIn('SIGKILL',code)
+        compile(code,'<remote-stop-response>','exec')
 
     def test_deployment_keeps_existing_pi_credentials_separate(self):
         token = "test token with ' quotes and $dollars"

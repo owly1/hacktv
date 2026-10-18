@@ -552,3 +552,12 @@ body.panel-fullscreen{overflow:hidden}
  .guide-page table,.guide-card,.flow-image{break-inside:avoid}
  .guide-page pre{background:white;color:var(--ink);border:1px solid var(--line)}
 }
+/* Flight authorization is deliberately visible beside the live status. */
+.autonomy-panel{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 22px;margin:14px 0 22px;border:1px solid var(--line-2);border-radius:16px;background:var(--surface)}
+.autonomy-panel h2{font-size:16px;margin:0 0 7px;display:flex;gap:12px;align-items:center}
+.autonomy-panel p{margin:4px 0;color:var(--ink-2);font-size:13px}
+.autonomy-panel .microcopy{color:var(--muted);font-size:12px}
+.autonomy-actions{display:flex;gap:10px;flex-shrink:0}
+.autonomy-land{border-color:var(--ember-ink);color:var(--ember-ink);background:var(--ember-pale)}
+.autonomy-panel[data-enabled=true]{border-color:#e8562a;box-shadow:inset 4px 0 #e8562a}
+@media(max-width:800px){.autonomy-panel{align-items:stretch;flex-direction:column;gap:12px}.autonomy-actions .button{flex:1}}

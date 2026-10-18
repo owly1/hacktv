@@ -131,6 +131,51 @@ measured-marker orbit requires the actual printed size in its calibration.
 
 ## Automatic QR flight experiment
 
+### Autonomous fire response (this branch)
+
+On a provisioned Mac, `npm start` starts the backend and a **disarmed** Pi fire
+response receiver. Use **Enable this session** in the live dashboard to permit
+confirmed RGB fire detections or the approved QR fire marker to trigger takeoff.
+The camera displays the current fire rectangle and distinguishes confirmation
+from a located target. Smoke, other QR codes, replay, old detections and a
+single unconfirmed frame cannot authorize flight.
+
+The receiver locates the fire's ground contact using calibrated video pixels,
+the actual gimbal attitude and aircraft height. After a stable position is
+acquired, it aligns to a one-metre radius and repeatedly circles the measured
+target, updating the camera aim and path from fresh observations. It never
+substitutes the old launch-relative circle when position is unavailable.
+
+This mode supports a small, fully visible target on the **verified launch ground
+plane**: initial range 0.5–3 m, observed ground-contact width at most 0.6 m,
+approximately 1 m flight height. It does not infer arbitrary terrain, elevated
+fires or depth behind an obstruction. The saved `camera.local.json` must include
+measured `camera_offset_body_m`, camera intrinsics at the streamed resolution,
+`ground_plane_offset_m` (ground-plane offset from the altitude reference), and
+`fire_ground_plane_verified: true` only after physical validation at known
+positions. No QR size is required for this ground-plane method. The current Mac
+calibration still lacks measured camera offsets and this physical verification;
+the dashboard consequently keeps Enable unavailable and explains why.
+
+**LAND & disable**, closing the controlling live page, stale control/telemetry,
+lost or inconsistent target position, low battery, and the five-minute limit
+request landing. A completed flight disables the session; enable again for a
+new fire episode. The same episode cannot trigger repeated takeoffs. Backend
+and receiver restarts always return to OFF. Video and movement diagnostics are
+recorded and copied back to the Mac after flight.
+
+To run the backend without automatically starting the Pi receiver:
+`EMBERWATCH_RECEIVER=off npm start`. To start the receiver separately, use
+`.venv/bin/python scripts/mac.py pi --mode fire-response --headless` after stopping
+the observer. The laptop RGB detector runs alongside it; no `--execute` flag
+is used. Only one laptop may own the aircraft connection at a time.
+The automatic launcher and laptop detector are currently supported on macOS;
+the existing Windows QR launchers retain their previous behavior. This new
+mode has software and mocked-SDK coverage, but its real-flight localization
+and orbit accuracy have not yet been physically validated.
+
+### Existing QR modes
+
 These modes are included in main. Ordinary observation and historical replay
 do not enable flight. Both automatic flight modes require the exact fire marker,
 five fresh scans and an accepted backend incident before takeoff.

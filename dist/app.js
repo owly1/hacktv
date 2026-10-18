@@ -16,6 +16,7 @@ const state = {
   mode: 'live', token: '', connected: false, status: null,
   site: {name: 'UTSC · Sam Ibrahim Building', latitude: 43.7866, longitude: -79.1903},
   telemetry: null, incident: null, episodeSeen: null, flight: {events: [], path: []},
+  autonomy: null,
   analysis: null, analysisMeta: null, plan: null, planDirty: false,
   scenario: {...M.BASE}, detectedScenario: null, minute: 0, playing: false, speed: 1,
   // created_at of the analysis whose derived wind last set scenario.wind, the
@@ -38,6 +39,58 @@ async function api(path, {method = 'GET', body, timeout = 12000} = {}) {
   return response;
 }
 const getJson = async (path, opts) => (await api(path, opts)).json();
+
+let autonomousSession = null;
+let autonomyRevision = 0, autonomyActionPending = false;
+function renderAutonomy() {
+  const a=state.autonomy, enabled=!!a?.enabled;
+  $('autonomy-state').textContent=enabled?'ENABLED':'OFF';
+  $('autonomy-state').className='pill '+(enabled?'soft-orange':'muted');
+  $('autonomy-enable').disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.ready;
+  $('autonomy-enable').textContent=enabled?'Response enabled':'Enable this session';
+  const phase=a?.receiver?.phase;
+  const position=a?.receiver?.position;
+  $('autonomy-detail').textContent=state.mode!=='live'?'Enable is available in Live mode only. LAND remains available.':
+    !a?'Flight control unavailable.':!a.receiver?'Flight receiver offline. Start the fire-response receiver.':
+    enabled?(position?`Tracking fire: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right · ${phase}`:
+      a.mission?`Locating fire · ${a.receiver.reason}`:a.reason):a.receiver.reason||a.reason;
+  document.querySelector?.('.autonomy-panel')?.setAttribute('data-enabled',String(enabled));
+}
+async function pollAutonomy() {
+  if (autonomyActionPending) return;
+  const revision=autonomyRevision;
+  try {
+    let response;
+    if (autonomousSession && state.mode==='live') {
+      response=await getJson('/api/autonomy',{method:'POST',body:{action:'heartbeat',session_id:autonomousSession},timeout:1500});
+    } else {
+      if (autonomousSession) await api('/api/autonomy',{method:'POST',body:{action:'land'},timeout:1500});
+      if (revision!==autonomyRevision) return;
+      autonomousSession=null;
+      response=await getJson('/api/autonomy',{timeout:1500});
+    }
+    if (revision!==autonomyRevision) return;
+    state.autonomy=response;
+    if (!state.autonomy.enabled) autonomousSession=null;
+  } catch {
+    if (revision!==autonomyRevision) return;
+    autonomousSession=null; state.autonomy=null;
+  }
+  renderAutonomy();
+}
+async function setAutonomy(action) {
+  if (action==='enable' && (state.mode!=='live'||autonomyActionPending)) return;
+  const revision=++autonomyRevision;
+  autonomyActionPending=true; renderAutonomy();
+  try {
+    const response=await getJson('/api/autonomy',{method:'POST',body:{action},timeout:1500});
+    if (revision!==autonomyRevision) return;
+    state.autonomy=response;
+    autonomousSession=action==='enable'?state.autonomy.session_id:null;
+    toast(action==='enable'?'Autonomous response enabled for this live session.':'Landing requested; autonomous response disabled.');
+  } catch(error) {toast(error.message);}
+  finally {if(revision===autonomyRevision){autonomyActionPending=false;renderAutonomy();}}
+}
 
 // ------------------------------------------------------------- banner/heading
 
@@ -289,13 +342,17 @@ async function drawFrame(f) {
     const canvas = $('camera'), ctx = canvas.getContext('2d');
     if (canvas.width !== bmp.width) { canvas.width = bmp.width; canvas.height = bmp.height; }
     ctx.drawImage(bmp, 0, 0); bmp.close();
-    for (const d of f.detections) {
+    const tracked=state.autonomy?.observed_target;
+    const located=tracked && state.autonomy?.receiver?.position?.episode_id===tracked.episode_id;
+    const boxes=tracked && Math.abs(Date.parse(f.captured)-tracked.at)<600
+      ? [{...tracked,label:located?'FIRE · LOCATED':tracked.hits>=5 && tracked.at-tracked.first>=800?'FIRE · CONFIRMED':'FIRE · CONFIRMING',tracked:true}] : f.detections;
+    for (const d of boxes) {
       const [x1, y1, x2, y2] = d.bbox, w = canvas.width, h = canvas.height;
       ctx.strokeStyle = '#E8562A'; ctx.lineWidth = Math.max(3, w / 240); ctx.strokeRect(x1 * w, y1 * h, (x2 - x1) * w, (y2 - y1) * h);
-      ctx.fillStyle = '#E8562A'; ctx.font = `600 ${Math.round(w / 40)}px 'IBM Plex Mono', ui-monospace, monospace`; ctx.fillText(`${d.source === 'qr-test' ? 'FIRE · test marker' : d.label.toUpperCase()} ${Math.round(d.confidence * 100)}%`, x1 * w, Math.max(h / 20, y1 * h - 8));
+      ctx.fillStyle = '#E8562A'; ctx.font = `600 ${Math.round(w / 40)}px 'IBM Plex Mono', ui-monospace, monospace`; ctx.fillText(`${d.source === 'qr-test' && !d.tracked ? 'FIRE · test marker' : d.label.toUpperCase()} ${Math.round(d.confidence * 100)}%`, x1 * w, Math.max(h / 20, y1 * h - 8));
     }
     const now = Date.now(); state.video.lastAt = now; state.video.times.push(now); state.video.times = state.video.times.filter(t => now - t < 2000);
-    $('camera-label').innerHTML = f.detections.length ? '<i class="hot"></i> FIRE IN VIEW' : '<i></i> LIVE · ANAFI-01';
+    $('camera-label').innerHTML = boxes.length ? '<i class="hot"></i> FIRE IN VIEW' : '<i></i> LIVE · ANAFI-01';
     $('camera-clock').textContent = f.captured ? new Date(f.captured).toLocaleTimeString() : '—';
     $('video-fps').textContent = `${(state.video.times.length / 2).toFixed(1)} fps`;
     $('video-status').textContent = 'Live camera frames via backend relay';
@@ -862,6 +919,9 @@ async function connect() {
   if (started) return; started = true;
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
+  $('autonomy-enable').onclick=()=>setAutonomy('enable');
+  $('autonomy-land').onclick=()=>setAutonomy('land');
+  every(250,'autonomy',pollAutonomy);
   every(2000, 'people', pollPeople); every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
   try { const {plan} = await getJson('/api/plan/latest'); if (plan) { state.plan = plan; renderPlan(); } } catch {}
   streamVideo();

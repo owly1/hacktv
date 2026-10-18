@@ -67,6 +67,12 @@
    <button class="button white" id="export-brief"><svg><use href="#i-down"/></svg>Export brief</button>
   </section>
   <div class="simulation-banner status-banner" id="status-banner" role="status"><svg><use href="#i-info"/></svg><span id="banner-text"><strong>Connecting to the BOSCO backend…</strong></span><button class="button compact" id="dismiss-fire" hidden>Mark false alarm</button></div>
+  <section class="autonomy-panel" aria-labelledby="autonomy-heading">
+   <div><h2 id="autonomy-heading">Autonomous fire response <span class="pill muted" id="autonomy-state">OFF</span></h2>
+    <p id="autonomy-detail" role="status">Connecting to the flight receiver…</p>
+    <p class="microcopy">Confirmed fire → takeoff → locate and circle the fire. 1 m radius · about 1 m high · up to 5 minutes. Keep this live page open.</p></div>
+   <div class="autonomy-actions"><button class="button primary" id="autonomy-enable" disabled>Enable this session</button><button class="button autonomy-land" id="autonomy-land">LAND &amp; disable</button></div>
+  </section>
   <section class="metrics" aria-label="Incident metrics">
    <article class="metric"><div class="metric-label"><svg><use href="#i-flame"/></svg>Fire area</div><div><strong id="area-value">—</strong><span class="unit">ha</span><span class="metric-context" id="area-context">no fire detected</span></div></article>
    <article class="metric"><div class="metric-label"><svg><use href="#i-wind"/></svg>Wind</div><div><strong id="wind-value">—</strong><span class="unit">km/h</span><span class="metric-context" id="wind-context">—</span></div></article>

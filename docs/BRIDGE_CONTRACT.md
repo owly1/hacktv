@@ -136,10 +136,41 @@ Crop: `POST /api/ingest/person/crop?obs_id=…`, raw JPEG body of 300 KB or
 less, returns 204. Sent after the observation, so the small alert arrives
 first.
 
-## No control channel through the backend
+## Session-controlled autonomous fire response
 
-The backend and dashboard cannot command the drone. Flight is only started
-from the bridge's terminal with `--demo-flight` and a typed `FLY`.
+The `fire_response.py` receiver uses an explicit, volatile dashboard session.
+It starts OFF. Other terminal flight modes retain their existing controls.
+
+Dashboard-token endpoints: `GET /api/autonomy` reads state;
+`POST /api/autonomy` accepts `{action: "enable"|"land"|"disable"}` or
+`{action: "heartbeat", session_id}`. Only the page that enabled the session
+renews its five-second lease. LAND is available from any authenticated page.
+
+Ingest-token endpoints:
+
+- `POST /api/ingest/autonomy/status`: receiver ID, ready boolean, reason,
+  phase and optional measured body-relative position (forward/right/width in
+  metres, episode ID). Status expires after two seconds. A different receiver
+  ID disables the old session.
+- `POST /api/ingest/autonomy/target`: captured_at, image width/height, episode_id,
+  and hit `{source, label, confidence, bbox, qr_text?}` or null to clear it.
+  Boxes are normalized `[left, top, right, bottom]`. Frames must be fresh and
+  strictly increasing. Only RGB fire or the exact approved QR qualifies.
+- `POST /api/ingest/autonomy/claim`: receiver_id, session_id, episode_id.
+  Atomically consumes one confirmed fire after a matching accepted incident.
+- `GET /api/ingest/autonomy`: reads the current session and target.
+
+Five consistent observations spanning at least 800 ms after Enable are
+required. A receiver must be ready before enabling, and a consumed episode
+cannot authorize another takeoff. Restarts, lease expiry, LAND and completed
+flights disable the session. Receivers request landing on control loss.
+
+The receiver projects the fire's visible ground contact onto a physically
+verified launch ground plane; it does not use simulated map coordinates for
+flight. Camera intrinsics, measured camera offset and verification are
+required. Localization is limited to small targets on that plane. Missing,
+stale or inconsistent geometry prevents horizontal movement and requests
+landing. Geographic fire coordinates remain unavailable indoors.
 
 ## Verify it landed
 

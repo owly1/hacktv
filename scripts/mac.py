@@ -122,7 +122,7 @@ def sync_clock(config):
 def prepare_command(config):
     return '\n'.join([
         'set -eu',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle|fire_response)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         'systemctl --user stop emberwatch-bridge.service',
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
@@ -136,6 +136,12 @@ def prepare_command(config):
 def stop_observer_command(config):
     # Only the read-only observer in this Mac's deployment can be interrupted.
     # No process from a flight mode or another laptop's directory is selected.
+    return stop_receiver_command(config,'anafi_observer.py','observation')
+
+
+def stop_receiver_command(config,program,label):
+    if program not in ('anafi_observer.py','fire_response.py'):
+        raise ValueError('Unsupported receiver stop')
     code = '''import os, signal
 from pathlib import Path
 root = Path.home() / DIRECTORY
@@ -146,18 +152,18 @@ for process in Path('/proc').iterdir():
     try:
         argv = (process / 'cmdline').read_bytes().split(b'\\0')
         if (argv and Path(os.fsdecode(argv[0])).name.startswith('python')
-                and (process / 'cwd').resolve() == root.resolve() and b'anafi_observer.py' in argv):
+                and (process / 'cwd').resolve() == root.resolve() and PROGRAM in argv):
             os.kill(int(process.name), signal.SIGINT)
             count += 1
     except (OSError, ProcessLookupError):
         pass
-print(f'Requested stop for {count} observation receiver(s). Flight sessions were not changed.')
-'''.replace('DIRECTORY', repr(config['directory']))
+print(f'Requested graceful stop for {count} LABEL receiver(s).')
+'''.replace('DIRECTORY', repr(config['directory'])).replace('PROGRAM',repr(program.encode())).replace('LABEL',label)
     return 'python3 -c ' + shlex.quote(code)
 
 
 def runtime_command(config, mode, execute, native=False):
-    if mode not in ("observe", "qr-preset", "hover", "qr-circle", "qr-demo"):
+    if mode not in ("observe", "qr-preset", "hover", "qr-circle", "qr-demo", "fire-response"):
         raise ValueError("Unknown receiver mode")
     directory = shlex.quote(config['directory'])
     common = ['--controller', 'direct', '--ip', config['drone_ip'], '--drone-id', config['drone_id'],
@@ -169,21 +175,25 @@ def runtime_command(config, mode, execute, native=False):
                    '--camera-fps', '0', '--camera-width', '0' if native else '640']
     else:
         program = [{'qr-preset': 'qr_preset_demo.py', 'hover': 'hover_checkout.py',
-                    'qr-circle': 'qr_auto_circle.py', 'qr-demo': 'qr_auto_circle.py'}[mode],
+                    'qr-circle': 'qr_auto_circle.py', 'qr-demo': 'qr_auto_circle.py',
+                    'fire-response': 'fire_response.py'}[mode],
                    '--no-window', '--out-dir', 'anafi_out']
         if mode == 'qr-demo':
             program += ['--preset', '--video-fps', '30']
+        if mode == 'fire-response':
+            if execute: raise ValueError('Fire response is enabled by the dashboard session control, not --execute')
+            program += ['--video-fps','30','--camera-calibration','camera.local.json']
         if mode == 'qr-circle' and execute:
             program += ['--camera-calibration', 'camera.local.json',
                         '--preflight-file', 'current-preflight.local.json']
-        if native or mode == 'qr-circle':
+        if native or mode in ('qr-circle','fire-response'):
             program += ['--video-width', '0']
         if execute:
             program += ['--execute']
     # Recheck for competing receivers immediately before opening the SDK link.
     return '\n'.join([
         'set -eu', f'cd "$HOME"/{directory}', 'test -r mac.env',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle|fire_response)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
         "  echo 'Another observation receiver is running; stop it in its own terminal.' >&2; exit 73; fi",
@@ -192,8 +202,8 @@ def runtime_command(config, mode, execute, native=False):
     ])
 
 
-def receiver_ssh(config, env, command):
-    return ssh_args(config) + ['-tt', '-o', 'ExitOnForwardFailure=yes', '-R',
+def receiver_ssh(config, env, command, headless=False):
+    return ssh_args(config) + ['-T' if headless else '-tt', '-o', 'ExitOnForwardFailure=yes', '-R',
         f"127.0.0.1:{config['pi_port']}:127.0.0.1:{env['PORT']}",
         '-l', config['user'], config['host'], command]
 
@@ -202,6 +212,59 @@ def start_fire_monitor(env):
     return subprocess.Popen([sys.executable, '-u', str(ROOT / 'bridge/fire_monitor.py'),
         '--backend', f"http://127.0.0.1:{env['PORT']}"], cwd=ROOT,
         env={**os.environ, 'INGEST_TOKEN': env['INGEST_TOKEN'], 'DASHBOARD_TOKEN': env['DASHBOARD_TOKEN']})
+
+
+def supervise_fire_response(config, env, command):
+    """Restart only in disabled state; dashboard leases never survive reconnect."""
+    lock=OBSERVER_LOCK.open('w')
+    deadline=time.monotonic()+8
+    while True:
+        try:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic()>deadline:
+                lock.close()
+                raise ValueError('Another local receiver is running; stop it before fire response')
+            time.sleep(.2)
+    vision=start_fire_monitor(env)
+    child=None
+    try:
+        while True:
+            try:
+                if vision.poll() is not None: vision=start_fire_monitor(env)
+                backend_status(env)
+                remote(config,prepare_command(config))
+                sync_clock(config)
+                child=subprocess.Popen(receiver_ssh(config,env,command,headless=True))
+                while True:
+                    try:
+                        code=child.wait(timeout=1); break
+                    except subprocess.TimeoutExpired:
+                        if vision.poll() is not None: vision=start_fire_monitor(env)
+                child=None
+                try: fetch_flights(config)
+                except (OSError,subprocess.SubprocessError): pass
+                if code==73: raise ValueError('Another receiver is running; stop it before fire response')
+            except subprocess.CalledProcessError as error:
+                if error.returncode==73: raise ValueError('Another receiver owns the Pi') from None
+                print('Waiting for Pi/drone. Autonomous response remains disabled.',flush=True)
+            except (subprocess.TimeoutExpired,OSError):
+                print('Waiting for Pi/drone. Autonomous response remains disabled.',flush=True)
+            time.sleep(3)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_child(vision)
+        if child is not None:
+            # A headless SSH exit does not reliably signal its remote process.
+            # Ask this deployment's receiver to land/stop before closing its
+            # tunnel. Network loss is covered by the receiver's own watchdog.
+            try: remote(config,stop_receiver_command(config,'fire_response.py','fire response'))
+            except (OSError,subprocess.SubprocessError): child.terminate()
+            try: child.wait(timeout=25)
+            except subprocess.TimeoutExpired: child.kill(); child.wait()
+        lock.close()
 
 
 def stop_child(process):
@@ -304,9 +367,10 @@ def main():
     rehearsal.add_argument('--test-image', action='store_true')
     rehearsal.add_argument('--port', type=int, default=8789)
     pi = commands.add_parser('pi', help='Foreground Pi receiver plus reverse tunnel')
-    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover', 'qr-circle', 'qr-demo'], default='observe')
+    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover', 'qr-circle', 'qr-demo', 'fire-response'], default='observe')
     pi.add_argument('--execute', action='store_true', help='Enable flight: qr-demo and qr-circle start after QR/incident confirmation; other modes require typed arming')
     pi.add_argument('--native-video', action='store_true')
+    pi.add_argument('--headless',action='store_true',help='Dashboard-controlled fire response without an operator terminal')
     args = parser.parse_args()
     os.chdir(ROOT)
     config = settings()
@@ -380,10 +444,16 @@ def main():
         remote(config, stop_observer_command(config))
         return
     if args.command == 'pi':
-        if not sys.stdin.isatty():
+        if args.headless and args.mode!='fire-response':
+            raise ValueError('Only dashboard-controlled fire response can run headless')
+        if not sys.stdin.isatty() and not args.headless:
             raise ValueError('Start the Pi receiver in an interactive operator terminal.')
         command = runtime_command(config, args.mode, args.execute, args.native_video)
         print('Keep the Skycontroller off and FreeFlight closed for this direct Pi connection.', flush=True)
+        if args.mode=='fire-response':
+            print('Flight starts OFF. Enable autonomous response in the live dashboard.',flush=True)
+            supervise_fire_response(config,env,command)
+            return
         print('Flight is ' + ('AUTOMATIC AFTER QR + INCIDENT' if args.execute and args.mode in ('qr-circle','qr-demo')
               else 'ENABLED AFTER TYPED ARMING' if args.execute else 'DISABLED'), flush=True)
         if args.mode == 'observe':

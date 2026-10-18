@@ -90,3 +90,34 @@ test('an in-flight live lead poll cannot overwrite a newly selected demo', async
   await pending;
   assert.equal(run('rendered'), 0);
 });
+
+test('autonomous response needs readiness and its owning live page; replay sends LAND', async () => {
+  const {context,run,element}=await dashboard(); const calls=[];
+  context.fetch=async(url,options)=>{
+    const body=options.body?JSON.parse(options.body):null;calls.push(body);
+    return {ok:true,json:async()=>({enabled:body?.action==='enable',session_id:'test-session',
+      receiver:{ready:true,reason:'Ready'}})};
+  };
+  run("state.mode='live';state.autonomy={enabled:false,receiver:{ready:false}};renderAutonomy()");
+  assert.equal(element('autonomy-enable').disabled,true);
+  run('state.autonomy.receiver.ready=true;renderAutonomy()');
+  assert.equal(element('autonomy-enable').disabled,false);
+  await run("setAutonomy('enable')");
+  assert.equal(run('autonomousSession'),'test-session');
+  run("state.mode='demo'");await run('pollAutonomy()');
+  assert.ok(calls.some(body=>body?.action==='land'));
+  assert.equal(run('autonomousSession'),null);
+  const before=calls.length;await run("setAutonomy('enable')");assert.equal(calls.length,before);
+});
+
+test('a delayed poll cannot erase a newly enabled flight session',async()=>{
+  const {context,run}=await dashboard();let finish;
+  context.fetch=async(url,options)=>{
+    if(!options.body)return new Promise(resolve=>{finish=resolve;});
+    return {ok:true,json:async()=>({enabled:true,session_id:'new-session',receiver:{ready:true}})};
+  };
+  run("state.mode='live'");const polling=run('pollAutonomy()');
+  await run("setAutonomy('enable')");
+  finish({ok:true,json:async()=>({enabled:false,receiver:{ready:true}})});await polling;
+  assert.equal(run('autonomousSession'),'new-session');assert.equal(run('state.autonomy.enabled'),true);
+});
