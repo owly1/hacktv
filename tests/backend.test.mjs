@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createApp, MemoryStorage, validateAnalysisContent } from '../backend/server.mjs';
+import { createApp, MemoryStorage, validateAnalysisContent, fcWindEstimate } from '../backend/server.mjs';
 import { ApiError } from '../backend/validation.mjs';
 
 const INGEST = 'ingest-token-aaa';
@@ -511,6 +511,92 @@ test('wind_estimate sanity bounds reject implausible model output', () => {
     validateAnalysisContent({ ...base, wind_estimate: { method: 'ground-track drift', confidence: 'low' } }).wind_estimate.direction_deg,
     null,
   );
+});
+
+// ---- flight-controller wind estimate ----
+
+test('fcWindEstimate reads the bridge-forwarded extra fields', () => {
+  assert.equal(fcWindEstimate(null), null);
+  assert.equal(fcWindEstimate({}), null);
+  assert.equal(fcWindEstimate({ extra: { fc_wind_speed_mps: null } }), null);
+  assert.equal(fcWindEstimate({ extra: { fc_wind_speed_mps: 61 } }), null); // beyond flight envelope → not evidence
+  assert.equal(fcWindEstimate({ extra: { fc_wind_speed_mps: -0.5 } }), null);
+  const w = fcWindEstimate({ extra: { fc_wind_speed_mps: 4.2, fc_wind_direction_deg: 145.6, fc_wind_state: 'ok' } });
+  assert.equal(w.speed_mps, 4.2);
+  assert.equal(w.direction_deg, 145.6);
+  assert.match(w.method, /flight-controller/i);
+  assert.match(w.confidence, /ok/);
+  // calm: zero wind, direction meaningless
+  assert.equal(fcWindEstimate({ extra: { fc_wind_speed_mps: 0, fc_wind_direction_deg: null } }).direction_deg, null);
+  // out-of-range direction is dropped, speed kept
+  assert.equal(fcWindEstimate({ extra: { fc_wind_speed_mps: 2, fc_wind_direction_deg: 361 } }).direction_deg, null);
+});
+
+test('FC wind estimate outranks a divergent Gemini estimate and discloses it', async () => {
+  nowMs += 31_000;
+  await req('POST', '/api/ingest/telemetry', {
+    token: INGEST,
+    body: {
+      ...goodTelemetry(),
+      extra: { fc_wind_speed_mps: 6.1, fc_wind_direction_deg: 40, fc_wind_state: 'ok' },
+    },
+  });
+  fakeGeminiReplies = [geminiTextReply(JSON.stringify({
+    summary: 'Hover tilt suggests a crosswind.',
+    unknowns: ['Perimeter unknown.'],
+    wind_estimate: { speed_mps: 1.2, direction_deg: 290, method: 'hover tilt', confidence: 'low' },
+    limitations: 'Attitude-derived only.',
+  }))];
+  const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.match(json.wind_estimate.method, /flight-controller/i);
+  assert.equal(json.wind_estimate.speed_mps, 6.1);
+  assert.equal(json.wind_estimate.direction_deg, 40);
+  assert.ok(json.unknowns.some((u) => /[Dd]isagreement/.test(u)),
+    'divergence between FC and derived estimates should land in unknowns');
+});
+
+test('FC wind estimate lands even when Gemini omits one', async () => {
+  nowMs += 31_000;
+  await req('POST', '/api/ingest/telemetry', {
+    token: INGEST,
+    body: {
+      ...goodTelemetry(),
+      extra: { fc_wind_speed_mps: 3.4, fc_wind_direction_deg: 262 },
+    },
+  });
+  fakeGeminiReplies = [geminiTextReply(JSON.stringify({
+    summary: 'No visual evidence.',
+    unknowns: ['Everything.'],
+    limitations: 'Telemetry only.',
+  }))];
+  const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.match(json.wind_estimate.method, /flight-controller/i);
+  assert.equal(json.wind_estimate.speed_mps, 3.4);
+  // FC value matches no derived estimate → no disagreement note injected
+  assert.ok(!json.unknowns.some((u) => /[Dd]isagreement/.test(u)));
+});
+
+test('a bad FC value falls back to the Gemini estimate', async () => {
+  nowMs += 31_000;
+  await req('POST', '/api/ingest/telemetry', {
+    token: INGEST,
+    body: { ...goodTelemetry(), extra: { fc_wind_speed_mps: 99 } }, // impossible → treated as absent
+  });
+  fakeGeminiReplies = [geminiTextReply(JSON.stringify({
+    summary: 'Tilt suggests wind.',
+    unknowns: [],
+    wind_estimate: { speed_mps: 5, direction_deg: 10, method: 'hover tilt', confidence: 'low' },
+    limitations: 'x',
+  }))];
+  const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.wind_estimate.speed_mps, 5);
+  assert.equal(json.wind_estimate.method, 'hover tilt');
 });
 
 // ---- startup token contract ----

@@ -358,7 +358,7 @@ export const ANALYSIS_INSTRUCTIONS = [
   'Direction convention: every direction in the data (wind_dir_deg, direction, toward_deg, bearing_deg) is the direction the fire spreads or the wind blows TOWARD, in degrees clockwise from north (60 = toward the east-northeast) — never the direction the wind comes from.',
   'List what this evidence cannot establish under "unknowns" and the specific observations that would overturn your assessment under "falsifiers".',
   'If only telemetry is supplied (no image), say plainly that this sample contains no visual fire evidence.',
-  'The drone has no wind sensor. You may still derive an APPROXIMATE wind vector from its stabilization behavior. Sign convention: while holding position a multirotor tilts INTO the wind (toward its source) so rotor thrust balances wind drag — the wind therefore blows TOWARD the azimuth opposite the sustained tilt; GPS wander between position corrections drifts downwind (in the TOWARD direction); and in forward flight the difference between heading and achieved ground track reveals the crosswind. Tilt magnitude and wander rate correlate loosely with wind speed, not precisely — report an approximate value with honest confidence. Stabilization is only visible over time — call get_telemetry_history before estimating; a single sample is not evidence of stabilization. When you estimate wind this way, fill wind_estimate and state the method; it is a derived estimate, never a sensor measurement. If the telemetry lacks attitude data or enough history to observe stabilization, omit wind_estimate and list wind conditions under unknowns.',
+  'The drone has no anemometer, but its flight controller estimates wind onboard: telemetry extra.fc_wind_speed_mps / fc_wind_direction_deg / fc_wind_state come from that onboard estimator — when they are present, treat them as the wind reading and cite them rather than re-deriving. When they are absent you may still derive an APPROXIMATE wind vector from its stabilization behavior. Sign convention: while holding position a multirotor tilts INTO the wind (toward its source) so rotor thrust balances wind drag — the wind therefore blows TOWARD the azimuth opposite the sustained tilt; GPS wander between position corrections drifts downwind (in the TOWARD direction); and in forward flight the difference between heading and achieved ground track reveals the crosswind. Tilt magnitude and wander rate correlate loosely with wind speed, not precisely — report an approximate value with honest confidence. Stabilization is only visible over time — call get_telemetry_history before estimating; a single sample is not evidence of stabilization. When you estimate wind this way, fill wind_estimate and state the method; it is a derived estimate, never a sensor measurement. If the telemetry lacks attitude data or enough history to observe stabilization, omit wind_estimate and list wind conditions under unknowns.',
 ].join(' ');
 
 const GEMINI_RESPONSE_SCHEMA = {
@@ -511,6 +511,29 @@ function validateWindEstimate(value) {
     direction_deg: value.direction_deg ?? null,
     method: value.method,
     confidence: value.confidence,
+  };
+}
+
+// The flight controller's own wind estimate (flight_data WindSpeed, forwarded
+// by the bridge as telemetry extra.fc_wind_*) outranks any model-derived
+// estimate: same physics, fused onboard from motor commands + IMU at high
+// rate. Still an estimate, not a sensor — the method string says so.
+export function fcWindEstimate(sample) {
+  const extra = sample?.extra;
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return null;
+  // null means "the drone hasn't streamed it yet" — do not coerce to 0
+  if (extra.fc_wind_speed_mps == null) return null;
+  const speed = Number(extra.fc_wind_speed_mps);
+  // same operational bound as validateWindEstimate: >60 m/s is a bad value,
+  // not evidence
+  if (!Number.isFinite(speed) || speed < 0 || speed > 60) return null;
+  const dir = extra.fc_wind_direction_deg == null ? NaN : Number(extra.fc_wind_direction_deg);
+  const windState = typeof extra.fc_wind_state === 'string' ? extra.fc_wind_state : null;
+  return {
+    speed_mps: speed,
+    direction_deg: Number.isFinite(dir) && dir >= 0 && dir < 360 ? dir : null,
+    method: 'flight-controller estimate (ANAFI onboard EKF — not a sensor reading)',
+    confidence: windState ? `FC wind alert state: ${windState}` : 'FC estimate',
   };
 }
 
@@ -946,6 +969,25 @@ export function createApp({
     }
 
     const content = validateAnalysisContent(parseGeminiJson(apiResponse));
+    // The FC's onboard estimate outranks the model's tilt-derived inference;
+    // when both exist and disagree, that disagreement is disclosed, not hidden.
+    const fcWind = fcWindEstimate(evidence.telemetry);
+    if (fcWind) {
+      const derived = content.wind_estimate;
+      if (derived?.speed_mps != null) {
+        const dSpeed = Math.abs(derived.speed_mps - fcWind.speed_mps);
+        const dDir = derived.direction_deg != null && fcWind.direction_deg != null
+          ? Math.min(Math.abs(derived.direction_deg - fcWind.direction_deg),
+                     360 - Math.abs(derived.direction_deg - fcWind.direction_deg))
+          : 0;
+        if (dSpeed > 3 || dDir > 30) {
+          const fmt = (w) => `${w.speed_mps} m/s` + (w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}°` : '');
+          content.unknowns = [...content.unknowns,
+            `Wind disagreement — flight-controller estimate ${fmt(fcWind)} vs tilt-derived estimate ${fmt(derived)}.`];
+        }
+      }
+      content.wind_estimate = fcWind;
+    }
     const record = {
       id: crypto.randomUUID(),
       created_at: new Date(now()).toISOString(),

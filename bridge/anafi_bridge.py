@@ -80,10 +80,36 @@ except ImportError as e:
         "  pip install -r bridge/requirements.txt"
     )
 
+try:
+    # Flight-controller wind estimate: the FC fuses motor commands, IMU and
+    # GPS/optical-flow into a NED wind vector (what FreeFlight shows). Not all
+    # firmware/olympe builds expose it, so a missing import just disables the
+    # field — the bridge still runs and the field stays None.
+    from olympe.messages.flight_data.Event import State as FlightDataState
+    from olympe.messages.flight_data.Event import WindSpeed
+    from olympe.messages.ardrone3.PilotingState import WindStateChanged
+except ImportError:
+    WindSpeed = FlightDataState = WindStateChanged = None
+
 DEFAULT_DRONE_IP = "192.168.42.1"  # ANAFI's address on its own Wi-Fi network
 WINDOW = "ANAFI live"
 FRAME_TIMEOUT = 3.0  # seconds without frames before we consider the stream stalled
 DEFAULT_OUT_DIR = "anafi_out"
+
+
+def fc_wind(north, east):
+    """Olympe flight_data WindSpeed NED components -> (speed_mps, direction_deg).
+
+    Convention: the vector is the wind's velocity — it points where the wind
+    blows TOWARD — so direction_deg = atan2(east, north) in degrees clockwise
+    from north, matching the dashboard's TOWARD convention. If a field check
+    ever shows the vector is FROM-ward instead, flip 180 here, not downstream.
+    A zero vector returns (0.0, None): no wind means no direction to point.
+    """
+    speed = math.hypot(north, east)
+    if speed < 0.05:
+        return 0.0, None
+    return round(speed, 2), round(math.degrees(math.atan2(east, north)) % 360.0, 1)
 TELEMETRY_INTERVAL = 1.0  # seconds between published telemetry samples (contract: 1-2 Hz)
 SNAPSHOT_FILE_INTERVAL = 3.0
 VIDEO_WIDTH = 960
@@ -303,7 +329,10 @@ class AnafiBridge:
             "attitude_deg": None,
             "extra": {"wifi_rssi_dbm": None, "video_fps": round(self.fps, 1), "heading_deg": None,
                       "gimbal_pitch_deg": self._gimbal_pitch(), "position_source": None,
-                      "flight_phase": self.flight_phase},
+                      "flight_phase": self.flight_phase,
+                      # flight-controller wind estimate (None until the drone streams it)
+                      "fc_wind_speed_mps": None, "fc_wind_direction_deg": None,
+                      "fc_wind_available": None, "fc_wind_state": None},
         }
         if (s := self._state(BatteryStateChanged)) is not None:
             t["battery_pct"] = s["percent"]
@@ -325,6 +354,23 @@ class AnafiBridge:
         t["extra"]["position_source"] = source
         if (s := self._state(WifiSignalChanged)) is not None:
             t["extra"]["wifi_rssi_dbm"] = s["rssi"]
+        if WindSpeed is not None and (s := self._state(WindSpeed)) is not None:
+            try:
+                spd, deg = fc_wind(float(s["north"]), float(s["east"]))
+                t["extra"]["fc_wind_speed_mps"] = spd
+                t["extra"]["fc_wind_direction_deg"] = deg
+            except (KeyError, TypeError, ValueError):
+                pass
+        if FlightDataState is not None and (s := self._state(FlightDataState)) is not None:
+            try:
+                t["extra"]["fc_wind_available"] = bool(s.get("is_wind_speed_available"))
+            except (AttributeError, TypeError):
+                pass
+        if WindStateChanged is not None and (s := self._state(WindStateChanged)) is not None:
+            try:
+                t["extra"]["fc_wind_state"] = s["state"].name  # ok / warning / critical
+            except (KeyError, AttributeError):
+                pass
         self.telemetry = t
 
     def _overlay_lines(self):
@@ -346,6 +392,12 @@ class AnafiBridge:
         lines.append(f"Pos ({t['extra']['position_source']}): {t['latitude']:.6f}, {t['longitude']:.6f}")
         if (rssi := t["extra"]["wifi_rssi_dbm"]) is not None:
             lines.append(f"Wi-Fi: {rssi} dBm")
+        if (w := t["extra"]["fc_wind_speed_mps"]) is not None:
+            d = t["extra"]["fc_wind_direction_deg"]
+            wind_line = f"Wind (FC est.): {w:.1f} m/s" + (f" toward {d:.0f} deg" if d is not None else "")
+            if (ws := t["extra"]["fc_wind_state"]) is not None and ws != "ok":
+                wind_line += f"  [{ws.upper()}]"
+            lines.append(wind_line)
         if self.episode:
             lines.append("FIRE DETECTED")
         return lines

@@ -162,7 +162,7 @@ function renderSpread() {
   const sc = state.scenario, t = state.minute;
   $('time-label').textContent = `T + ${Math.round(t)} min`; $('timeline').value = t;
   document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - t) < .5));
-  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? ' · derived est.' : '');
+  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '');
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
@@ -343,16 +343,23 @@ function renderAnalysis() {
   $('analysis-detail').textContent = a.spread_outlook || a.unknowns.join(' ');
   $('analysis-observations').innerHTML = (a.observations || []).slice(0, 4).map(o => `<li>${escapeHTML(o)}</li>`).join('');
   const w = a.wind_estimate;
-  const windLine = w ? `Wind est. ${w.speed_mps != null ? `≈${w.speed_mps} m/s` : 'unknown speed'}${w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}° ${M.compass(w.direction_deg)}` : ''} — derived from drone stabilization, not a sensor (${w.confidence})` : null;
+  const windLine = w ? `Wind est. ${w.speed_mps != null ? `≈${w.speed_mps} m/s` : 'unknown speed'}${w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}° ${M.compass(w.direction_deg)}` : ''} — ${w.method} (${w.confidence})` : null;
   $('analysis-limit').textContent = [windLine, a.unknowns[0], a.limitations].filter(Boolean).join(' · ');
   applyWindEstimate(a);
 }
 
-/* The drone has no wind sensor: when the latest analysis carries a wind
-   estimate derived from stabilization telemetry, adopt it as the scenario's
-   wind so the projected spread follows live evidence instead of the marker's
-   fixed value. Each analysis applies at most once; a manual Apply in the
-   conditions dialog overrides it until the next analysis arrives. */
+/* Which estimator a wind_estimate came from — the label follows the method,
+   so a flight-controller value and a tilt-derived value are not conflated. */
+function windSourceLabel(w) {
+  return /flight-controller|flight controller/i.test(w?.method ?? '') ? ' · FC est.' : ' · derived est.';
+}
+
+/* When the latest analysis carries a wind estimate — the flight controller's
+   own onboard estimate when the drone streams one, else a value derived from
+   stabilization telemetry — adopt it as the scenario's wind so the projected
+   spread follows live evidence instead of the marker's fixed value. Each
+   analysis applies at most once; a manual Apply in the conditions dialog
+   overrides it until the next analysis arrives. */
 function applyWindEstimate(a) {
   const w = a?.wind_estimate;
   if (!w || state.mode === 'demo') return;
@@ -366,7 +373,7 @@ function applyWindEstimate(a) {
   state.windAuto = a.created_at; state.windDerived = w;
   if (changed) {
     markPlanDirty(); renderSpread();
-    toast(`Wind updated from drone stabilization — derived estimate, not a sensor reading.`);
+    toast(`Wind updated ${/flight-controller|flight controller/i.test(w.method ?? '') ? 'from the flight-controller estimate' : 'from drone stabilization'} — estimate, not a sensor reading.`);
   }
 }
 
