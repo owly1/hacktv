@@ -14,10 +14,12 @@ class Limits:
     segments: int = 12
     arm_seconds: float = 20.0
     mission_seconds: float = 75.0
+    lap_seconds: float | None = None
 
     def __post_init__(self):
+        if self.lap_seconds not in (None,15.):raise ValueError('Supported timed lap is 15 seconds')
         for value, low, high in ((self.radius_m, .75, 1.5), (self.height_m, .8, 1.5),
-                                 (self.speed_mps, .1, .3), (self.arm_seconds, 5, 30),
+                                 (self.speed_mps, .1, .6 if self.lap_seconds else .3), (self.arm_seconds, 5, 30),
                                  (self.mission_seconds, 30, 90)):
             if not math.isfinite(value) or not low <= value <= high:
                 raise ValueError("Orbit settings exceed the bounded demonstration envelope")
@@ -48,6 +50,37 @@ class Marker:
     reprojection_px: float
 
 
+class LandingConfirmation:
+    """A landed event is necessary, but is not proof of a settled landing.
+
+    A later emergency latches failure for this connection. The landing surface
+    need not be at takeoff altitude, but current attitude/speed must show a
+    stationary, upright aircraft for a continuous half second.
+    """
+    def __init__(self):
+        self.since = None
+        self.fault = None
+
+    def observe(self, *, now, requested_at, state, state_at, emergency_at,
+                connected, sensors_at, roll, pitch, speed):
+        if state == 'emergency' or (emergency_at is not None and math.isfinite(emergency_at)):
+            self.fault = 'Aircraft entered emergency state; landing is not confirmed'
+        if self.fault:
+            self.since = None
+            return False
+        numbers = (state_at, sensors_at, roll, pitch, speed)
+        valid = (requested_at is not None and connected and state == 'landed'
+                 and all(isinstance(v, (int,float)) and math.isfinite(v) for v in numbers)
+                 and requested_at <= state_at <= sensors_at <= now and 0 <= now-sensors_at <= 1
+                 and max(abs(roll), abs(pitch)) <= 20 and 0 <= speed <= .1)
+        if not valid:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = sensors_at
+        return sensors_at-self.since >= .5
+
+
 def vehicle_reason(v, limits, now, starting=False,*,min_battery_pct=40):
     if v is None or not v.connected or not 0 <= now - v.at <= 1.0:
         return "aircraft link or received sensor samples are stale"
@@ -62,7 +95,7 @@ def vehicle_reason(v, limits, now, starting=False,*,min_battery_pct=40):
         return "a pilot-established hover is required" if starting else "unexpected flight state"
     if abs(v.altitude_m - limits.height_m) > .2:
         return "height outside the planned hover band"
-    if v.speed_mps > (.15 if starting else .45) or abs(v.tilt_deg) > (5 if starting else 12):
+    if v.speed_mps > (.15 if starting else .75 if limits.lap_seconds else .45) or abs(v.tilt_deg) > (5 if starting else 12):
         return "aircraft is moving or tilted beyond the limit"
     return None
 

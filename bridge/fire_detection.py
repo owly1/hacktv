@@ -1,8 +1,11 @@
 """Shared RGB fire/smoke and EW1 fire-marker QR detector; no aircraft SDK or controls."""
 import math
 import os
+import time
 import cv2
 import numpy as np
+from qr_visual_track import QRVisualTrack, QRTemplateTrack
+from qr_contrast import decode_candidate_crop
 
 QR_PREFIX = "EW1:"
 # The one QR code the drone treats as a fire: the printed FireSimulationDemo
@@ -74,6 +77,9 @@ class FireDetector:
 
     def __init__(self, model_path, conf=DEFAULT_CONF, use_yolo=True, detect_smoke=False):
         self.conf = conf
+        self.qr_track=QRVisualTrack()
+        self.qr_template=QRTemplateTrack()
+        self._qr_contrast_at=float('-inf')
         self.labels = ('fire', 'smoke') if detect_smoke else ('fire',)
         # Two QR readers: the classic one is fast; the ArUco-based one finds
         # small, tilted or noisy codes the classic one misses.
@@ -81,6 +87,7 @@ class FireDetector:
         if hasattr(cv2, "QRCodeDetectorAruco"):
             self.qr_readers.append(cv2.QRCodeDetectorAruco())
         self.model = None
+        self._model_warmed = False
         self.model_status = 'disabled' if not use_yolo else 'missing'
         if use_yolo:
             if os.path.exists(model_path):
@@ -99,38 +106,148 @@ class FireDetector:
             else:
                 print(f"[!] Fire model not found at {model_path}; run bridge/setup.sh. QR test marker only")
 
-    def detect(self, bgr):
+    def warmup(self):
+        """Initialize lazy RGB inference before live frames or readiness exist.
+
+        Ultralytics creates its predictor on the first inference and can reset
+        Torch's thread count during that creation. Restore the laptop budget
+        after initialization, rather than repeatedly modifying it per frame.
+        QR tracking is deliberately untouched by this synthetic image.
+        """
+        if self.model is None:return False
+        if self._model_warmed:return True
+        torch=None;failure=None
+        try:
+            import torch
+            self.model(np.zeros((720,1280,3),np.uint8),imgsz=640,conf=self.conf,verbose=False)
+        except Exception as error:
+            failure=error
+        finally:
+            if torch is not None:
+                try:torch.set_num_threads(2)
+                except Exception as error:failure=error
+        if failure is not None:
+            self.model=None;self.model_status='error'
+            print(f'[!] Fire model warmup failed ({type(failure).__name__}); QR test marker only',flush=True)
+            return False
+        self._model_warmed=True
+        return True
+
+    def detect(self, bgr, *, captured_at=None):
         """Best hit in this frame: dict(source, label, confidence, bbox, details) or None."""
         h, w = bgr.shape[:2]
-        details = points = None
+        details = points = modules = None
+        captured_at=time.time() if captured_at is None else captured_at
+        other_code=False; candidates=[]; template_match=None
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         for reader in self.qr_readers:
             try:
-                text, points, _ = reader.detectAndDecode(gray)
+                text, points, modules = reader.detectAndDecode(gray)
             except cv2.error:
                 continue
             details = parse_marker(text)
+            if points is not None:candidates.append(points.copy())
+            other_code=other_code or bool(text and not details)
             if details and points is not None:
                 break
+        if not details and candidates and not other_code:
+            text, recovered, recovered_modules, wrong = decode_candidate_crop(
+                gray, candidates, self.qr_readers[0], FIRE_MARKER_PAYLOAD)
+            other_code=other_code or wrong
+            if recovered is not None:
+                points,modules=recovered,recovered_modules
+                details=parse_marker(text)
         if not details:
             # The repository PNG has no quiet zone. A white border also helps
             # when a displayed code reaches the image edge; undo it in boxes.
             pad = max(16, min(h, w) // 12)
             padded = cv2.copyMakeBorder(gray, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=255)
-            text, points, _ = self.qr_readers[0].detectAndDecode(padded)
+            text, points, modules = self.qr_readers[0].detectAndDecode(padded)
             details = parse_marker(text)
+            other_code=other_code or bool(text and not details)
             if points is not None:
                 points = points - pad
+                candidates.append(points.copy())
+        if not details:
+            # A flat screen seen obliquely compresses QR modules vertically.
+            # Decode a stretched copy, but always publish corners in the
+            # ORIGINAL camera pixels used by calibrated pose estimation.
+            for scale in (1.5, 2.0):
+                stretched = cv2.resize(gray, (w, round(h*scale)), interpolation=cv2.INTER_CUBIC)
+                try:
+                    text, candidate, modules = self.qr_readers[0].detectAndDecode(stretched)
+                except cv2.error:
+                    continue
+                details = parse_marker(text)
+                other_code=other_code or bool(text and not details)
+                if candidate is not None:
+                    original=candidate.astype(np.float32).copy()
+                    original[...,1]=(original[...,1]+.5)/(stretched.shape[0]/h)-.5
+                    candidates.append(original)
+                if details and candidate is not None:
+                    points = candidate.astype(np.float64).copy()
+                    points[..., 1] = (points[..., 1]+.5)/(stretched.shape[0]/h)-.5
+                    break
+                details = None
+        if (not details and not other_code
+                and captured_at-self._qr_contrast_at>=.4):
+            # One extra full-frame scan at most every 400 ms. Most recoverable
+            # glare frames finish in the small candidate crop above instead.
+            self._qr_contrast_at=captured_at
+            contrast=cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                           cv2.THRESH_BINARY,21,5)
+            try:
+                text,candidate,recovered_modules=self.qr_readers[0].detectAndDecode(contrast)
+            except cv2.error:
+                text,candidate,recovered_modules='',None,None
+            other_code=other_code or bool(text and not parse_marker(text))
+            if candidate is not None:candidates.append(candidate.copy())
+            if parse_marker(text) and candidate is not None:
+                points,modules,details=candidate,recovered_modules,parse_marker(text)
+        tracking='decoded';decoded_at=captured_at
+        if details and points is not None:
+            self.qr_template.seed(gray,points,captured_at,modules)
+            if modules is not None:
+                quad=np.asarray(points).reshape(4,2)
+                edges=np.linalg.norm(quad-np.roll(quad,1,axis=0),axis=1)
+                if min(edges)>=20 and max(edges)<=128:
+                    # A successful payload decode does not guarantee a good
+                    # inferred fourth corner, especially on a 50 px QR. Fit
+                    # those exact decoded data cells to ORIGINAL gray pixels
+                    # before using the corners for calibrated metric pose.
+                    localized=self.qr_template.match(gray,[points],captured_at)
+                    if localized is not None:points=localized['corners']
+            self.qr_track.seed(gray,points,captured_at)
+        elif other_code:
+            self.qr_track.clear()
+            self.qr_template.clear()
+        else:
+            flow=self.qr_track.follow(gray,captured_at)
+            if flow is not None:candidates.append(flow)
+            template_match=self.qr_template.match(gray,candidates,captured_at)
+            if template_match is not None:
+                points=template_match['corners'];text=FIRE_MARKER_PAYLOAD;details=parse_marker(text)
+                tracking='visual-template';decoded_at=template_match['decoded_at']
+            elif flow is not None:
+                points=flow
+                text=FIRE_MARKER_PAYLOAD;details=parse_marker(text)
+                tracking='optical-flow';decoded_at=self.qr_track.decoded_at
         if details and points is not None:
             pts = points.reshape(-1, 2)
             x1, y1 = pts.min(axis=0)
             x2, y2 = pts.max(axis=0)
             side_px = float(np.mean([np.linalg.norm(pts[i] - pts[(i + 1) % 4]) for i in range(4)]))
-            return {"source": "qr-test", "label": "fire", "confidence": 1.0,
+            hit={"source": "qr-test", "label": "fire", "confidence": 1.0,
                     "bbox": [round(float(v), 4) for v in (max(0.0, x1 / w), max(0.0, y1 / h),
                                                           min(1.0, x2 / w), min(1.0, y2 / h))],
                     "details": details, "marker_side_px": side_px, "frame_w": w,
-                    "qr_text": text, "qr_corners": pts.tolist()}
+                    "qr_text": text, "qr_corners": pts.tolist(),
+                    "qr_tracking":tracking,"qr_decoded_at":decoded_at*1000}
+            if template_match is not None:
+                hit.update(qr_template_score=template_match['score'],qr_template_data_score=template_match['data_score'],
+                           qr_template_module_error=template_match['module_error'],
+                           qr_template_module_coverage=template_match['module_coverage'])
+            return hit
         if self.model is None:
             return None
         result = self.model(bgr, imgsz=640, conf=self.conf, verbose=False)[0]

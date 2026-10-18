@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import unittest
+from unittest.mock import Mock, patch
 from urllib.request import Request, urlopen
 
 import cv2
@@ -24,6 +26,51 @@ HIT = {'source': 'qr-test', 'label': 'fire', 'confidence': 1., 'bbox': [0., 0., 
 
 
 class FireMonitorTests(unittest.TestCase):
+    def test_slow_incident_storage_cannot_block_fresh_target_updates(self):
+        detector=Mock(model_status='ready')
+        detector.detect.return_value=HIT
+        monitor=Monitor('http://127.0.0.1:1','dashboard','ingest',detector)
+        image=np.zeros((40,40,3),np.uint8)
+        _, encoded=cv2.imencode('.jpg',image)
+        captured=[100.]
+        class Response(io.BytesIO):
+            @property
+            def headers(self):
+                from fire_monitor import iso
+                return {'X-Captured-At':iso(captured[0])}
+        monitor.get=Mock(side_effect=lambda path:Response(encoded.tobytes()))
+        posts=[]
+        monitor.post=lambda path,body,**kwargs:posts.append((path,body))
+        started=threading.Event();release=threading.Event()
+        def slow_incident(hit,jpeg,at,episode):
+            started.set();release.wait(2)
+            return episode,hit['source'],at,at+.01
+        monitor._publish_incident=slow_incident
+        try:
+            with patch('fire_monitor.time.time',side_effect=lambda:captured[0]+.01):
+                for at in [100,100.2,100.4]:
+                    captured[0]=at;monitor.step()
+                self.assertTrue(started.wait(1))
+                for at in [100.6,100.8,101.]:
+                    captured[0]=at;monitor.step()
+            self.assertFalse(monitor.incident_pending.done())
+            self.assertEqual(len(posts),6)
+            self.assertTrue(all(path=='/api/ingest/autonomy/target' for path,_ in posts))
+            self.assertEqual(len({body['captured_at'] for _,body in posts}),6)
+            self.assertTrue(all(body['hit']['qr_text']==MARKER for _,body in posts))
+        finally:
+            release.set();monitor.close()
+
+    def test_optical_tracking_cannot_create_an_incident_or_refresh_decode_confirmation(self):
+        for method in ('optical-flow','visual-template'):
+            e=Episodes();tracked={**HIT,'qr_tracking':method}
+            for at in [100,100.2,100.4,100.6]:self.assertIsNone(e.observe(tracked,at,at+.01))
+            self.assertIsNone(e.episode);self.assertEqual(e.hits,0)
+            for at in [101,101.2,101.4]:episode=e.observe(HIT,at,at+.01)
+            self.assertTrue(episode);e.acknowledged(101.4)
+            self.assertIsNone(e.observe(tracked,107,107.01))
+            self.assertEqual(e.episode,episode);self.assertEqual(e.last_post,101.4)
+
     def test_repository_marker_classifies_as_fire_even_without_quiet_zone(self):
         detector = FireDetector('', .5, use_yolo=False)
         hit = detector.detect(cv2.imread(str(ROOT/'dist/test-marker.png')))
@@ -117,6 +164,8 @@ const server=http.createServer(app); server.listen(0,'127.0.0.1',()=>console.log
                     self.assertEqual(response.status, 204)
                 with contextlib.redirect_stdout(io.StringIO()):
                     monitor.step()
+            monitor.incident_pending.result(timeout=3)
+            monitor._finish_incident()
             with monitor.get('/api/incident') as response:
                 incident = json.load(response)['incident']
             self.assertTrue(incident['active'])
@@ -132,6 +181,7 @@ const server=http.createServer(app); server.listen(0,'127.0.0.1',()=>console.log
             self.assertEqual(analysis['trigger'], 'auto-detection')
             self.assertEqual(analysis['episode_id'], incident['episode_id'])
         finally:
+            if 'monitor' in locals():monitor.close()
             server.terminate()
             server.communicate(timeout=5)
 

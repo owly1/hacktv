@@ -25,6 +25,18 @@ def board(columns=10, rows=7):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_ipad_square_size_survives_resume_and_new_session(self):
+        with tempfile.TemporaryDirectory() as d, patch('calibration_web.board_corners',return_value=None):
+            root=Path(d)
+            camera=lambda:(np.zeros((20,30,3),np.uint8),'1')
+            session=CaptureSession(root,7,10,camera,square_mm=10)
+            session.capture(7,10)
+            resumed=CaptureSession(root,12,7,camera,resume=True,square_mm=20)
+            self.assertEqual((resumed.columns,resumed.rows,resumed.square_mm),(7,10,10))
+            status=resumed.new_session()
+            self.assertEqual(status['square_mm'],10)
+            self.assertEqual(json.loads((resumed.root/'session.json').read_text())['square_mm'],10)
+
     def test_square_counts_convert_to_inner_corners_and_support_chessboards(self):
         self.assertEqual(board_pattern(10,7),(9,6))
         self.assertEqual(board_pattern(8,8),(7,7))

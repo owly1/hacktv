@@ -1,0 +1,203 @@
+{
+  "recording": "20261018T103406Z-d2d2d98b",
+  "source": "events.jsonl target_tracking valid metric positions; relative to continuous_orbit_started",
+  "limitations": "Raw north/east/down velocity was not recorded. Replay uses explicitly synthetic, healthy telemetry to ensure measured QR escape cannot be hidden by odometry. This is not a reconstructed physical flight or a wall-clearance guarantee.",
+  "original_speed_guard_s": 3.81357,
+  "initial_propagated": {
+    "captured_s": -7.670731,
+    "forward_m": 0.9005598778596009,
+    "right_m": 0.0024706296525317945,
+    "down_m": 1.1567114237879317
+  },
+  "measurements": [
+    {
+      "received_s": -0.400528,
+      "captured_s": -0.46873,
+      "forward_m": 0.6945495116558821,
+      "right_m": 0.1691611034135005,
+      "down_m": 1.0589557487455834,
+      "yaw_rad": -2.2997913360595703,
+      "uncertainty_m": 0.10722791762695799
+    },
+    {
+      "received_s": -0.088317,
+      "captured_s": -0.26473,
+      "forward_m": 0.6950951357743899,
+      "right_m": 0.17756687760680323,
+      "down_m": 1.062139476329131,
+      "yaw_rad": -2.2996737957000732,
+      "uncertainty_m": 0.10761255960855849
+    },
+    {
+      "received_s": 0.226471,
+      "captured_s": -0.062729,
+      "forward_m": 0.695274781339387,
+      "right_m": 0.1853077717999049,
+      "down_m": 1.0643702956252907,
+      "yaw_rad": -2.298588969043073,
+      "uncertainty_m": 0.1079318526513814
+    },
+    {
+      "received_s": 0.383739,
+      "captured_s": 0.13127,
+      "forward_m": 0.6914384060795529,
+      "right_m": 0.1933046339363954,
+      "down_m": 1.0626364614592212,
+      "yaw_rad": -2.298267364501953,
+      "uncertainty_m": 0.10769266175241524
+    },
+    {
+      "received_s": 0.699913,
+      "captured_s": 0.33727,
+      "forward_m": 0.6861148316146202,
+      "right_m": 0.2020690624497553,
+      "down_m": 1.063461050024707,
+      "yaw_rad": -2.2974995167473393,
+      "uncertainty_m": 0.10728780468263781
+    },
+    {
+      "received_s": 0.858899,
+      "captured_s": 0.50127,
+      "forward_m": 0.6816126676707854,
+      "right_m": 0.21062182066367724,
+      "down_m": 1.065817496652769,
+      "yaw_rad": -2.2950472831726074,
+      "uncertainty_m": 0.10701187341389623
+    },
+    {
+      "received_s": 1.025911,
+      "captured_s": 0.74527,
+      "forward_m": 0.6756569040759214,
+      "right_m": 0.23678145684856783,
+      "down_m": 1.0699527742788275,
+      "yaw_rad": -2.2839913368225098,
+      "uncertainty_m": 0.10739179895358747
+    },
+    {
+      "received_s": 1.182576,
+      "captured_s": 0.97727,
+      "forward_m": 0.674336974737519,
+      "right_m": 0.27709110958135796,
+      "down_m": 1.0737186851777754,
+      "yaw_rad": -2.2152580009008207,
+      "uncertainty_m": 0.1093570819216181
+    },
+    {
+      "received_s": 1.498431,
+      "captured_s": 1.40727,
+      "forward_m": 0.7169361792126903,
+      "right_m": 0.30825622835979843,
+      "down_m": 1.056100978130946,
+      "yaw_rad": -2.013702869415283,
+      "uncertainty_m": 0.11705954132919164
+    },
+    {
+      "received_s": 1.966544,
+      "captured_s": 1.60427,
+      "forward_m": 0.7893672310259938,
+      "right_m": 0.27375737364041497,
+      "down_m": 1.067431255096366,
+      "yaw_rad": -1.7071884922190235,
+      "uncertainty_m": 0.12532351660164665
+    },
+    {
+      "received_s": 2.12419,
+      "captured_s": 1.79227,
+      "forward_m": 0.864014616384026,
+      "right_m": 0.21557635643034215,
+      "down_m": 1.063327024951909,
+      "yaw_rad": -1.5071948444372683,
+      "uncertainty_m": 0.13357535144061156
+    },
+    {
+      "received_s": 2.281916,
+      "captured_s": 1.99927,
+      "forward_m": 0.943270765339547,
+      "right_m": 0.13998285858369874,
+      "down_m": 1.056375201479521,
+      "yaw_rad": -1.3057185143285461,
+      "uncertainty_m": 0.14304015552436372
+    },
+    {
+      "received_s": 2.441155,
+      "captured_s": 2.192271,
+      "forward_m": 1.0092553113158065,
+      "right_m": 0.06144450838835059,
+      "down_m": 1.0452422818711853,
+      "yaw_rad": -1.1621847596198214,
+      "uncertainty_m": 0.15166859760075801
+    },
+    {
+      "received_s": 2.755908,
+      "captured_s": 2.40127,
+      "forward_m": 1.0930100284980582,
+      "right_m": 0.025395211326817362,
+      "down_m": 1.0548756954112992,
+      "yaw_rad": -1.0562400568169714,
+      "uncertainty_m": 0.16399575110655257
+    },
+    {
+      "received_s": 2.918626,
+      "captured_s": 2.63627,
+      "forward_m": 1.195579422756257,
+      "right_m": 0.040477139450930226,
+      "down_m": 1.0483260715970872,
+      "yaw_rad": -0.9649032950401306,
+      "uncertainty_m": 0.17943966252216115
+    },
+    {
+      "received_s": 3.077953,
+      "captured_s": 2.84027,
+      "forward_m": 1.305086388402279,
+      "right_m": 0.12057323478655446,
+      "down_m": 1.0281998691363463,
+      "yaw_rad": -0.9145523905754089,
+      "uncertainty_m": 0.19659663956473278
+    },
+    {
+      "received_s": 3.238843,
+      "captured_s": 3.03927,
+      "forward_m": 1.4133469782391945,
+      "right_m": 0.19558456499090016,
+      "down_m": 1.0227272279588604,
+      "yaw_rad": -0.8569368124008179,
+      "uncertainty_m": 0.21402235296018074
+    },
+    {
+      "received_s": 3.558371,
+      "captured_s": 3.244271,
+      "forward_m": 1.5204269013776144,
+      "right_m": 0.25914218366014197,
+      "down_m": 1.0096577354008571,
+      "yaw_rad": -0.7847242951393127,
+      "uncertainty_m": 0.23135294305489137
+    },
+    {
+      "received_s": 3.714446,
+      "captured_s": 3.45627,
+      "forward_m": 1.678917381265528,
+      "right_m": 0.32594356709210515,
+      "down_m": 1.0107991594252546,
+      "yaw_rad": -0.7044631838798523,
+      "uncertainty_m": 0.25653959264798687
+    },
+    {
+      "received_s": 3.879524,
+      "captured_s": 3.66327,
+      "forward_m": 1.8133661164619173,
+      "right_m": 0.40314510704582596,
+      "down_m": 0.995648724149557,
+      "yaw_rad": -0.6328608989715576,
+      "uncertainty_m": 0.2786458498121069
+    },
+    {
+      "received_s": 4.036147,
+      "captured_s": 3.85927,
+      "forward_m": 1.9187268468082073,
+      "right_m": 0.4407808171957317,
+      "down_m": 0.9607428318888137,
+      "yaw_rad": -0.5328006744384766,
+      "uncertainty_m": 0.2953057905512213
+    }
+  ]
+}

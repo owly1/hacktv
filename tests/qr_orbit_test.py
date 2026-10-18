@@ -9,7 +9,7 @@ import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "bridge"))
-from qr_orbit_core import Limits, Marker, Trigger, Vehicle, fly_once, polygon
+from qr_orbit_core import Limits, Marker, Trigger, Vehicle, LandingConfirmation, fly_once, polygon
 
 TEXT = "EW1:Alpha|120|X|35|M|30|60|31|18|18"
 LIMITS = Limits()
@@ -21,6 +21,40 @@ def marker(t, **kw):
 
 def vehicle(t, **kw):
     return replace(Vehicle(t, True, "hovering", 80, 1, 0, 0), **kw)
+
+
+class LandingTests(unittest.TestCase):
+    def observation(self, now, **changes):
+        return dict(now=now,requested_at=10.,state='landed',state_at=10.1,
+                    emergency_at=float('-inf'),connected=True,sensors_at=now,
+                    roll=0.,pitch=0.,speed=0.) | changes
+
+    def test_requires_continuous_fresh_upright_settle(self):
+        gate=LandingConfirmation()
+        self.assertFalse(gate.observe(**self.observation(10.2)))
+        self.assertFalse(gate.observe(**self.observation(10.4,roll=77.8)))
+        self.assertFalse(gate.observe(**self.observation(10.6)))
+        self.assertFalse(gate.observe(**self.observation(10.9)))
+        self.assertTrue(gate.observe(**self.observation(11.2)))
+
+    def test_stale_landed_events_and_emergency_never_confirm(self):
+        for change in ({'state_at':9.}, {'sensors_at':8.}, {'state':'landing'},
+                       {'connected':False}, {'speed':.2}, {'roll':float('nan')}):
+            gate=LandingConfirmation()
+            for at in (10.5,11.5):self.assertFalse(gate.observe(**self.observation(at,**change)))
+        gate=LandingConfirmation()
+        self.assertFalse(gate.observe(**self.observation(10.2)))
+        self.assertFalse(gate.observe(**self.observation(10.4,state='emergency',roll=-176.3)))
+        # A later stale/successful landed notification cannot erase the crash.
+        self.assertFalse(gate.observe(**self.observation(12.,state_at=11.)))
+        self.assertIn('emergency',gate.fault)
+
+    def test_cached_prelanding_or_repeated_sensor_samples_cannot_confirm(self):
+        gate=LandingConfirmation()
+        self.assertFalse(gate.observe(**self.observation(10.2,sensors_at=10.05)))
+        self.assertFalse(gate.observe(**self.observation(10.3,sensors_at=10.2)))
+        self.assertFalse(gate.observe(**self.observation(10.9,sensors_at=10.2)))
+        self.assertTrue(gate.observe(**self.observation(10.9,sensors_at=10.9)))
 
 
 class TriggerTests(unittest.TestCase):

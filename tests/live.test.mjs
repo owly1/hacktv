@@ -400,6 +400,18 @@ test('flight events and the flight path are served together', async () => {
   } finally { await t.close(); }
 });
 
+test('bounded fire reacquisition is a supported live flight phase',async()=>{
+  const t=await startApp({noGemini:true});
+  try {
+    const response=await t.req('POST','/api/ingest/flight',{token:INGEST,
+      body:{at:now(),phase:'recover',message:'Holding position; reacquiring measured fire'}});
+    assert.equal(response.status,200);
+    const flight=await (await t.req('GET','/api/flight',{token:DASH})).json();
+    assert.equal(flight.events.at(-1).phase,'recover');
+    assert.match(flight.events.at(-1).message,/Holding position/);
+  } finally {await t.close();}
+});
+
 test('telemetry summary buckets samples per minute', async () => {
   const t = await startApp({ noGemini: true });
   try {

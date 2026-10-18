@@ -1,0 +1,30 @@
+{
+  "source": "Independent PixelWorld renderer, below_launch=0.8, captured at 4.482508835331413 s. Ground-truth corners are projected from world geometry, not detector output.",
+  "crop_xy": [
+    500,
+    300
+  ],
+  "full_size": [
+    1280,
+    720
+  ],
+  "background_gray": 180,
+  "truth_corners": [
+    [
+      523.4324681726968,
+      359.3354239528612
+    ],
+    [
+      562.7685054400455,
+      322.6943743564523
+    ],
+    [
+      602.5871244178741,
+      356.2975617177529
+    ],
+    [
+      563.2796472977257,
+      394.2274863006997
+    ]
+  ]
+}

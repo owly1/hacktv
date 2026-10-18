@@ -18,51 +18,226 @@ from anafi_bridge import (AnafiBridge, FireDetector, Publisher, argument_parser,
                           SpeedChanged, FlyingStateChanged, Landing)
 from olympe.messages.move import extended_move_by
 from olympe.messages.ardrone3.PilotingEvent import moveByEnd
+from olympe.messages.ardrone3.Piloting import PCMD
+from olympe.messages.ardrone3.PilotingSettings import MaxTilt
+from olympe.messages.ardrone3.PilotingSettingsState import MaxTiltChanged
+from olympe.messages.ardrone3.SpeedSettings import MaxRotationSpeed, MaxVerticalSpeed
+from olympe.messages.ardrone3.SpeedSettingsState import MaxRotationSpeedChanged, MaxVerticalSpeedChanged
 from olympe.messages.skyctrl.CoPilotingState import pilotingSource
-from qr_orbit_core import Limits, Marker, Trigger, Vehicle, fly_once, vehicle_reason
+from qr_orbit_core import Limits, Marker, Trigger, Vehicle, LandingConfirmation, fly_once, vehicle_reason
 from qr_orbit_pose import CalibratedPose
 from terminal_controls import commands as terminal_commands
+from pose_history import PoseHistory
 
 
 class SensorAges(olympe.EventListener):
     """Use received event ages; repeated cache reads cannot refresh these."""
-    def __init__(self, drone):
+    def __init__(self, drone, publisher=None):
         super().__init__(drone)
         self.ages = {}
         self.landed_at = float("-inf")
+        self.state = None
+        self.state_at = self.emergency_at = float('-inf')
+        self.publisher = publisher
+        self.history = PoseHistory()
 
     @olympe.listen_event(AltitudeChanged(_policy="wait"))
     def altitude(self, event, scheduler):
         self.ages["altitude"] = time.monotonic()
+        self.history.record('altitude',self.ages['altitude'],event.args)
 
     @olympe.listen_event(SpeedChanged(_policy="wait"))
     def speed(self, event, scheduler):
         self.ages["speed"] = time.monotonic()
+        self.history.record('speed',self.ages['speed'],event.args)
 
     @olympe.listen_event(AttitudeChanged(_policy="wait"))
     def attitude(self, event, scheduler):
         self.ages["attitude"] = time.monotonic()
+        self.history.record('attitude',self.ages['attitude'],event.args)
 
     @olympe.listen_event(gimbal.attitude(_policy="wait"))
     def camera(self, event, scheduler):
         self.ages["camera"] = time.monotonic()
+        self.history.record('camera',self.ages['camera'],event.args)
 
     @olympe.listen_event(FlyingStateChanged(_policy="wait"))
     def flight(self, event, scheduler):
-        if getattr(event.args.get("state"), "name", None) == "landed":
-            self.landed_at = time.monotonic()
+        self.state = getattr(event.args.get('state'), 'name', str(event.args.get('state')))
+        self.state_at = time.monotonic()
+        if self.state == 'landed':
+            self.landed_at = self.state_at
+        if self.state == 'emergency':
+            self.emergency_at = self.state_at
+        if self.publisher is not None:
+            self.publisher.diagnostic('aircraft_state', {'state':self.state})
 
 
 class OlympeOrbitDriver:
+    supports_continuous_orbit = True
+
     def __init__(self, bridge):
         self.bridge = bridge
         self.first_land_request = None
+        self.movement_started = False
+        self.landing_confirmation = LandingConfirmation()
+        self.landing_error = None
+        self._piloting_lock = threading.RLock()
+        self._piloting_active = False
+        self._piloting_restore = []
+        self._last_motion_diagnostic_at = None
+
+    def _continuous_diagnostic(self, kind, data):
+        # High-cadence evidence belongs in the bounded flight recording, never
+        # the network/dashboard path or unlimited idle receiver logs.
+        publisher = getattr(self.bridge, 'publisher', None)
+        if publisher is not None and getattr(publisher, 'recorder', None) is not None:
+            self._diagnostic(kind, data)
+
+    def _continuous_motion(self):
+        from continuous_orbit import Motion
+        ages = dict(getattr(getattr(self.bridge, 'sensor_ages', None), 'ages', {}))
+        attitude = self.bridge._state(AttitudeChanged) or {}
+        speed = self.bridge._state(SpeedChanged) or {}
+        # AltitudeChanged is above takeoff; terrain clearance is the separate
+        # AltitudeAboveGroundChanged event and must not drive this height loop.
+        altitude = self.bridge._state(AltitudeChanged) or {}
+        try:
+            values = (min(ages.get(k, float('-inf')) for k in ('speed', 'attitude', 'altitude')),
+                      attitude['yaw'], speed['speedX'], speed['speedY'], speed['speedZ'], altitude['altitude'])
+            values = tuple(float(value) for value in values)
+        except (KeyError, TypeError, ValueError):
+            raise InterruptedError('Continuous orbit requires received motion and altitude samples')
+        if not all(math.isfinite(value) for value in values):
+            raise InterruptedError('Continuous orbit motion samples are invalid')
+        # Keep conservative cross-sensor freshness separate from the velocity
+        # sample's own timestamp: altitude/attitude updates must not create a
+        # fictitious acceleration sample or alter velocity prediction age.
+        observed = Motion(*values, velocity_at=float(ages['speed']))
+        if observed.velocity_at != self._last_motion_diagnostic_at:
+            self._last_motion_diagnostic_at = observed.velocity_at
+            self._continuous_diagnostic('continuous_motion', {
+                'oldest_sensor_at_mono':observed.at, 'velocity_at_mono':observed.velocity_at,
+                'sample_times_mono':{name:ages.get(name) for name in ('speed','attitude','altitude','camera')},
+                'velocity_ned_mps':{'north':observed.vx,'east':observed.vy,'down':observed.vz},
+                'yaw_rad':observed.yaw_rad, 'altitude_m':observed.altitude,
+                'attitude_rad':{axis:attitude.get(axis) if isinstance(attitude.get(axis),(int,float))
+                    and math.isfinite(attitude[axis]) else None for axis in ('roll','pitch','yaw')}})
+        return observed
+
+    def _configure_continuous_controls(self, check, clock, sleep):
+        # PCMD values are percentages of these settings, not velocity values.
+        # Save the pilot's original settings and require a new acknowledgement
+        # before interpreting a percentage as a bounded physical command.
+        for command, state, value in ((MaxTilt, MaxTiltChanged, 10.),
+                                      (MaxRotationSpeed, MaxRotationSpeedChanged, 60.),
+                                      (MaxVerticalSpeed, MaxVerticalSpeedChanged, .3)):
+            check()
+            previous = self.bridge._state(state) or {}
+            old = previous.get('current')
+            if (not isinstance(old, (int, float)) or not math.isfinite(old)
+                    or not all(isinstance(previous.get(k), (int, float)) and math.isfinite(previous[k])
+                               for k in ('min', 'max'))
+                    or not previous['min'] <= value <= previous['max']):
+                raise RuntimeError('Continuous orbit piloting limits are unavailable or unsupported')
+            self._piloting_restore.append((command, state, float(old)))
+            pending = self.bridge.drone(command(current=value, _no_expect=True)
+                >> state(current=value, _policy='wait', _timeout=2))
+            deadline = clock()+2
+            try:
+                while not pending.done():
+                    check()
+                    if clock() >= deadline:
+                        raise TimeoutError('Continuous orbit piloting setting was not acknowledged')
+                    sleep(.02)
+                check()
+                if not pending.success():
+                    raise RuntimeError('Continuous orbit piloting setting was rejected')
+            finally:
+                pending.cancel()
+
+    def _continuous_command(self, control):
+        with self._piloting_lock:
+            values = (control.roll, control.pitch, control.yaw, control.gaz)
+            if not all(isinstance(v, (int, float)) and math.isfinite(v) and -100 <= v <= 100 for v in values):
+                raise ValueError('Continuous orbit produced an invalid piloting command')
+            if self.first_land_request is not None or not self._piloting_active:
+                if not any(values):
+                    return  # A finally-block neutral must not restart piloting.
+                raise InterruptedError('Landing requested; continuous controls stopped')
+            # Installed Olympe 8.5 expires this command to neutral after .20 s
+            # if this worker stalls. The SDK transmits PCMD every 25 ms.
+            applied = tuple(int(round(v)) for v in values)
+            issued_at = time.monotonic()
+            accepted = self.bridge.drone.piloting(*applied, piloting_time=.20) is True
+            self._continuous_diagnostic('continuous_pcmd', {'issued_at_mono':issued_at,
+                'command':dict(zip(('roll','pitch','yaw','gaz'),applied)),
+                'lease_seconds':.20, 'accepted':accepted})
+            if not accepted:
+                raise RuntimeError('Continuous orbit piloting command was rejected')
+
+    def _neutralize_continuous_controls(self):
+        with self._piloting_lock:
+            if not self._piloting_active:
+                return
+            self._piloting_active = False
+            try:
+                issued_at = time.monotonic()
+                accepted = self.bridge.drone.piloting(0, 0, 0, 0, piloting_time=.20) is True
+                self._continuous_diagnostic('continuous_pcmd', {'issued_at_mono':issued_at,
+                    'command':dict.fromkeys(('roll','pitch','yaw','gaz'),0),
+                    'lease_seconds':.20, 'accepted':accepted, 'reason':'landing_or_cleanup'})
+            finally:
+                # Send neutral immediately as well as replacing the background
+                # lease: positive PCMD gaz would cancel an SDK Landing command.
+                self.bridge.drone(PCMD(0, 0, 0, 0, 0, 0, _no_expect=True))
+
+    def orbit_continuously(self, target, limits, check, report, remember=None,
+                          clock=time.monotonic, sleep=time.sleep):
+        from continuous_orbit import run_continuous_orbit
+        check()
+        started = False
+        try:
+            self._configure_continuous_controls(check, clock, sleep)
+            with self._piloting_lock:
+                check()
+                if self.first_land_request is not None:
+                    raise InterruptedError('Landing requested; continuous controls stopped')
+                if self.bridge.drone.start_piloting() is not True:
+                    raise RuntimeError('Continuous orbit piloting interface could not start')
+                self._piloting_active = started = True
+            self.movement_started = True
+            self._diagnostic('continuous_orbit_started', {'lap_seconds':limits.lap_seconds,
+                'command_lease_seconds':.20, 'max_tilt_deg':10., 'max_yaw_deg_s':60., 'max_vertical_mps':.3})
+            return run_continuous_orbit(target, limits, check, self._continuous_motion,
+                self._continuous_command, report, remember=remember, diagnostic=self._diagnostic,
+                clock=clock, sleep=sleep)
+        finally:
+            try:
+                self._neutralize_continuous_controls()
+            finally:
+                if started:
+                    self.bridge.drone.stop_piloting()
+
+    def _restore_continuous_controls(self):
+        # Invoked only after the existing fresh, upright, stationary landing
+        # confirmation. Changing control scales in flight would change commands.
+        restore, self._piloting_restore = self._piloting_restore, []
+        for command, state, value in reversed(restore):
+            try:
+                pending = self.bridge.drone(command(current=value, _no_expect=True)
+                    >> state(current=value, _policy='wait', _timeout=2))
+                if not pending.wait(_timeout=2).success():
+                    raise RuntimeError('setting restore was not acknowledged')
+            except Exception as error:
+                self._diagnostic('piloting_setting_restore_failed', {'setting':str(command), 'reason':str(error)})
 
     def move(self, offset, speed, check):
         # The explicit event expectation filters errors; cached hovering alone
         # cannot acknowledge a new move. No unbounded wait blocks the watchdog.
         dx, dy, dz, yaw = offset
         check()
+        self.movement_started = True
         # Capture errors too, so a rejected/interrupted command is diagnosed
         # immediately instead of disappearing into an eight-second timeout.
         event = moveByEnd(_policy="wait", _timeout=8)
@@ -70,7 +245,9 @@ class OlympeOrbitDriver:
                       "speed_mps": speed}
         self._diagnostic("move_requested", diagnostic)
         pending = self.bridge.drone(extended_move_by(
-            dx, dy, dz, yaw, speed, .2, 25, _timeout=8, _no_expect=True) >> event)
+            dx, dy, dz, yaw, speed, .2,
+            45 if getattr(getattr(self.bridge,'limits',None),'lap_seconds',None)==15 else 25,
+            _timeout=8, _no_expect=True) >> event)
         deadline = time.monotonic() + 8
         try:
             while not pending.done():
@@ -98,9 +275,22 @@ class OlympeOrbitDriver:
             corrected_preset = getattr(self.bridge, 'path_reference', None) == 'launch-heading'
             horizontal_bad = (horizontal_error > .15 if corrected_preset else
                               abs(actual[0]-dx) > .08 or abs(actual[1]-dy) > .08)
+            measured_fire = getattr(self.bridge, 'path_reference', None) == 'measured-fire'
+            distance = math.hypot(dx, dy)
+            if measured_fire and distance > .01:
+                # orbit_fire waits for a fresh, coherent target after EACH move
+                # and replans from that observation. A short endpoint is not a
+                # failed mission; sideways error and overshoot remain bounded.
+                along = (actual[0]*dx + actual[1]*dy)/distance
+                cross = abs(actual[0]*dy - actual[1]*dx)/distance
+                horizontal_bad = (along < -.01 or distance-along > .15
+                                  or along-distance > .08 or cross > .08)
             if horizontal_bad or abs(actual[2]-dz) > (.10 if corrected_preset else .08) or abs(actual[3]-yaw) > (.15 if corrected_preset else .1):
                 raise RuntimeError(f"movement outside tolerance: requested={offset}, actual={actual}, "
                                    f"horizontal_error={horizontal_error:.3f} m")
+            if measured_fire and horizontal_error > .08:
+                self._diagnostic("move_replan", {**diagnostic,
+                    "reason": "Bounded undershoot; reacquire target and correct next movement"})
             return actual
         except BaseException as error:
             self._diagnostic("move_failed", {**diagnostic, "reason": str(error)})
@@ -113,15 +303,32 @@ class OlympeOrbitDriver:
             publisher.diagnostic(kind, data)
 
     def request_land(self):
+        # Serialize the landing latch with command updates so a concurrent
+        # orbit worker cannot renew positive gaz after Landing is requested.
+        with self._piloting_lock:
+            if self.first_land_request is None:
+                self.first_land_request = time.monotonic()
+            try:
+                self._neutralize_continuous_controls()
+            except Exception as error:
+                self._diagnostic('continuous_neutral_failed', {'reason':str(error)})
+        ages = getattr(self.bridge, 'sensor_ages', None)
+        if ages is not None and (getattr(ages, 'state', None) == 'emergency'
+                                or math.isfinite(getattr(ages, 'emergency_at', float('-inf')))):
+            self.landing_error = 'Aircraft entered emergency state; landing is not confirmed'
+            return
         if self.bridge.drone is not None:
             if self.first_land_request is None:
                 self.first_land_request = time.monotonic()
             self.bridge.drone(Landing(_no_expect=True))
+            self._diagnostic('landing_requested', {'first_request':self.first_land_request})
 
     def land(self):
         # Keep receiving telemetry and video while awaiting an actual landed
         # event; sending Landing is never reported as proof of landing.
         if self.bridge.drone is None:
+            return False
+        if self.landing_confirmation.fault:
             return False
         try:
             landed = self.bridge.drone(FlyingStateChanged(state="landed", _policy="wait", _timeout=20))
@@ -135,13 +342,39 @@ class OlympeOrbitDriver:
                 except Exception:
                     pass
                 last_send = time.monotonic()
-            heard = (self.bridge.sensor_ages is not None and self.first_land_request is not None
-                     and self.bridge.sensor_ages.landed_at >= self.first_land_request)
-            if (landed.success() or heard) and self.bridge.connected and self.bridge.drone.connected:
+            ages = self.bridge.sensor_ages
+            cached_state = self.bridge._state(FlyingStateChanged) or {}
+            current_state = getattr(cached_state.get('state'),'name',cached_state.get('state'))
+            if current_state is None:
+                current_state = getattr(ages,'state',None)
+            attitude = self.bridge._state(AttitudeChanged) or {}
+            speed = self.bridge._state(SpeedChanged) or {}
+            try:
+                roll, pitch = (math.degrees(attitude[k]) for k in ('roll','pitch'))
+                speed_mps = math.sqrt(sum(speed[k]**2 for k in ('speedX','speedY','speedZ')))
+            except (KeyError,TypeError,ValueError):
+                roll = pitch = speed_mps = float('nan')
+            confirmed = self.landing_confirmation.observe(
+                now=time.monotonic(), requested_at=self.first_land_request,
+                state=current_state,state_at=getattr(ages,'state_at',float('-inf')),
+                emergency_at=getattr(ages,'emergency_at',float('-inf')),
+                connected=self.bridge.connected and self.bridge.drone.connected,
+                sensors_at=min((getattr(ages,'ages',{}).get(k,float('-inf')) for k in ('attitude','speed'))),
+                roll=roll,pitch=pitch,speed=speed_mps)
+            if self.landing_confirmation.fault:
+                self.landing_error = self.landing_confirmation.fault
+                self._diagnostic('landing_failed', {'reason':self.landing_error})
                 landed.cancel()
+                return False
+            if confirmed:
+                self._diagnostic('landing_confirmed', {'state':ages.state,'roll_deg':roll,'pitch_deg':pitch,'speed_mps':speed_mps})
+                landed.cancel()
+                self._restore_continuous_controls()
                 return True
             time.sleep(.1)
         landed.cancel()
+        self.landing_error = 'Landing did not reach a fresh, upright, stationary landed state within 20 seconds'
+        self._diagnostic('landing_failed', {'reason':self.landing_error})
         return False
 
 
@@ -166,7 +399,7 @@ class QROrbitBridge(AnafiBridge):
     def _connect(self):
         ok = super()._connect()
         if ok:
-            self.sensor_ages = SensorAges(self.drone)
+            self.sensor_ages = SensorAges(self.drone, self.publisher)
             self.sensor_ages.subscribe()
         return ok
 
@@ -342,9 +575,13 @@ class QROrbitBridge(AnafiBridge):
                     self.report("error", "flight worker did not stop: pilot intervention required")
                 return
             self.report("landing", "operator/shutdown landing request")
-            confirmed = self.driver.land()
+            try:
+                confirmed = self.driver.land()
+            except Exception as error:
+                self.driver.landing_error = f'Landing confirmation failed: {type(error).__name__}: {error}'
+                confirmed = False
             self.report("landed" if confirmed else "error", "aircraft confirmed landed" if confirmed else
-                        "LANDING UNCONFIRMED: pilot intervention required")
+                        "LANDING UNCONFIRMED: " + (getattr(self.driver,'landing_error',None) or 'pilot intervention required'))
 
     def _orbit(self):
         fly_once(self.driver, self.limits, self.trigger.expected, self.sample,

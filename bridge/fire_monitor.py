@@ -2,6 +2,7 @@
 """Mac RGB/QR detector consuming the real camera relay. No aircraft commands."""
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import fcntl
 import json
@@ -44,6 +45,12 @@ class Episodes:
         self.last_capture = captured
         if hit is None:
             self.hits = 0
+            return None
+        if hit.get('qr_tracking') in ('optical-flow','visual-template'):
+            # Tracking can maintain an existing episode, never create or
+            # reconfirm one, or publish a new incident from cached payload text.
+            if self.episode and self.identity==('qr-test','fire',hit.get('qr_text')):
+                self.last_seen=now
             return None
         identity = (hit['source'], hit['label'], hit.get('qr_text'))
         if identity != self.identity:
@@ -90,6 +97,11 @@ class Monitor:
         self.episodes = Episodes()
         self.last_capture = None
         self.last_health = 0
+        # Incident persistence can wait on the database. Never put it on the
+        # current-frame path: a slow history write must not erase flight lock.
+        self.publisher = ThreadPoolExecutor(max_workers=2, thread_name_prefix='fire-publisher')
+        self.incident_pending = None
+        self.health_pending = None
         self.health = {'model_status': detector.model_status, 'camera_state': 'waiting',
                        'last_frame_at': None, 'last_detection_at': None,
                        'last_source': None, 'error': None}
@@ -98,13 +110,42 @@ class Monitor:
         return urlopen(Request(self.backend + path, headers={
             'Authorization': 'Bearer ' + self.dashboard_token}), timeout=3)
 
-    def post(self, path, body):
+    def post(self, path, body, timeout=5):
         with urlopen(Request(self.backend + path, data=json.dumps(body, allow_nan=False).encode(),
                 headers={'Authorization': 'Bearer ' + self.ingest_token,
-                         'Content-Type': 'application/json'}, method='POST'), timeout=5) as response:
+                         'Content-Type': 'application/json'}, method='POST'), timeout=timeout) as response:
             return response.status
 
+    def _publish_incident(self, hit, jpeg, captured, episode):
+        with self.get('/api/status') as response:
+            status = json.load(response)
+        with self.get('/api/telemetry/latest') as response:
+            telemetry = json.load(response)
+        sample = telemetry.get('sample') if (telemetry.get('age_ms') is not None and 0 <= telemetry['age_ms'] < 10000) else None
+        payload = detection_payload(hit, jpeg, captured, episode, sample, status.get('site'))
+        self.post('/api/ingest/detection', payload)
+        return episode, hit['source'], captured, time.time()
+
+    def _finish_incident(self):
+        pending = self.incident_pending
+        if pending is None or not pending.done():
+            return
+        self.incident_pending = None
+        try:
+            episode, source, captured, accepted = pending.result()
+        except Exception as error:
+            self.health['incident_error'] = type(error).__name__
+            return  # Retry with a new frame; do not refresh stale evidence.
+        if self.episodes.episode == episode:
+            self.episodes.acknowledged(accepted)
+        self.health.update(last_detection_at=iso(captured), last_source=source, incident_error=None)
+        print(f"Detection accepted: {source} ({episode})", flush=True)
+
+    def close(self):
+        self.publisher.shutdown(wait=True, cancel_futures=True)
+
     def step(self):
+        self._finish_incident()
         with self.get('/api/snapshot') as response:
             captured = datetime.fromisoformat(response.headers['X-Captured-At'].replace('Z', '+00:00')).timestamp()
             jpeg = response.read(5_000_001)
@@ -121,29 +162,22 @@ class Monitor:
         image = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             raise ValueError('Invalid JPEG')
-        hit = self.detector.detect(image)
+        hit = self.detector.detect(image,captured_at=captured)
         now = time.time()  # Inference itself must not make old evidence fresh.
         episode = self.episodes.observe(hit, captured, now)
         self.health.update(camera_state='live' if now-captured < 2 else 'stale',
                            last_frame_at=iso(captured), error=None)
-        if episode:
-            with self.get('/api/status') as response:
-                status = json.load(response)
-            with self.get('/api/telemetry/latest') as response:
-                telemetry = json.load(response)
-            sample = telemetry.get('sample') if (telemetry.get('age_ms') is not None and 0 <= telemetry['age_ms'] < 10000) else None
-            payload = detection_payload(hit, jpeg, captured, episode, sample, status.get('site'))
-            self.post('/api/ingest/detection', payload)
-            self.episodes.acknowledged(time.time())
-            self.health.update(last_detection_at=iso(captured), last_source=hit['source'])
-            print(f"Detection accepted: {hit['source']} / {hit['label']} ({episode})", flush=True)
         # Send fresh rectangles independently of incident updates (which are
         # deliberately rate-limited to five seconds). Missing hits clear lock.
         self.post('/api/ingest/autonomy/target', {
             'captured_at': iso(captured), 'width': image.shape[1], 'height': image.shape[0],
             'episode_id': self.episodes.episode,
-            'hit': {k: hit[k] for k in ('source','label','confidence','bbox','qr_text','qr_corners') if k in hit}
-                   if hit and hit['label']=='fire' else None})
+            'hit': {k: hit[k] for k in ('source','label','confidence','bbox','qr_text','qr_corners','qr_tracking','qr_decoded_at',
+                                     'qr_template_score','qr_template_data_score','qr_template_module_error',
+                                     'qr_template_module_coverage') if k in hit}
+                   if hit and hit['label']=='fire' else None}, timeout=.5)
+        if episode and self.incident_pending is None:
+            self.incident_pending = self.publisher.submit(self._publish_incident, dict(hit), jpeg, captured, episode)
 
     def run(self):
         while True:
@@ -154,10 +188,9 @@ class Monitor:
                 self.health.update(camera_state='waiting', error=type(error).__name__)
                 self.episodes.hits = 0
             if time.monotonic() - self.last_health >= 2:
-                try:
-                    self.post('/api/ingest/vision', {'observed_at': iso(time.time()), **self.health})
-                except Exception:
-                    pass
+                if self.health_pending is None or self.health_pending.done():
+                    self.health_pending = self.publisher.submit(self.post, '/api/ingest/vision',
+                        {'observed_at': iso(time.time()), **self.health})
                 self.last_health = time.monotonic()
             time.sleep(max(.01, .2 - (time.monotonic() - started)))
 
@@ -176,14 +209,14 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit('A fire monitor is already running for this checkout.')
-        try:
-            import torch
-            torch.set_num_threads(2)
-        except ImportError:
-            pass  # The QR detector still works; model health reports the gap.
         detector = FireDetector(args.model)
+        detector.warmup()
         print('Fire monitor: QR + RGB inference; no flight commands.', flush=True)
-        Monitor(args.backend, os.environ['DASHBOARD_TOKEN'], os.environ['INGEST_TOKEN'], detector).run()
+        monitor = Monitor(args.backend, os.environ['DASHBOARD_TOKEN'], os.environ['INGEST_TOKEN'], detector)
+        try:
+            monitor.run()
+        finally:
+            monitor.close()
 
 
 if __name__ == '__main__':

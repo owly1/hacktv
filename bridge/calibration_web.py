@@ -1,5 +1,6 @@
 """Local browser capture UI; reads camera snapshots, never controls the drone."""
 import json
+import math
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
@@ -14,12 +15,12 @@ PAGE = r'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="w
 <title>Drone camera calibration</title>
 <style>[hidden]{display:none}body{font:17px system-ui;margin:30px auto;max-width:1080px;padding:0 20px;background:#f3f4f0;color:#18312b}h1{margin-bottom:6px}p{line-height:1.5}button,input{font:inherit;padding:10px;border:1px solid #9baaa2;border-radius:8px}button{background:#155746;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:wait}input{width:60px}section{background:white;padding:20px;border-radius:14px;margin:18px 0}img{width:100%;display:block;background:#14221e;min-height:100px;border-radius:8px}.controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}#result{white-space:pre-line}#progress{font-weight:700}small{color:#52665d}</style>
 <h1>Calibrate the drone camera</h1><p>Keep the drone grounded. Move the checkerboard, hold it still, then capture. No flight commands are enabled.</p>
-<section><div class="controls"><label>Squares across <input id="columns" type="number" min="4" max="20"></label><label>Squares down <input id="rows" type="number" min="4" max="20"></label><button id="capture">Capture photo</button><span id="progress">Loading saved photos…</span><button id="new-session" disabled>Start new photo set</button></div><p>Every captured photo is saved, even if corners aren’t found. Calibration will use the usable views.</p><p id="result" role="status">Loading camera…</p><p id="coverage"></p><small id="folder"></small></section>
-<section><h2>Live drone view</h2><p>Attach the sheet flat to a rigid board. Keep all squares visible; vary the board’s tilt, distance and position across the image.</p><p id="video-status" role="status">Connecting to continuous video…</p><img id="live" alt="Live view from the drone camera"></section>
+<section><div class="controls"><label>Squares across <input id="columns" type="number" min="4" max="20"></label><label>Squares down <input id="rows" type="number" min="4" max="20"></label><button id="capture">Capture photo</button><span id="progress">Loading saved photos…</span><button id="new-session" disabled>Start new photo set</button></div><p>Every captured photo is saved, even if corners aren’t found. Calibration will use the usable views.</p><p id="result" role="status">Loading camera…</p><p id="coverage"></p><p id="square-size"></p><small id="folder"></small></section>
+<section><h2>Live drone view</h2><p>Use a flat checkerboard or an iPad display with a fixed board size. Keep all squares visible; vary the board’s tilt, distance and position across the image.</p><p id="video-status" role="status">Connecting to continuous video…</p><img id="live" alt="Live view from the drone camera"></section>
 <section><h2>Last saved photo</h2><p>Coloured markers show detected corners. Photos without markers are saved too, for later review.</p><img id="attempt" alt="Last saved capture" hidden></section>
 <script>
 const $=id=>document.getElementById(id); let busy=false;
-function status(s){$('columns').value=s.columns;$('rows').value=s.rows;$('columns').disabled=$('rows').disabled=s.count>0;$('progress').textContent=`${s.count} / ${s.target} saved · corners found in ${s.detected}`;$('folder').textContent=`Saved locally: ${s.directory}`;$('capture').disabled=busy||s.count>=s.target;$('new-session').disabled=busy||s.count===0;$('coverage').textContent=s.coverage;if(s.message)$('result').textContent=s.message;}
+function status(s){$('columns').value=s.columns;$('rows').value=s.rows;$('columns').disabled=$('rows').disabled=s.count>0;$('progress').textContent=`${s.count} / ${s.target} saved · corners found in ${s.detected}`;$('folder').textContent=`Saved locally: ${s.directory}`;$('capture').disabled=busy||s.count>=s.target;$('new-session').disabled=busy||s.count===0;$('coverage').textContent=s.coverage;$('square-size').textContent=`Square edge: ${s.square_mm} mm · keep the displayed size fixed`;if(s.message)$('result').textContent=s.message;}
 fetch('/status').then(r=>r.json()).then(status);
 let retry=null, wasFresh=null;
 function live(){clearTimeout(retry);$('live').src='/video?t='+Date.now();}
@@ -31,8 +32,11 @@ $('capture').onclick=()=>submit('/capture');$('new-session').onclick=()=>submit(
 
 
 class CaptureSession:
-    def __init__(self, root, columns, rows, camera, resume=False, target=50):
+    def __init__(self, root, columns, rows, camera, resume=False, target=50, square_mm=20):
         board_pattern(columns, rows)
+        self.square_mm = square_mm
+        if not math.isfinite(square_mm) or not 5 <= square_mm <= 100:
+            raise ValueError('Measured square edge must be 5-100 mm')
         if not isinstance(target,int) or not 15 <= target <= 200:
             raise ValueError('Photo target must be 15-200')
         self.target = target
@@ -45,7 +49,7 @@ class CaptureSession:
             raise ValueError('This folder already contains views; use --directory with a new folder')
         self.count = 0
         self.size = self.last_stamp = None
-        self.message = 'Ready. Attach the sheet flat to a rigid board, hold the full checkerboard in view and click Capture photo.'
+        self.message = 'Ready. Hold the full flat checkerboard in view and click Capture photo.'
         self.lock = threading.Lock()
         if files:
             saved = json.loads((root/'session.json').read_text())
@@ -54,6 +58,7 @@ class CaptureSession:
             if self.target>200 or sorted(p.name for p in files) != sorted(f'view-{i:02}.png' for i in range(1,len(files)+1)):
                 raise ValueError('Saved views are not a complete numbered sequence; use a new folder')
             self.columns, self.rows = saved['columns'], saved['rows']
+            self.square_mm = saved.get('square_mm',square_mm)
             for path in files:
                 image = cv2.imread(str(path))
                 if image is None:
@@ -72,7 +77,7 @@ class CaptureSession:
         self.save_metadata()
 
     def save_metadata(self):
-        value = {'columns':self.columns,'rows':self.rows,'target':self.target}
+        value = {'columns':self.columns,'rows':self.rows,'target':self.target,'square_mm':self.square_mm}
         if self.size: value['image_size'] = self.size
         (self.root/'session.json').write_text(json.dumps(value)+'\n')
 
@@ -88,7 +93,7 @@ class CaptureSession:
                          else 'Position coverage reached. Also vary gentle tilts and distance; the final fit still checks accuracy.')
         else:
             coverage = 'Start with the flat board filling about half the view. Use gentle tilts and move across the image; corners must stay visible.'
-        return dict(count=self.count, target=self.target, detected=len(self.centers), columns=self.columns, rows=self.rows,
+        return dict(count=self.count, target=self.target, detected=len(self.centers), columns=self.columns, rows=self.rows, square_mm=self.square_mm,
                     directory=str(self.root.resolve()), message=self.message, coverage=coverage)
 
     def new_session(self):
@@ -100,7 +105,7 @@ class CaptureSession:
             self.size = self.last_stamp = None
             self.centers = []
             self.save_metadata()
-            self.message = 'New photo set ready. Previous photos are preserved. Attach the sheet flat to a rigid board before capturing.'
+            self.message = 'New photo set ready. Previous photos are preserved. Keep the checkerboard flat and its displayed size fixed before capturing.'
             return self.status()
         finally:
             self.lock.release()
@@ -232,7 +237,7 @@ def serve(args):
     base=args.backend.rstrip('/')
     with urlopen(base+'/api/session',timeout=5) as response:
         token=json.load(response)['token']
-    session=CaptureSession(args.directory,args.columns,args.rows,lambda:fetch_camera(base,token),resume=True,target=args.photos)
+    session=CaptureSession(args.directory,args.columns,args.rows,lambda:fetch_camera(base,token),resume=True,target=args.photos,square_mm=args.square_mm)
     def request(path):
         return urlopen(Request(base+path,headers={'Authorization':'Bearer '+token}),timeout=5)
     def video_status():

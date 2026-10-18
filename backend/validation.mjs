@@ -231,7 +231,7 @@ const FIRE_FLIGHT_PATHS = new Map([
   ['qr-auto-preset', 'launch-heading'],
 ]);
 const FLIGHT_PHASES = new Set([
-  'preflight', 'takeoff', 'climb', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
+  'preflight', 'takeoff', 'climb', 'recover', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
 ]);
 
 function isJpeg(buf) {

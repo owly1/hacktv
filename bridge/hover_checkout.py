@@ -61,6 +61,8 @@ class HoverCheckout(QROrbitBridge):
         # Camera-only checks always require a stationary landed aircraft.
         if camera_only:
             starting = True
+        if not camera_only and self.args.execute and self.driver is None:
+            return "flight movement/landing driver is unavailable"
         if not self.connected or not self._aircraft_link() or self.input_closed.is_set():
             return "aircraft or operator terminal is disconnected"
         if self.abort_flight.is_set():

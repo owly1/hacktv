@@ -100,7 +100,7 @@ test('autonomous response needs readiness and its owning live page; replay sends
   };
   run("state.mode='live';state.autonomy={enabled:false,receiver:{ready:false}};renderAutonomy()");
   assert.equal(element('autonomy-enable').disabled,true);
-  run('state.autonomy.receiver.ready=true;renderAutonomy()');
+  run('Object.assign(state.autonomy.receiver,{ready:true,camera_ready:true,camera_search_supported:true});renderAutonomy()');
   assert.equal(element('autonomy-enable').disabled,false);
   await run("setAutonomy('enable')");
   assert.equal(run('autonomousSession'),'test-session');
@@ -108,6 +108,22 @@ test('autonomous response needs readiness and its owning live page; replay sends
   assert.ok(calls.some(body=>body?.action==='land'));
   assert.equal(run('autonomousSession'),null);
   const before=calls.length;await run("setAutonomy('enable')");assert.equal(calls.length,before);
+});
+
+test('BOSCO sends search and flight authorization together and disables its start button while active',async()=>{
+  const {context,run,element}=await dashboard();const calls=[];
+  context.fetch=async(url,options)=>{
+    calls.push(JSON.parse(options.body));
+    return {ok:true,json:async()=>({enabled:true,camera_search:true,session_id:'bosco-session',
+      receiver:{ready:true,camera_ready:true,camera_search_supported:true,search_state:'scanning'}})};
+  };
+  run("state.mode='live';state.autonomy={enabled:false,receiver:{ready:true,camera_ready:true,camera_search_supported:true}};renderAutonomy()");
+  assert.equal(element('autonomy-enable').textContent,'Start BOSCO');
+  await run("setAutonomy('enable',{camera_search:true})");
+  assert.deepEqual(calls[0],{action:'enable',camera_search:true});
+  assert.equal(run('autonomousSession'),'bosco-session');
+  assert.equal(element('autonomy-enable').disabled,true);
+  assert.equal(element('autonomy-state').textContent,'SEARCHING');
 });
 
 test('a delayed poll cannot erase a newly enabled flight session',async()=>{
@@ -134,4 +150,94 @@ test('camera tilt stays available with missing flight calibration but never in a
   run('state.autonomy.enabled=true;renderAutonomy()');assert.equal(element('camera-down').disabled,true);
   assert.equal(element('camera-shallow').disabled,true);
   await run("setAutonomy('camera',{pitch_deg:-45})");assert.equal(calls.length,1);
+});
+
+test('one dropped heartbeat reply retries the same session instead of causing a watchdog landing',async()=>{
+  const {context,run,element}=await dashboard();const calls=[];
+  run("state.mode='live';autonomousSession='active-session';state.autonomy={enabled:true,session_id:'active-session',receiver:{ready:false},mission:{id:'flying'}}");
+  context.fetch=async(url,options)=>{calls.push(JSON.parse(options.body));throw new Error('temporary timeout');};
+  await run('pollAutonomy()');
+  assert.equal(run('autonomousSession'),'active-session');
+  assert.equal(element('autonomy-state').textContent,'CONNECTION LOST');
+  context.fetch=async(url,options)=>{
+    calls.push(JSON.parse(options.body));
+    return {ok:true,json:async()=>({enabled:true,session_id:'active-session',mission:{id:'flying'},receiver:{phase:'recover'}})};
+  };
+  await run('pollAutonomy()');
+  assert.deepEqual(calls,[{action:'heartbeat',session_id:'active-session'},{action:'heartbeat',session_id:'active-session'}]);
+  assert.equal(element('autonomy-state').textContent,'REACQUIRING');
+  assert.match(element('autonomy-detail').textContent,/Holding position/);
+});
+
+test('authoritative expiry clears heartbeat ownership and failed LAND cannot keep renewing it',async()=>{
+  const {context,run}=await dashboard();
+  run("state.mode='live';autonomousSession='expired-session'");
+  context.fetch=async()=>({ok:false,status:409,json:async()=>({error:'Session expired'})});
+  await run('pollAutonomy()');assert.equal(run('autonomousSession'),null);
+  run("autonomousSession='still-active';state.autonomy={enabled:true}");
+  context.fetch=async()=>{throw new Error('offline');};
+  await run("setAutonomy('land')");assert.equal(run('autonomousSession'),null);
+});
+
+test('emergency telemetry overrides even a newer incorrect landed event',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.telemetry={state:'emergency',observed_at:new Date(Date.now()-300).toISOString()};
+    state.flight.events=[{phase:'landed',at:new Date().toISOString(),message:'aircraft confirmed landed'}];
+    state.autonomy={enabled:false,receiver:{ready:true,camera_ready:true,camera_search_supported:true}};
+    renderFlight();renderAutonomy();`);
+  assert.match(element('flight-phase').textContent,/emergency · landing not confirmed/);
+  assert.equal(element('flight-bar').style.width,'0%');
+  assert.equal(element('autonomy-state').textContent,'EMERGENCY');
+  assert.equal(element('autonomy-enable').disabled,true);
+  run("state.telemetry.state='hovering';renderFlight()");
+  assert.match(element('flight-phase').textContent,/Landing unconfirmed/);
+  run("state.telemetry.state='landed';renderFlight()");
+  assert.match(element('flight-phase').textContent,/Flight pattern · landed/);
+});
+
+test('QR readiness does not imply RGB localization readiness',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,receiver:{ready:true,localization_sources:['qr-test'],
+    blocked_source:'yolo',reason:'Ground-plane geometry needs physical verification'}};renderAutonomy()`);
+  assert.match(element('autonomy-limits').textContent,/Location verified for QR markers\./);
+  assert.match(element('autonomy-detail').textContent,/RGB fire detected; automatic flight unavailable/);
+  assert.match(element('autonomy-detail').textContent,/physical verification/);
+});
+
+test('preflight displays configured scale and scope without claiming camera-profile verification',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,waiting_reason:'Fire detected; waiting for its incident record to be accepted',
+    receiver:{ready:true,position:{forward_m:.7,right_m:.05},calibration:{qr_side_m:.12,offset_body_m:[.08,0,0],
+      image_size:[1280,720],rms_px:.344,qr_verified:true,profile_verified:null}}};renderAutonomy()`);
+  assert.match(element('autonomy-calibration').textContent,/12 cm/);
+  assert.match(element('autonomy-calibration').textContent,/8 \/ 0 \/ 0 cm/);
+  assert.match(element('autonomy-calibration').textContent,/1280 × 720/);
+  assert.match(element('autonomy-calibration').textContent,/Grounded QR location verified/);
+  assert.match(element('autonomy-calibration').textContent,/Historical camera zoom\/crop match is unknown/);
+  assert.match(element('autonomy-detail').textContent,/incident record/);
+});
+
+test('a claimed grounded mission is acquiring and expiry remains visible when the receiver is ready again',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,mission:{id:'claimed'},receiver:{ready:true,phase:'preflight',reason:'Checking position'}};renderAutonomy()`);
+  assert.equal(element('autonomy-state').textContent,'ACQUIRING');
+  assert.match(element('autonomy-detail').textContent,/checking takeoff readiness/);
+  run(`state.autonomy={enabled:false,reason:'Control connection expired; landing requested',receiver:{ready:true,reason:'Ready for a new session'}};renderAutonomy()`);
+  assert.match(element('autonomy-detail').textContent,/Control connection expired/);
+  assert.match(element('autonomy-detail').textContent,/Ready to search/);
+});
+
+test('adaptive scale displays automatic acquisition and only calls current measured geometry verified',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:false,receiver:{ready:true,qr_scale_mode:'adaptive',
+    localization_sources:['qr-test'],calibration:{qr_side_m:.12,offset_body_m:[.08,0,0],image_size:[1280,720],
+    rms_px:.344,qr_verified:true,profile_verified:null}}};renderAutonomy()`);
+  assert.match(element('autonomy-calibration').textContent,/QR size estimated automatically during vertical acquisition/);
+  assert.doesNotMatch(element('autonomy-calibration').textContent,/12 cm|Configured QR black square/);
+  assert.match(element('autonomy-calibration').textContent,/8 \/ 0 \/ 0 cm/);
+  assert.match(element('autonomy-calibration').textContent,/1280 × 720/);
+  assert.match(element('autonomy-calibration').textContent,/not yet verified/);
+  assert.doesNotMatch(element('autonomy-limits').textContent,/Location verified for QR/);
+  run("state.autonomy.receiver.position={source:'measured-qr-3d',forward_m:1,right_m:0};renderAutonomy()");
+  assert.match(element('autonomy-calibration').textContent,/Metric target scale verified from current observations/);
 });

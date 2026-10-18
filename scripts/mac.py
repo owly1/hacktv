@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import signal
 import subprocess
@@ -112,11 +113,40 @@ def bundle(config, env):
     return output.getvalue()
 
 
+def install_command(config):
+    """Do not replace importable flight code underneath an SDK owner.
+
+    Normal startup installs before launching its receiver. A second startup
+    must fail here, before extracting anything, even if its later SDK guard
+    would also have refused to connect.
+    """
+    directory = shlex.quote(config['directory'])
+    return '\n'.join([
+        'set -eu',
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle|fire_response)\\.py'; then",
+        "  echo 'A flight receiver is running; stop it and confirm landing before deploying source.' >&2; exit 73; fi",
+        f'umask 077; mkdir -p "$HOME"/{directory}',
+        f'chmod 700 "$HOME"/{directory}',
+        f'tar -xzf - -C "$HOME"/{directory}',
+    ])
+
+
 def sync_clock(config):
     # The provisioned helper accepts whole seconds. Send near the start of a
     # second so SSH latency + rounding do not make fresh frames over 0.8 s old.
     time.sleep((1.05 - time.time() % 1) % 1)
     remote(config, f'sudo -n /usr/local/sbin/emberwatch-maintenance set-clock {int(time.time())} >/dev/null')
+
+
+def wifi_command(config):
+    # The Pi can fall back to campus Wi-Fi while the aircraft is powered off.
+    # Do not bounce wlan0 when it is already on the intended profile.
+    return '\n'.join([
+        'set -eu',
+        'if [ "$(nmcli -g GENERAL.CON-UUID device show wlan0)" != ' + shlex.quote(config['wifi_profile']) + ' ]; then',
+        '  sudo -n /usr/local/sbin/emberwatch-maintenance wifi-profile ' + shlex.quote(config['wifi_profile']),
+        'fi',
+    ])
 
 
 def prepare_command(config):
@@ -127,9 +157,7 @@ def prepare_command(config):
         'systemctl --user stop emberwatch-bridge.service',
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
         "  echo 'Another observation receiver is running; stop it in its own terminal.' >&2; exit 73; fi",
-        'if [ "$(nmcli -g GENERAL.CON-UUID device show wlan0)" != ' + shlex.quote(config['wifi_profile']) + ' ]; then',
-        '  sudo -n /usr/local/sbin/emberwatch-maintenance wifi-profile ' + shlex.quote(config['wifi_profile']),
-        'fi',
+        wifi_command(config),
     ])
 
 
@@ -139,13 +167,17 @@ def stop_observer_command(config):
     return stop_receiver_command(config,'anafi_observer.py','observation')
 
 
-def stop_receiver_command(config,program,label):
+def stop_receiver_command(config,program,label,owner=None):
     if program not in ('anafi_observer.py','fire_response.py'):
         raise ValueError('Unsupported receiver stop')
-    code = '''import os, signal
+    if owner is not None and not re.fullmatch(r'[0-9a-f]{32}',owner):
+        raise ValueError('Invalid receiver owner')
+    code = '''import os, signal, time
 from pathlib import Path
 root = Path.home() / DIRECTORY
+owner = RECEIVER_TOKEN
 count = 0
+stopping = []
 for process in Path('/proc').iterdir():
     if not process.name.isdigit():
         continue
@@ -153,12 +185,21 @@ for process in Path('/proc').iterdir():
         argv = (process / 'cmdline').read_bytes().split(b'\\0')
         if (argv and Path(os.fsdecode(argv[0])).name.startswith('python')
                 and (process / 'cwd').resolve() == root.resolve() and PROGRAM in argv):
+            if owner is not None and ('EMBERWATCH_RECEIVER_OWNER=' + owner).encode() not in (process / 'environ').read_bytes().split(b'\\0'):
+                continue
             os.kill(int(process.name), signal.SIGINT)
+            stopping.append(process)
             count += 1
     except (OSError, ProcessLookupError):
         pass
 print(f'Requested graceful stop for {count} LABEL receiver(s).')
-'''.replace('DIRECTORY', repr(config['directory'])).replace('PROGRAM',repr(program.encode())).replace('LABEL',label)
+if owner is not None:
+    deadline = time.monotonic() + 15
+    while any(process.exists() for process in stopping):
+        if time.monotonic() >= deadline:
+            raise SystemExit(75)
+        time.sleep(.25)
+'''.replace('DIRECTORY', repr(config['directory'])).replace('PROGRAM',repr(program.encode())).replace('LABEL',label).replace('RECEIVER_TOKEN',repr(owner))
     return 'python3 -c ' + shlex.quote(code)
 
 
@@ -231,20 +272,36 @@ def supervise_fire_response(config, env, command):
             time.sleep(.2)
     vision=start_fire_monitor(env)
     child=None
+    owner=None
     try:
         while True:
             try:
                 if vision.poll() is not None: vision=start_fire_monitor(env)
                 backend_status(env)
+                if owner is not None:
+                    # SSH can die while its remote Python process survives.
+                    # Only reclaim the process launched by this supervisor.
+                    remote(config,stop_receiver_command(config,'fire_response.py','fire response',owner))
+                    owner=None
                 remote(config,prepare_command(config))
                 sync_clock(config)
-                child=subprocess.Popen(receiver_ssh(config,env,command,headless=True))
+                owner=secrets.token_hex(16)
+                owned_command='export EMBERWATCH_RECEIVER_OWNER='+owner+'\n'+command
+                child=subprocess.Popen(receiver_ssh(config,env,owned_command,headless=True))
+                next_wifi_check=time.monotonic()+10
                 while True:
                     try:
                         code=child.wait(timeout=1); break
                     except subprocess.TimeoutExpired:
                         if vision.poll() is not None: vision=start_fire_monitor(env)
+                        if time.monotonic()>=next_wifi_check:
+                            try: remote(config,wifi_command(config))
+                            except (OSError,subprocess.SubprocessError):
+                                print('Waiting for drone Wi-Fi; receiver recovery remains active.',flush=True)
+                            next_wifi_check=time.monotonic()+10
                 child=None
+                remote(config,stop_receiver_command(config,'fire_response.py','fire response',owner))
+                owner=None
                 try: fetch_flights(config)
                 except (OSError,subprocess.SubprocessError): pass
                 if code==73: raise ValueError('Another receiver is running; stop it before fire response')
@@ -258,12 +315,14 @@ def supervise_fire_response(config, env, command):
         pass
     finally:
         stop_child(vision)
-        if child is not None:
+        if owner is not None:
             # A headless SSH exit does not reliably signal its remote process.
             # Ask this deployment's receiver to land/stop before closing its
             # tunnel. Network loss is covered by the receiver's own watchdog.
-            try: remote(config,stop_receiver_command(config,'fire_response.py','fire response'))
-            except (OSError,subprocess.SubprocessError): child.terminate()
+            try: remote(config,stop_receiver_command(config,'fire_response.py','fire response',owner))
+            except (OSError,subprocess.SubprocessError):
+                if child is not None: child.terminate()
+        if child is not None:
             try: child.wait(timeout=25)
             except subprocess.TimeoutExpired: child.kill(); child.wait()
         lock.close()
@@ -427,8 +486,7 @@ def main():
         os.execv(sys.executable, command)
     if args.command == 'install-pi':
         directory = shlex.quote(config['directory'])
-        remote(config, f'umask 077; mkdir -p "$HOME"/{directory} && '
-               f'chmod 700 "$HOME"/{directory} && tar -xzf - -C "$HOME"/{directory}', bundle(config, env))
+        remote(config, install_command(config), bundle(config, env))
         for source, target in ((args.camera_calibration, 'camera.local.json'),
                                (args.preflight_file, 'current-preflight.local.json')):
             if source:

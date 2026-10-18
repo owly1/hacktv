@@ -64,9 +64,14 @@ Repeat deployment after changing bridge source or this Mac's ingest token.
 commands reuse the existing Pi SDK and maintenance helper; they do not build
 Olympe or provision a blank SD card.
 
-Open <http://127.0.0.1:8787/>. Keep that backend terminal running. In a second
-interactive terminal, with the grounded aircraft powered, Skycontroller off
-and FreeFlight closed on any phone:
+Open <http://127.0.0.1:8787/>. On a provisioned Mac, normal `npm start` deploys
+this checkout and starts one disarmed fire-response receiver and the local
+detector. **Start BOSCO** authorizes one dashboard session; startup alone never
+authorizes takeoff. Keep the Pi powered, Skycontroller off and FreeFlight closed.
+Do not start a second receiver alongside it.
+
+For observation only, stop the normal app first, run
+`EMBERWATCH_RECEIVER=off npm start`, and in a second terminal run:
 
 ```sh
 .venv/bin/python scripts/mac.py pi
@@ -89,8 +94,9 @@ for 15 seconds also reconnects. Native SDK stalls are bounded by a 90-second
 watchdog and cleanup by 15 seconds. Wi-Fi discovery/boot time adds to recovery
 time. Keep the Pi powered, Ethernet connected and the Mac receiver terminal
 open; neither localhost nor the QR preview needs restarting for drone cycles.
-`npm start` starts only the backend; start `scripts/mac.py pi` once as well.
-Flight modes are never automatically restarted or armed.
+The observation command is only needed for this explicit observation-only
+workflow. Normal app startup manages its own disarmed fire-response receiver.
+A restored connection never restores an enabled flight session.
 
 ### Fire detection versus QR flight rehearsal
 
@@ -226,6 +232,65 @@ investigate that separately from the Linux flight runtime. No flight test is
 performed by the setup or unit tests.
 
 ## Autonomous one-metre QR circle
+
+### BOSCO: search, detect, track and circle
+
+On the autonomous-response branch, run the normal dashboard with the Pi
+`fire-response` receiver. It starts disarmed. **Start BOSCO** in the Live
+dashboard enables both camera search and fire response for that page's session:
+
+1. While grounded, sweep pitch slowly through the reported camera bounds,
+   capped at −85° to +85°. Pause at scan positions and hold on a detection so
+   it can be confirmed. The ANAFI has controllable pitch only; it cannot pan
+   left/right independently or see behind itself while grounded. Aircraft
+   heading changes during the measured orbit provide horizontal coverage.
+2. An approved QR or supported fire detection must pass the existing fresh
+   observation, accepted incident, geometry and flight preflight checks.
+   Normal BOSCO estimates QR scale from measured vertical travel during
+   acquisition, using the existing camera calibration. Display size can change
+   between sessions without another ruler measurement. Keep the QR stationary;
+   horizontal movement waits for a consistent scale estimate, including for
+   targets below the launch surface. RGB still needs verified ground-plane
+   geometry; a classifier rectangle by itself cannot provide depth.
+3. Request a 0.3 m/s maximum vertical-speed setting and 60°/s camera speed,
+   requiring SDK acknowledgement before takeoff. Parrot's `TakeOff` command
+   has no climb-rate argument, so this setting is **not a guaranteed takeoff
+   rate**. The camera follows actual SDK altitude/vertical speed at up to 20 Hz,
+   with a short prediction to account for latency. Initial airborne height
+   remains firmware-controlled, normally about 1 m above launch.
+4. The last measured aim can guide the camera during vertical acquisition for
+   at most 15 seconds, and never after relative movement begins. It cannot
+   substitute for a fresh fire position. The orbit requires stable measured
+   geometry and remains a 1 m radius around the detected target.
+
+Measured-fire moves accept up to 15 cm of along-path undershoot and replan
+from a fresh target observation after every move. Cross-path drift and
+overshoot remain limited to 8 cm, with unchanged height/yaw checks. Three
+consecutive moves below 20% of commanded progress end the flight. Brief target
+loss holds position and reacquires: up to 10 seconds initially and 8 seconds
+after a movement. The camera holds its last aim during recovery. A persistent
+loss, SDK failure, missing acknowledgement or hard vehicle limit still ends
+the flight. See [the reliability review](BOSCO_FLIGHT_RELIABILITY.md) for the
+regressions, recorded-video findings and adaptive-scale requirements.
+
+Keep the Live page open. **LAND & stop BOSCO**, loss of the control connection,
+drone power-off, receiver restart or failed preflight ends authorization.
+Receiver contact has a three-second grace period on both the backend and Pi;
+short HTTP timeouts retry within that limit. The dashboard heartbeat expires
+after five seconds. A new session must receive its first dashboard heartbeat
+before it can authorize takeoff. A transient lost reply does not abandon the
+session, and LAND immediately stops heartbeat renewal even if its request fails.
+Reconnection restores reception but requires a new Start BOSCO click. A
+completed flight also requires a new session. Video and control diagnostics
+are recorded for each flight. Normal battery/time limits still apply; the
+explicit `--short-test` profile starts at 30%, lands below 25% and caps at 60 s.
+The new search/ascent behavior has automated checks but still needs a physical
+flight validation with a charged battery.
+
+SDK references: [gimbal capabilities and speed](https://developer.parrot.com/docs/olympe/arsdkng_gimbal.html)
+and [takeoff and vertical-speed settings](https://developer.parrot.com/docs/olympe/arsdkng_ardrone3_piloting.html).
+
+### Other QR flight modes
 
 For the QR-as-demo-trigger workflow, use `pi --mode qr-demo --execute`, described
 in [Automatic QR demo preset](QR_AUTO_DEMO.md). The selected QR creates a fire

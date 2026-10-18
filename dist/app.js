@@ -42,23 +42,51 @@ const getJson = async (path, opts) => (await api(path, opts)).json();
 
 let autonomousSession = null;
 let autonomyRevision = 0, autonomyActionPending = false;
+let autonomyConnectionError = false;
+function aircraftEmergency() {
+  return ['emergency','emergency_landing'].includes(state.telemetry?.state);
+}
 function renderAutonomy() {
   const a=state.autonomy, enabled=!!a?.enabled;
-  $('autonomy-state').textContent=enabled?'ENABLED':'OFF';
+  const search=a?.receiver?.search_state;
+  const phase=a?.receiver?.phase, emergency=aircraftEmergency();
+  const adaptiveScale=a?.receiver?.qr_scale_mode==='adaptive';
+  const currentMetricScale=a?.receiver?.position?.source==='measured-qr-3d';
+  const acquiring=!!a?.mission&&!['takeoff','climb','recover','circle','return','landing'].includes(phase);
+  $('autonomy-state').textContent=emergency?'EMERGENCY':autonomyConnectionError?'CONNECTION LOST':enabled?(acquiring?'ACQUIRING':phase==='recover'?'REACQUIRING':search==='scanning'?'SEARCHING':search==='acquiring'?'FIRE FOUND':a?.mission?'TRACKING':'ENABLED'):'OFF';
   $('autonomy-state').className='pill '+(enabled?'soft-orange':'muted');
-  $('autonomy-enable').disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.ready;
-  $('autonomy-enable').textContent=enabled?'Response enabled':'Enable this session';
-  $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
+  $('autonomy-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported;
+  $('autonomy-enable').textContent=enabled?'BOSCO active':'Start BOSCO';
+  $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.lap_seconds===15?'15 s target per lap · ':''}${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
+  if (a?.receiver?.localization_sources) {
+    const sources=a.receiver.localization_sources;
+    if (adaptiveScale&&!currentMetricScale&&sources.includes('qr-test')) {
+      $('autonomy-limits').textContent+=' QR location awaits automatic metric scale acquisition.';
+      if (sources.includes('yolo')) $('autonomy-limits').textContent+=' RGB ground-plane geometry is verified.';
+    } else $('autonomy-limits').textContent+=sources.length?` Location verified for ${sources.map(source=>source==='qr-test'?'QR markers':'RGB fire on the measured ground plane').join(' and ')}.`:' Fire localization is not verified.';
+  }
+  const calibration=a?.receiver?.calibration;
+  $('autonomy-calibration').textContent=calibration?
+    `${adaptiveScale?'QR size estimated automatically during vertical acquisition':`Configured QR black square: ${Number((calibration.qr_side_m*100).toFixed(1))} cm`} · camera offset (forward / right / down): ${calibration.offset_body_m.map(v=>Number((v*100).toFixed(1))).join(' / ')} cm · ${calibration.image_size.join(' × ')} pixels · calibration RMS ${calibration.rms_px.toFixed(3)} px. ${adaptiveScale?(currentMetricScale?'Metric target scale verified from current observations.':'Metric target scale is not yet verified; awaiting vertical acquisition.'):calibration.qr_verified?'Grounded QR location verified; flight performance remains unverified.':'QR position verification is missing.'} ${calibration.profile_verified===null?'Historical camera zoom/crop match is unknown.':calibration.profile_verified?'Camera profile matches calibration.':'Camera profile does not match calibration.'}`:
+    'Measured camera configuration is unavailable from the receiver.';
   for(const id of ['camera-level','camera-shallow','camera-down','camera-steep'])
     $(id).disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.camera_ready;
   const pitch=state.telemetry?.extra?.gimbal_pitch_deg;
   $('camera-pitch-status').textContent=Number.isFinite(pitch)&&a?.receiver?`Camera ${Math.round(pitch)}°`:'';
-  const phase=a?.receiver?.phase;
   const position=a?.receiver?.position;
   $('autonomy-detail').textContent=state.mode!=='live'?'Enable is available in Live mode only. LAND remains available.':
-    !a?'Flight control unavailable.':!a.receiver?'Flight receiver offline. Start the fire-response receiver.':
+    emergency?'Aircraft reports an emergency. A completed landing has not been confirmed.':
+    autonomyConnectionError?'Control connection interrupted; retrying. The receiver will land if its control watchdog expires.':
+    !a?'Flight control unavailable.':
+    !enabled&&a.reason&&a.reason!=='Autonomous response is off'?`${a.reason}${a.receiver?.ready?' · Ready to search when you start a new session.':a.receiver?.reason?' · '+a.receiver.reason:''}`:
+    !a.receiver?'Waiting for the Pi/aircraft receiver. Connect and power both devices.':
+    a.receiver.blocked_source?`${a.receiver.blocked_source==='yolo'?'RGB fire':'QR marker'} detected; automatic flight unavailable: ${a.receiver.reason}`:
+    enabled&&phase==='recover'?`Holding position and reacquiring the fire · ${a.receiver.reason}`:
+    enabled&&acquiring?`Fire response claimed; checking takeoff readiness · ${a.receiver.reason}`:
+    enabled&&!a.mission?`${a.waiting_reason||a.reason}${position?` · Measured location: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right`:''}`:
     enabled?(position?`Tracking fire: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right${Number.isFinite(position.down_m)?`, ${position.down_m.toFixed(2)} m below drone`:''} · ${phase}`:
-      a.mission?`Locating fire · ${a.receiver.reason}`:a.reason):a.receiver.reason||a.reason;
+      a.mission?`Locating fire · ${a.receiver.reason}`:a.waiting_reason||a.reason):
+      a.receiver.ready&&!a.receiver.camera_search_supported?'Waiting for automatic camera search capability.':a.receiver.reason||a.reason;
   document.querySelector?.('.autonomy-panel')?.setAttribute('data-enabled',String(enabled));
 }
 async function pollAutonomy() {
@@ -76,10 +104,17 @@ async function pollAutonomy() {
     }
     if (revision!==autonomyRevision) return;
     state.autonomy=response;
+    autonomyConnectionError=false;
     if (!state.autonomy.enabled) autonomousSession=null;
-  } catch {
+  } catch(error) {
     if (revision!==autonomyRevision) return;
-    autonomousSession=null; state.autonomy=null;
+    // A dropped HTTP reply must not abandon a still-authorized session. Keep
+    // retrying its heartbeat; only the backend can confirm expiry. Its watchdog
+    // still stops the mission if communication actually remains unavailable.
+    if ([401,403,409].includes(error.status)) {
+      autonomousSession=null; state.autonomy=null;
+    }
+    autonomyConnectionError=true;
   }
   renderAutonomy();
 }
@@ -87,13 +122,17 @@ async function setAutonomy(action,extra={}) {
   if (action==='enable' && (state.mode!=='live'||autonomyActionPending)) return;
   if (action==='camera' && (state.mode!=='live'||autonomyActionPending||state.autonomy?.enabled)) return;
   const revision=++autonomyRevision;
+  // Stop refreshing permission immediately, including when LAND's HTTP request
+  // cannot reach the backend. A failed stop must not leave heartbeats running.
+  if (action==='land'||action==='disable') autonomousSession=null;
   autonomyActionPending=true; renderAutonomy();
   try {
     const response=await getJson('/api/autonomy',{method:'POST',body:{action,...extra},timeout:1500});
     if (revision!==autonomyRevision) return;
     state.autonomy=response;
+    autonomyConnectionError=false;
     autonomousSession=action==='enable'?state.autonomy.session_id:null;
-    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?'Autonomous response enabled for this live session.':'Landing requested; autonomous response disabled.');
+    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?'BOSCO active: camera search and automatic fire response enabled.':'Landing requested; BOSCO stopped.');
   } catch(error) {toast(error.message);}
   finally {if(revision===autonomyRevision){autonomyActionPending=false;renderAutonomy();}}
 }
@@ -298,9 +337,23 @@ function renderTelemetry() {
 function renderFlight() {
   if (state.mode === 'demo') return;
   const e = state.flight.events.at(-1);
+  if (aircraftEmergency()) {
+    $('flight-progress').hidden=false;
+    $('flight-phase').textContent=`Aircraft ${FLIGHT_STATES[state.telemetry.state].toLowerCase()} · landing not confirmed`;
+    $('flight-bar').style.width='0%';
+    $('flight-progress').classList.toggle('error',true);
+    return;
+  }
   const recent = e && Date.now() - Date.parse(e.at) < (e.phase === 'landed' || e.phase === 'aborted' || e.phase === 'error' ? 10_000 : 120_000);
   $('flight-progress').hidden = !recent; if (!recent) return;
-  const frac = {preflight: 0, takeoff: .1, climb: .2, circle: .2 + .6 * ((e.step || 0) / (e.steps || 8)), return: .85, landing: .93, landed: 1, aborted: 1, error: 1}[e.phase] ?? 0;
+  if (e.phase==='landed' && state.telemetry?.state && state.telemetry.state!=='landed'
+      && Date.parse(state.telemetry.observed_at)>=Date.parse(e.at)-2000) {
+    $('flight-phase').textContent=`Landing unconfirmed · aircraft reports ${FLIGHT_STATES[state.telemetry.state]||state.telemetry.state}`;
+    $('flight-bar').style.width='0%';
+    $('flight-progress').classList.toggle('error',true);
+    return;
+  }
+  const frac = {preflight: 0, takeoff: .1, climb: .2, recover: .2, circle: .2 + .6 * ((e.step || 0) / (e.steps || 8)), return: .85, landing: .93, landed: 1, aborted: 1, error: 1}[e.phase] ?? 0;
   $('flight-phase').textContent = `Flight pattern · ${e.phase}${e.step ? ` ${e.step}/${e.steps}` : ''}${e.message ? ' · ' + e.message : ''}`;
   $('flight-bar').style.width = Math.round(frac * 100) + '%';
   $('flight-progress').classList.toggle('error', e.phase === 'error' || e.phase === 'aborted');
@@ -925,7 +978,7 @@ async function connect() {
   if (started) return; started = true;
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
-  $('autonomy-enable').onclick=()=>setAutonomy('enable');
+  $('autonomy-enable').onclick=()=>setAutonomy('enable',{camera_search:true});
   $('autonomy-land').onclick=()=>setAutonomy('land');
   $('camera-level').onclick=()=>setAutonomy('camera',{pitch_deg:0});
   $('camera-shallow').onclick=()=>setAutonomy('camera',{pitch_deg:-30});

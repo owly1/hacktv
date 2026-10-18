@@ -61,6 +61,19 @@ class RecordingTests(unittest.TestCase):
             self.assertEqual(recorder.stats['dropped_events'],0)
             self.assertTrue(any(e['data'].get('phase')=='landed' for e in lines(recorder.path/'events.jsonl')))
 
+    def test_emergency_overrides_misleading_landed_claim_in_review(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=Path(root)
+            entries=[{'at_unix':1,'kind':'telemetry','data':{'state':'landing','altitude_m':0,'attitude_deg':{'roll':77.8}}},
+                     {'at_unix':2,'kind':'telemetry','data':{'state':'emergency','altitude_m':0,'attitude_deg':{'roll':-176.3}}},
+                     {'at_unix':17,'kind':'flight_control','data':{'phase':'landed','message':'aircraft confirmed landed'}}]
+            (path/'events.jsonl').write_text('\n'.join(json.dumps(e) for e in entries))
+            result=review(path)
+            self.assertEqual(result['outcome'],'emergency')
+            self.assertEqual(len(result['landing_claim_conflicts']),1)
+            self.assertEqual(len(result['emergency_events']),1)
+            self.assertEqual(result['move_results'],[])
+
 
 if __name__ == '__main__':
     unittest.main()
