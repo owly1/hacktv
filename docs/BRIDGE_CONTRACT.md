@@ -97,6 +97,39 @@ the printout with `python3 bridge/make_test_marker.py` (no options).
 
 `{ "at": ISO, "phase": "preflight|takeoff|climb|circle|return|landing|landed|aborted|error", "step": 3, "steps": 8, "message": "…" }`
 
+## Person observation — `POST /api/ingest/person`
+
+One observation per person track at most every 2 s (see
+[PERSON_SEARCH.md](PERSON_SEARCH.md)). Unlike other ingest, `observed_at` may
+be up to **6 h old**, so stored observations can be delivered after a link
+outage. Anything received more than 15 s after capture is marked delayed.
+Retries with the same `obs_id` are ignored.
+
+```json
+{
+  "obs_id": "ANAFI-01-1792218232120-a1b2c3",   // unique; makes retries idempotent
+  "observed_at": "2026-10-17T06:24:07.120Z",
+  "provenance": "live",
+  "sensor": "visible",                          // or "thermal"
+  "label": "person",
+  "detector": "yolov8n.pt", "detector_score": 0.71,   // raw model output, never shown as a confidence
+  "track_id": "pt-1792218230-9f1e",
+  "bbox": [0.48, 0.45, 0.52, 0.55],
+  "drone": { "latitude": 43.7866, "longitude": -79.1903, "altitude_m": 40,
+             "heading_deg": 90, "gimbal_pitch_deg": -45, "position_source": "gps" },  // all required except position_source
+  "camera": { "hfov_deg": 69, "aspect": 1.778 },
+  "terrain_m": null                             // optional ground height at the target vs take-off
+}
+```
+
+Returns `{accepted, duplicate, obs_id, lead_id, lead_number, new_lead, status, delayed}`.
+Returns 422 when the ray cannot meet the ground, for example when the camera
+is near the horizon.
+
+Crop: `POST /api/ingest/person/crop?obs_id=…`, raw JPEG body of 300 KB or
+less, returns 204. Sent after the observation, so the small alert arrives
+first.
+
 ## No control channel through the backend
 
 The backend and dashboard cannot command the drone. Flight is only started
@@ -105,7 +138,7 @@ from the bridge's terminal with `--demo-flight` and a typed `FLY`.
 ## Verify it landed
 
 Dashboard token: `GET /api/status`, `/api/telemetry/latest`, `/api/incident`,
-`/api/flight`, `/api/analysis/latest`; `GET /api/video` streams the frames.
+`/api/flight`, `/api/analysis/latest`, `/api/people`; `GET /api/video` streams the frames.
 
 ## Connection status and recovery
 

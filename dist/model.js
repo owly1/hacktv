@@ -78,7 +78,25 @@
     }
     return pts;
   }
-  const api = {BASE, compass, destPoint, envFactor, spreadRate, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter};
+  function insidePolygon(pt, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [yi, xi] = poly[i], [yj, xj] = poly[j];
+      if ((yi > pt[0]) !== (yj > pt[0]) && pt[1] < (xj - xi) * (pt[0] - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  /* Minutes until the projected fire outline first covers `point` ([lat, lon]):
+     0 if it is inside the fire now, null if not within `maxMin`. The outline only
+     grows, so a bisection on time is enough. A projection, not a forecast. */
+  function arrivalMinutes(origin, point, sc, details, maxMin=180) {
+    if (insidePolygon(point, footprint(origin, 0, sc, details))) return 0;
+    if (!insidePolygon(point, footprint(origin, maxMin, sc, details))) return null;
+    let lo = 0, hi = maxMin;
+    while (hi - lo > .5) { const mid = (lo + hi)/2; if (insidePolygon(point, footprint(origin, mid, sc, details))) hi = mid; else lo = mid; }
+    return Math.round(hi);
+  }
+  const api = {BASE, compass, destPoint, envFactor, spreadRate, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter, insidePolygon, arrivalMinutes};
   root.EmberModel = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

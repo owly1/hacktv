@@ -10,11 +10,13 @@
 // writes operational plans.
 
 import http from 'node:http';
-import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { PersonSearch, validatePersonObservation, describeLeadsForPlan, MAX_CROP_BYTES } from './people.mjs';
+import { PersonSearchSim, scenarioFromExample } from './people-sim.mjs';
 import {
   ApiError,
   MAX_FRAME_BYTES,
@@ -157,7 +159,8 @@ export class MemoryStorage {
     return this.telemetry
       .filter((s) => Date.parse(s.observed_at) >= sinceMs && s.latitude != null)
       .slice(-limit)
-      .map((s) => ({ t: s.observed_at, latitude: s.latitude, longitude: s.longitude, altitude_m: s.altitude_m }));
+      .map((s) => ({ t: s.observed_at, latitude: s.latitude, longitude: s.longitude, altitude_m: s.altitude_m,
+        heading_deg: s.extra?.heading_deg ?? null, gimbal_pitch_deg: s.extra?.gimbal_pitch_deg ?? null }));
   }
   async insertAnalysis(record) {
     this.analyses.push(record);
@@ -254,8 +257,11 @@ export class PgStorage {
   }
   async flightPath({ sinceMs, limit = 600 }) {
     const rows = await this.q(
-      `SELECT observed_at, latitude, longitude, altitude_m FROM (
-         SELECT observed_at, latitude, longitude, altitude_m FROM telemetry
+      `SELECT observed_at, latitude, longitude, altitude_m, heading_deg, gimbal_pitch_deg FROM (
+         SELECT observed_at, latitude, longitude, altitude_m,
+                (payload->'extra'->>'heading_deg')::float8 AS heading_deg,
+                (payload->'extra'->>'gimbal_pitch_deg')::float8 AS gimbal_pitch_deg
+         FROM telemetry
          WHERE observed_at >= $1 AND latitude IS NOT NULL
          ORDER BY observed_at DESC LIMIT $2) recent
        ORDER BY observed_at`,
@@ -263,6 +269,7 @@ export class PgStorage {
     );
     return rows.map((r) => ({
       t: new Date(r.observed_at).toISOString(), latitude: r.latitude, longitude: r.longitude, altitude_m: r.altitude_m,
+      heading_deg: r.heading_deg, gimbal_pitch_deg: r.gimbal_pitch_deg,
     }));
   }
   async insertAnalysis(record) {
@@ -330,7 +337,17 @@ export async function createPgPool({ databaseUrl, pgCaFile }) {
   if (pgCaFile) {
     config.ssl = { ca: await readFile(pgCaFile, 'utf8'), rejectUnauthorized: true };
   }
-  return new pg.default.Pool(config);
+  // Drop idle connections before networks (eduroam, phone tethers) silently kill them,
+  // and detect dead ones with keep-alives.
+  Object.assign(config, { idleTimeoutMillis: 30_000, keepAlive: true, connectionTimeoutMillis: 10_000 });
+  const pool = new pg.default.Pool(config);
+  // An idle connection dying (e.g. ETIMEDOUT on a Wi-Fi blip) is reported here. Without a
+  // listener Node treats it as fatal and the whole backend exits. The pool replaces the
+  // connection on the next query; the failing query (if any) still gets its own error.
+  pool.on('error', (err) => {
+    console.error(`database: idle connection lost (${err.code || err.message}); it will reconnect on the next query`);
+  });
+  return pool;
 }
 
 export async function createStorage({ databaseUrl, pgCaFile } = {}) {
@@ -355,6 +372,9 @@ export const ANALYSIS_INSTRUCTIONS = [
   'Analyze the supplied drone evidence: describe the visible fire and smoke, then estimate fire size, intensity, severity and the most likely spread direction',
   'using the detection details, the estimated fire position, scenario conditions and drone telemetry.',
   'Set severity to one of: low, moderate, high, extreme.',
+  'People come first: if the data lists person-search rescue leads, the plan must address every unacknowledged lead (who goes, how they get there, what is still unknown), ahead of property and containment.',
+  'Never describe any route, road, area, zone or corridor as "safe" or "clear". Fire behaviour changes and the drone cannot verify ground conditions. Instead state the observed hazards, what was not observed, how recent the observation is, and the trigger that would close the route.',
+  'Treat lead positions as areas: quote the ±metres uncertainty, and never present a detector score or any percentage as the chance that a person is there.',
   'Direction convention: every direction in the data (wind_dir_deg, direction, toward_deg, bearing_deg) is the direction the fire spreads or the wind blows TOWARD, in degrees clockwise from north (60 = toward the east-northeast) — never the direction the wind comes from.',
   'List what this evidence cannot establish under "unknowns" and the specific observations that would overturn your assessment under "falsifiers".',
   'If only telemetry is supplied (no image), say plainly that this sample contains no visual fire evidence.',
@@ -581,6 +601,13 @@ const PLAN_SCHEMA = {
   required: ['title', 'situation', 'objectives', 'actions', 'advantage'],
 };
 
+/** Phrases a plan must not contain: nothing the drone sees can certify ground as safe. */
+const UNSAFE_WORDING = /\b(safe|safer|clear|cleared|pre-cleared|secure|secured)(?:[\s/-]+(?!(?:the|a|an|this|that|all|any|of)\b)[a-z]+){0,2}?[\s/-]+(routes?|roads?|paths?|corridors?|zones?|areas?|passages?|exits?|ways? out)\b|\b(routes?|roads?|paths?|corridors?|zones?|areas?)\s+(is|are)\s+(now\s+)?(safe|clear|cleared)\b/gi;
+export function findUnsafeWording(plan) {
+  const text = JSON.stringify(plan);
+  return [...new Set((text.match(UNSAFE_WORDING) ?? []).map((m) => m.toLowerCase()))];
+}
+
 export function validatePlanContent(parsed) {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ApiError(502, 'Gemini plan is not a JSON object');
@@ -636,6 +663,7 @@ const plainObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? JS
 // retried once, then the next model in `fallbackModels` is tried, so a busy
 // model does not take analysis down mid-demo.
 const RETRYABLE_UPSTREAM = new Set([429, 500, 502, 503, 504]);
+const SILENT_MODEL_COOLDOWN_MS = 5 * 60_000; // a model that stopped answering is skipped this long
 
 function upstreamMessage(status, detail) {
   let message = detail.slice(0, 200);
@@ -645,7 +673,8 @@ function upstreamMessage(status, detail) {
   return `Gemini upstream returned HTTP ${status}${message ? `: ${message}` : ''}`;
 }
 
-export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500, timeoutMs: defaultTimeoutMs = GEMINI_UPSTREAM_TIMEOUT_MS }) {
+export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500, timeoutMs: defaultTimeoutMs = GEMINI_UPSTREAM_TIMEOUT_MS, now = () => Date.now() }) {
+  const silentUntil = new Map();
   async function callModel(name, requestBody, timeoutMs) {
     const url =
       `https://generativelanguage.googleapis.com/v1beta/models/${name}:generateContent`;
@@ -670,33 +699,44 @@ export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchI
       return await res.json();
     } catch (err) {
       if (err instanceof ApiError) throw err;
-      if (err.name === 'AbortError') {
-        const timeout = new ApiError(502, `Gemini upstream exceeded ${timeoutMs / 1000}s timeout`);
-        timeout.retryable = true;
-        throw timeout;
-      }
-      const network = new ApiError(502, `Gemini request failed (no internet connection?): ${err.message}`);
-      network.retryable = true;
-      throw network;
+      // Prefer the next model on silence; retry when only one model is configured.
+      const silent = err.name === 'AbortError'
+        ? new ApiError(502, `Gemini ${name} gave no answer within ${timeoutMs / 1000}s`)
+        : new ApiError(502, `Gemini request failed (no internet connection?): ${err.message}`);
+      silent.silent = true;
+      silent.retryable = true;
+      throw silent;
     } finally {
       clearTimeout(timer);
     }
   }
-  return async function geminiTransport(requestBody, { timeoutMs = defaultTimeoutMs } = {}) {
+  async function geminiTransport(requestBody, { timeoutMs = defaultTimeoutMs } = {}) {
+    const chain = [model, ...fallbackModels];
+    // Skip models that recently went silent, unless every model has.
+    const awake = chain.filter((m) => !(silentUntil.get(m) > now()));
     let lastError;
-    for (const name of [model, ...fallbackModels]) {
+    for (const name of awake.length ? awake : chain) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          return await callModel(name, requestBody, timeoutMs);
+          const reply = await callModel(name, requestBody, timeoutMs);
+          silentUntil.delete(name);
+          geminiTransport.lastModel = (typeof reply?.modelVersion === 'string' && reply.modelVersion) || name;
+          return reply;
         } catch (err) {
           lastError = err;
+          if (err.silent && chain.length > 1) { silentUntil.set(name, now() + SILENT_MODEL_COOLDOWN_MS); break; }
           if (!err.retryable) throw err;
           if (attempt === 0) await new Promise((r) => setTimeout(r, retryDelayMs));
         }
       }
     }
+    if (lastError?.silent && chain.length > 1) {
+      throw new ApiError(502, `No Gemini model answered (${chain.join(', ')}). ${lastError.message}`);
+    }
     throw lastError;
-  };
+  }
+  geminiTransport.lastModel = null;
+  return geminiTransport;
 }
 
 // -------------------------------------------------------------------- http
@@ -797,6 +837,7 @@ export function createApp({
   demoFires = [],
   tileFetch = fetch,
   autoAnalyze = true,
+  personSearch = {},
 }) {
   if (!ingestToken || !dashboardToken || ingestToken === dashboardToken) {
     throw new Error('INGEST_TOKEN and DASHBOARD_TOKEN must be non-empty and different');
@@ -813,7 +854,68 @@ export function createApp({
     flightEvents: [],
     autoTimer: null,
     vision: null,
+    peopleSaveTimer: null,
+    demoSims: new Map(), // scenario id -> PersonSearchSim
   };
+  const peopleFile = dataDir ? path.join(dataDir, 'people', 'state.json') : null;
+  let people = new PersonSearch(personSearch);
+  // Leads survive a backend restart: they are written to data/people/state.json.
+  const peopleReady = peopleFile
+    ? readFile(peopleFile, 'utf8').then((text) => { people = PersonSearch.fromJSON(JSON.parse(text), personSearch); }).catch(() => {})
+    : Promise.resolve();
+
+  function savePeople() {
+    if (!peopleFile || state.peopleSaveTimer) return;
+    state.peopleSaveTimer = setTimeout(async () => {
+      state.peopleSaveTimer = null;
+      try {
+        await mkdir(path.dirname(peopleFile), { recursive: true });
+        await writeFile(`${peopleFile}.tmp`, JSON.stringify(people));
+        await rename(`${peopleFile}.tmp`, peopleFile);
+      } catch (err) {
+        console.error(`person search: could not save leads: ${err.message}`);
+      }
+    }, 150);
+    state.peopleSaveTimer.unref?.();
+  }
+
+  function cropPath(obsId) { return dataDir ? path.join(dataDir, 'people', 'crops', `${obsId.replace(/[^A-Za-z0-9._-]/g, '_')}.jpg`) : null; }
+  async function saveCrop(obsId, jpeg) {
+    const file = cropPath(obsId);
+    if (!file) return false;
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, jpeg);
+    return true;
+  }
+
+  // Fire context for the person search: where the fire is, and how it is projected to spread.
+  async function peopleContext() {
+    const incident = await activeIncident().catch(() => null);
+    const f = incident?.active ? incident.latest?.fire : null;
+    if (f?.latitude == null) return { fire: null, spread: null };
+    const details = incident.latest.details ?? null;
+    return {
+      fire: { latitude: f.latitude, longitude: f.longitude },
+      spread: { origin: [f.latitude, f.longitude], scenario: globalThis.EmberModel.scenarioFrom(details), details },
+    };
+  }
+
+  // Simulated person searches: UTSC, or one at each historical fire in examples/.
+  function demoScenario(id) {
+    if (!id || id === 'utsc') return null;
+    const fire = demoFires.find((f) => f.id === id);
+    if (!fire) throw new ApiError(404, 'no demo fire with that id');
+    return scenarioFromExample(fire);
+  }
+  function demoSimAt(t, id = 'utsc') {
+    let sim = state.demoSims.get(id);
+    if (!sim || t < sim.t) {
+      sim = new PersonSearchSim({ site, startMs: now() - t * 1000, scenario: demoScenario(id) });
+      state.demoSims.set(id, sim);
+    }
+    sim.advanceTo(t);
+    return sim;
+  }
 
   function requireAuth(req, kind) {
     const token = tokenFrom(req);
@@ -949,7 +1051,7 @@ export function createApp({
     const record = {
       id: crypto.randomUUID(),
       created_at: new Date(now()).toISOString(),
-      model: geminiModel,
+      model: geminiTransport.lastModel ?? geminiModel,
       evidence_at: new Date(evidence.at).toISOString(),
       evidence_kind: evidence.kind,
       trigger,
@@ -1114,6 +1216,7 @@ export function createApp({
           ? { active: incident.active, episode_id: incident.episode_id, last_seen_at: incident.last_seen_at }
           : { active: false },
         flight: lastFlight,
+        people: (() => { const c = people.snapshot(nowMs).counts; return { open_leads: c.open, possible_people: c.possible_people, unacknowledged: c.unacknowledged }; })(),
       });
       return;
     }
@@ -1142,6 +1245,9 @@ export function createApp({
       const body = await readJson(req);
       const sample = validateTelemetry(body, now());
       await storage.insertTelemetry(sample);
+      await peopleReady;
+      people.observePose({ ...sample, heading_deg: sample.extra?.heading_deg ?? sample.attitude_deg?.yaw ?? null, gimbal_pitch_deg: sample.extra?.gimbal_pitch_deg ?? null }, Date.parse(sample.observed_at));
+      if (people.leads.size || people.cells.size) savePeople();
       sendJson(res, 200, { accepted: true, stored: storage.status() });
       return;
     }
@@ -1384,6 +1490,7 @@ export function createApp({
           : 'No fire is currently detected by the drone; plan for readiness and surveillance.' },
         { text: `Scenario conditions: ${JSON.stringify(scenario)}. Projected spread: ${JSON.stringify(projection)}.` },
         { text: `Latest drone telemetry: ${JSON.stringify(telemetry)}.` },
+        { text: describeLeadsForPlan(people.snapshot(nowMs, await peopleContext())) },
         { text: `Latest Gemini scene analysis: ${JSON.stringify(analyses[0] ? {
           summary: analyses[0].summary, severity: analyses[0].severity, spread_outlook: analyses[0].spread_outlook,
         } : null)}.` },
@@ -1397,6 +1504,7 @@ export function createApp({
           generationConfig: { responseMimeType: 'application/json', responseSchema: PLAN_SCHEMA },
         }, { timeoutMs: GEMINI_PLAN_TIMEOUT_MS });
         content = validatePlanContent(parseGeminiJson(apiResponse));
+        content.wording_flags = findUnsafeWording(content);
         recordGeminiResult(null);
       } catch (err) {
         recordGeminiResult(err);
@@ -1405,7 +1513,7 @@ export function createApp({
       const record = {
         id: crypto.randomUUID(),
         created_at: new Date(nowMs).toISOString(),
-        model: geminiModel,
+        model: geminiTransport.lastModel ?? geminiModel,
         objective,
         notes,
         scenario,
@@ -1423,6 +1531,80 @@ export function createApp({
       requireAuth(req, 'dashboard');
       const [plan] = await storage.latestPlans(1);
       sendJson(res, 200, { plan: plan ?? null });
+      return;
+    }
+
+    // ---- person search: rescue leads for people who cannot ask for help
+    if (req.method === 'POST' && pathname === '/api/ingest/person') {
+      requireAuth(req, 'ingest');
+      await peopleReady;
+      const nowMs = now();
+      const { obs, crop } = validatePersonObservation(await readJson(req), nowMs);
+      const result = people.addObservation(obs, nowMs);
+      if (!result.duplicate && crop && await saveCrop(result.observation.id, crop)) people.attachCrop(result.observation.id);
+      savePeople();
+      const summary = people.summarize(result.lead, nowMs, await peopleContext());
+      sendJson(res, 200, {
+        accepted: true, duplicate: result.duplicate, obs_id: result.observation?.id ?? obs.obs_id,
+        lead_id: summary.id, lead_number: summary.number, new_lead: Boolean(result.new_lead), status: summary.status,
+        delayed: Boolean(result.observation?.delayed),
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/ingest/person/crop') {
+      requireAuth(req, 'ingest');
+      await peopleReady;
+      const obsId = url.searchParams.get('obs_id') ?? '';
+      const jpeg = await readBody(req, MAX_CROP_BYTES);
+      if (jpeg.length < 3 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new ApiError(400, 'body must be a JPEG');
+      if (!people.obsIndex.has(obsId)) throw new ApiError(404, 'no observation with that obs_id');
+      if (await saveCrop(obsId, jpeg)) people.attachCrop(obsId);
+      savePeople();
+      res.writeHead(204); res.end();
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/people') {
+      requireAuth(req, 'dashboard');
+      await peopleReady;
+      sendJson(res, 200, { simulated: false, ...people.snapshot(now(), await peopleContext()) });
+      return;
+    }
+
+    if (req.method === 'POST' && (pathname === '/api/people/ack' || pathname === '/api/people/close')) {
+      requireAuth(req, 'dashboard');
+      await peopleReady;
+      const body = await readJson(req);
+      if (typeof body.lead_id !== 'string') throw new ApiError(400, 'lead_id is required');
+      const demoSim = body.demo === true ? state.demoSims.get(typeof body.scenario === 'string' ? body.scenario : 'utsc') : null;
+      const target = body.demo === true ? demoSim?.search : people;
+      if (!target) throw new ApiError(404, 'no demo search is running');
+      // The simulation keeps its own clock; stamp demo actions with it so times line up.
+      const atMs = target === people ? now() : demoSim.startMs + Math.max(0, demoSim.t) * 1000;
+      const lead = pathname.endsWith('/ack')
+        ? target.acknowledge(body.lead_id, { by: body.by, note: body.note }, atMs)
+        : target.close(body.lead_id, { by: body.by, outcome: body.outcome, note: body.note }, atMs);
+      if (target === people) savePeople();
+      sendJson(res, 200, { lead: target.summarize(lead, now(), body.demo ? demoSim.context() : await peopleContext()) });
+      return;
+    }
+
+    const cropMatch = /^\/api\/people\/crop\/([A-Za-z0-9._:-]{1,64})$/.exec(pathname);
+    if (req.method === 'GET' && cropMatch) {
+      requireAuth(req, 'dashboard');
+      const file = cropPath(cropMatch[1]);
+      const jpeg = file ? await readFile(file).catch(() => null) : null;
+      if (!jpeg) throw new ApiError(404, 'no crop for that observation');
+      res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' });
+      res.end(jpeg);
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/demo/people') {
+      requireAuth(req, 'dashboard');
+      const t = Math.max(0, Math.min(Number(url.searchParams.get('t')) || 0, 3600));
+      sendJson(res, 200, demoSimAt(t, url.searchParams.get('scenario') || 'utsc').snapshot());
       return;
     }
 
@@ -1473,6 +1655,7 @@ export function createApp({
           generationConfig: { responseMimeType: 'application/json', responseSchema: isPlan ? PLAN_SCHEMA : GEMINI_RESPONSE_SCHEMA },
         }, { timeoutMs: isPlan ? GEMINI_PLAN_TIMEOUT_MS : GEMINI_UPSTREAM_TIMEOUT_MS });
         content = isPlan ? validatePlanContent(parseGeminiJson(apiResponse)) : validateAnalysisContent(parseGeminiJson(apiResponse));
+        if (isPlan) content.wording_flags = findUnsafeWording(content);
         recordGeminiResult(null);
       } catch (err) {
         recordGeminiResult(err);
@@ -1481,7 +1664,7 @@ export function createApp({
       sendJson(res, 200, {
         id: crypto.randomUUID(),
         created_at: new Date(nowMs).toISOString(),
-        model: geminiModel,
+        model: geminiTransport.lastModel ?? geminiModel,
         case_id: typeof demoCase.id === 'string' ? demoCase.id : null,
         provenance: 'gemini-demo',
         ...(isPlan ? { objective: body.objective ?? 'initial-attack', scenario, projection: plainObject(body.projection) } : { trigger: body.trigger === 'auto-detection' ? 'auto-detection' : 'manual', evidence_kind: image ? 'rgb-snapshot' : 'telemetry' }),
@@ -1546,7 +1729,7 @@ async function main() {
   const pgCaFile = process.env.PG_CA_FILE || null;
   const geminiApiKey = process.env.GEMINI_API_KEY || null;
   const geminiModel = process.env.GEMINI_MODEL || null;
-  const fallbackModels = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.7-flash,gemini-3.5-flash')
+  const fallbackModels = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.6-flash,gemini-3-flash-preview,gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.7-flash')
     .split(',').map((m) => m.trim()).filter((m) => m && m !== geminiModel);
   const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
   const port = Number(process.env.PORT || DEFAULT_PORT);
@@ -1565,7 +1748,15 @@ async function main() {
     ? makeGeminiTransport({ apiKey: geminiApiKey, model: geminiModel, fallbackModels })
     : null;
 
+  const sector = (process.env.SEARCH_SECTOR || '').split(',').map(Number);
+  const personSearch = {
+    hfovDeg: Number(process.env.CAMERA_HFOV_DEG) || 69,
+    cellM: Number(process.env.COVERAGE_CELL_M) || 5,
+    sector: sector.length === 4 && sector.every(Number.isFinite) ? sector : null,
+  };
+
   const handler = createApp({
+    personSearch,
     ingestToken,
     dashboardToken,
     allowedOrigins,

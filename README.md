@@ -4,6 +4,10 @@ Live wildfire monitoring from a Parrot ANAFI drone. The drone's camera feed is
 checked for fire several times a second; when it finds one, the fire is pinned
 on the map, its spread is projected, Gemini analyzes the scene and writes an
 operational plan, and everything is stored in TigerData.
+It also looks for **people who cannot ask for help**. Person detections are
+geolocated with an explicit error model, confirmed from several angles, and
+listed as rescue leads with a ±metres location for a responder to
+acknowledge. See [docs/PERSON_SEARCH.md](docs/PERSON_SEARCH.md).
 Read [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md) for decisions, architecture and the API contract.
 
 **Restart the configured Windows laptop and Pi:** use the desktop
@@ -131,13 +135,15 @@ the Pi service**. See [QR orbit setup and physical checks](docs/QR_ORBIT_DEMO.md
 The [step-by-step cold-start guide](docs/QR_DEMO_FROM_OFF.md) includes grounded
 calibration capture and a gated one-segment checkout before a full orbit.
 
-The **Demo** button replays recorded historical fires from
-`examples/historical-fires.mjs` and the drone's flight pattern. It is only
+The **Demo** button opens a simulated person search: multi-view revisits, a
+hot rock that never confirms, and a radio outage with delayed alerts. It also
+replays recorded historical fires from `examples/historical-fires.mjs` and the
+drone's flight pattern. It is only
 shown when requested.
 
 ## Tests
 
-`npm test` — backend contract tests (Gemini, TigerData and the drone are faked).
+`npm test` — backend contract and person-search tests (Gemini, TigerData and the drone are faked).
 `python3 tests/observer_test.py` — two observation-receiver tests with a fake SDK.
 `python -m unittest discover -s tests -p '*_test.py'` — observer, QR trigger,
 geometry and orbit watchdog checks; SDK adapter checks also run in Olympe.
