@@ -136,7 +136,10 @@
    </div>
    <div class="people-body">
     <div class="lead-list" id="lead-list" aria-live="polite"><div class="lead-empty"><h3>No one found yet</h3></div></div>
-    <aside class="mission-log"><h3>Search loop</h3><ol class="loop-steps" id="loop-steps"><li data-step="fire">Fire first</li><li data-step="survey">Fire’s path</li><li data-step="propose">Propose</li><li data-step="revisit">Revisit</li><li data-step="resolve">Resolve</li><li data-step="report">Report</li></ol><ul id="mission-log"><li class="muted-text">No events yet</li></ul></aside>
+    <div class="people-side">
+     <aside class="mission-log"><h3>Search loop</h3><ol class="loop-steps" id="loop-steps"><li data-step="fire">Fire first</li><li data-step="survey">Fire’s path</li><li data-step="propose">Propose</li><li data-step="revisit">Revisit</li><li data-step="resolve">Resolve</li><li data-step="report">Report</li></ol><ul id="mission-log"><li class="muted-text">No events yet</li></ul></aside>
+     <aside class="mission-log"><h3>Ask the model <span class="pill soft-orange" id="chat-source">triage</span></h3><ul id="chat-log"><li class="muted-text">Ask about the rescue order, a lead, or the fire — answers use live incident data.</li></ul><form id="chat-form"><input id="chat-input" autocomplete="off" maxlength="500" placeholder="Who do we reach first?" aria-label="Ask the triage model"><button class="button" type="submit" id="chat-send">Ask</button></form></aside>
+    </div>
    </div>
   </section>
   <footer class="footer"><span><b class="footer-brand">BOSCO</b></span><a href="test-marker.html">Test marker ↗</a></footer>

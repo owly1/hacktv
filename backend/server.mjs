@@ -77,7 +77,6 @@ const MIME_TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
-  '.pdf': 'application/pdf',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
@@ -799,6 +798,126 @@ export function validatePlanContent(parsed) {
     risks: list(parsed.risks),
     advantage: parsed.advantage,
     next_update: typeof parsed.next_update === 'string' ? parsed.next_update : null,
+  };
+}
+
+const RESCUE_INSTRUCTIONS = [
+  'You are the rescue triage officer for Emberwatch, a drone wildfire-monitoring system.',
+  'The numeric model has already ranked the open rescue leads (urgency 0-100, computed from fire-arrival time, fire distance, evidence tier and staleness — do not re-rank from scratch; confirm or dispute with a stated reason).',
+  'Write a battle plan a firefighter can act on: who is reached first, why, in what order, with what approach and in which window.',
+  'In each sequence entry, reference the lead by its exact number, give a one-line reason grounded in that lead\'s numbers (fire-arrival minutes, distance, uncertainty, movement, staleness), the approach (who goes / how the drone re-checks), and a realistic window_min.',
+  'first_task: the single most urgent action in one sentence. summary: two sentences on the whole picture. risks: what could invalidate this order.',
+  'Never claim a person is confirmed or that ground is safe — these are leads with uncertainty areas, and the drone cannot certify anything for humans.',
+  'Direction convention: every direction is the direction the fire spreads or the wind blows TOWARD, degrees clockwise from north.',
+].join(' ');
+
+const RESCUE_CHAT_INSTRUCTIONS = [
+  'You are the rescue triage assistant inside Emberwatch, a drone wildfire-monitoring dashboard, speaking with a firefighter.',
+  'Answer only from the live incident data below. Refer to leads by their number and ground every claim in their numbers (urgency, projected fire-arrival minutes, distance, uncertainty, staleness).',
+  'Keep replies short — two to four sentences, or a short list when ranking. Plain operational language.',
+  'Urgency 0-100 is deterministic (40% fire-arrival + 25% evidence tier + 15% fire distance + 12% staleness + frailty bump); do not invent other scores.',
+  'Never claim a person is confirmed alive, reached or safe, and never claim ground is safe — these are unverified leads with uncertainty areas, and the drone cannot certify anything for humans.',
+  'Direction convention: every direction is the direction the fire spreads or the wind blows TOWARD, degrees clockwise from north.',
+].join(' ');
+
+/* Numeric lead facts shared by the rescue plan and the triage chat so both
+   answer from the same deterministic ranking. */
+function triageLeadFacts(ranked) {
+  return ranked.map((r) => ({
+    number: r.lead.number, title: r.lead.title, urgency: r.urgency,
+    status_text: r.lead.status_text, at_fire: r.lead.at_fire,
+    fire_distance_m: r.lead.fire_distance_m, fire_arrival_min: r.lead.fire_arrival?.minutes ?? null,
+    uncertainty_m: r.lead.uncertainty?.major_95_m ?? null,
+    movement: r.lead.movement?.status ?? 'unknown',
+    last_seen_age_s: r.lead.last_seen_age_s, acknowledged: !!r.lead.acknowledged,
+    why_flagged: r.lead.priority?.reasons ?? [],
+  }));
+}
+
+const RESCUE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    summary: { type: 'STRING' },
+    first_task: { type: 'STRING' },
+    sequence: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          lead_number: { type: 'INTEGER' },
+          reason: { type: 'STRING' },
+          approach: { type: 'STRING' },
+          window_min: { type: 'INTEGER' },
+        },
+        required: ['lead_number', 'reason'],
+      },
+    },
+    risks: { type: 'ARRAY', items: { type: 'STRING' } },
+  },
+  required: ['summary', 'first_task', 'sequence'],
+};
+
+/* Deterministic numeric spine for rescue triage: fire exposure first
+   (at_fire tier, then earlier projected arrival), then distance from the
+   fire, then a small bump for unresponsive/stationary leads and stale
+   sightings. urgency is a 0-100 composite so the ordering is explainable
+   arithmetic, not a model opinion. */
+export function rescueSequence(open) {
+  const scored = open.map((lead) => {
+    const tier = lead.priority?.tier ?? 5;
+    const arrival = lead.at_fire ? 0 : (lead.fire_arrival?.minutes ?? null);
+    const arrivalFactor = arrival == null ? 0.35 : 1 - Math.min(arrival, 60) / 60;
+    const tierFactor = Math.max(0, (6 - Math.min(tier, 6)) / 6);
+    const distFactor = lead.fire_distance_m == null ? 0.3 : 1 - Math.min(lead.fire_distance_m, 800) / 800;
+    const staleFactor = Math.min(1, (lead.last_seen_age_s ?? 0) / 300);
+    const frailty = lead.movement?.status === 'stationary' ? 0.15 : lead.movement?.status === 'unknown' ? 0.08 : 0;
+    const urgency = Math.round(100 * Math.min(1,
+      0.40 * arrivalFactor + 0.25 * tierFactor + 0.15 * distFactor + 0.12 * staleFactor + frailty));
+    return { lead, urgency, arrival: arrival ?? 1e9 };
+  });
+  return scored.sort((a, b) => a.lead.priority.tier - b.lead.priority.tier
+    || a.arrival - b.arrival || (a.lead.fire_distance_m ?? 1e9) - (b.lead.fire_distance_m ?? 1e9)
+    || b.urgency - a.urgency || a.lead.number - b.lead.number);
+}
+
+/* Merge the deterministic ranking with Gemini's rationale: Gemini's order is
+   honoured where it names known leads, missing ones keep the numeric order. */
+export function buildRescuePlan(ranked, gemini, { provenance, model, nowMs }) {
+  const byNumber = new Map(ranked.map((r) => [r.lead.number, r]));
+  const used = new Set();
+  const geminiRows = Array.isArray(gemini?.sequence) ? gemini.sequence : [];
+  const sequence = [];
+  for (const g of geminiRows) {
+    const r = byNumber.get(g?.lead_number);
+    if (!r || used.has(r.lead.number)) continue;
+    used.add(r.lead.number);
+    sequence.push({ rank: sequence.length + 1, lead_number: r.lead.number, lead_id: r.lead.id,
+      title: r.lead.title, urgency: r.urgency, at_fire: r.lead.at_fire,
+      fire_arrival_min: r.lead.fire_arrival?.minutes ?? null, fire_distance_m: r.lead.fire_distance_m,
+      uncertainty_m: r.lead.uncertainty?.major_95_m ?? null,
+      reason: typeof g.reason === 'string' ? g.reason : null,
+      approach: typeof g.approach === 'string' ? g.approach : null,
+      window_min: Number.isInteger(g.window_min) ? g.window_min : null });
+  }
+  for (const r of ranked) {
+    if (used.has(r.lead.number)) continue;
+    const l = r.lead;
+    sequence.push({ rank: sequence.length + 1, lead_number: l.number, lead_id: l.id,
+      title: l.title, urgency: r.urgency, at_fire: l.at_fire,
+      fire_arrival_min: l.fire_arrival?.minutes ?? null, fire_distance_m: l.fire_distance_m,
+      uncertainty_m: l.uncertainty?.major_95_m ?? null,
+      reason: l.at_fire ? 'Inside or about to be inside the projected fire edge — reaches them first.'
+        : l.fire_arrival?.minutes != null ? `Fire projected to reach this spot in about ${l.fire_arrival.minutes} min.`
+        : 'Furthest from the fire front under current conditions — verify while higher-urgency leads are reached.',
+      approach: null, window_min: null });
+  }
+  return {
+    created_at: new Date(nowMs).toISOString(), model, provenance,
+    summary: typeof gemini?.summary === 'string' ? gemini.summary : `${ranked.length} open lead${ranked.length === 1 ? '' : 's'} ranked by fire exposure, evidence and staleness.`,
+    first_task: typeof gemini?.first_task === 'string' ? gemini.first_task : `Reach Target ${sequence[0]?.lead_number} first — highest urgency (${sequence[0]?.urgency}).`,
+    sequence,
+    risks: Array.isArray(gemini?.risks) ? gemini.risks.filter((x) => typeof x === 'string') : [],
+    basis: 'Urgency 0-100 = 40% projected fire-arrival + 25% evidence tier + 15% fire distance + 12% staleness + frailty bump; order then reviewed by the model when available. Estimates, not verified facts.',
   };
 }
 
@@ -1923,6 +2042,100 @@ export function createApp({
       requireAuth(req, 'dashboard');
       const [plan] = await storage.latestPlans(1);
       sendJson(res, 200, { plan: plan ?? null });
+      return;
+    }
+
+    // ---- rescue triage: rank the open leads into a battle plan.
+    // The numeric spine is computed here (tier → fire-arrival → distance);
+    // Gemini only writes the operational rationale on top of those numbers.
+    if (req.method === 'POST' && pathname === '/api/rescue-plan') {
+      requireAuth(req, 'dashboard');
+      const nowMs = now();
+      if (nowMs - (state.lastRescueStart ?? 0) < PLAN_MIN_INTERVAL_MS) {
+        throw new ApiError(429, 'rescue plans are limited to one request per 10 seconds');
+      }
+      state.lastRescueStart = nowMs;
+      await peopleReady;
+      const snap = people.snapshot(nowMs, await peopleContext());
+      const open = snap.leads.filter((l) => !l.closed);
+      if (!open.length) { sendJson(res, 200, { plan: null, reason: 'No open rescue leads to prioritize.' }); return; }
+      const body = await readJson(req).catch(() => ({}));
+      const scenario = body?.scenario && typeof body.scenario === 'object' ? body.scenario : null;
+      const ranked = rescueSequence(open);
+      const leadFacts = triageLeadFacts(ranked);
+      let content = null, provenance = 'deterministic';
+      if (geminiTransport) {
+        try {
+          const [incident, telemetry] = await Promise.all([activeIncident(), storage.latestTelemetry()]);
+          const parts = [
+            { text: RESCUE_INSTRUCTIONS },
+            { text: `Site: ${JSON.stringify(site)}. Time: ${new Date(nowMs).toISOString()}.` },
+            { text: incident?.active
+              ? `${describeDetection(incident.latest)} First sighted ${incident.first_detected_at}.`
+              : 'No fire is currently detected; treat this as a search-and-rescue readiness plan.' },
+            { text: `Scenario conditions: ${JSON.stringify(scenario)}. Drone telemetry: ${JSON.stringify(telemetry)}.` },
+            { text: `Open leads, already ranked by the numeric model (urgency 0-100): ${JSON.stringify(leadFacts)}.` },
+          ];
+          const apiResponse = await geminiTransport({
+            contents: [{ role: 'user', parts }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema: RESCUE_SCHEMA },
+          }, { timeoutMs: GEMINI_PLAN_TIMEOUT_MS });
+          content = parseGeminiJson(apiResponse);
+          if (content && typeof content === 'object' && !Array.isArray(content)) provenance = 'gemini';
+          else content = null;
+          recordGeminiResult(null);
+        } catch (err) { recordGeminiResult(err); content = null; }
+      }
+      const plan = buildRescuePlan(ranked, content, { provenance, model: geminiTransport?.lastModel ?? geminiModel, nowMs });
+      sendJson(res, 200, { plan });
+      return;
+    }
+
+    // ---- rescue chat: free-form triage Q&A grounded in the same live context.
+    // Gemini answers against the deterministic ranking plus the incident,
+    // scenario and telemetry; without a key it falls back to a numeric answer.
+    if (req.method === 'POST' && pathname === '/api/rescue-chat') {
+      requireAuth(req, 'dashboard');
+      const body = await readJson(req).catch(() => ({}));
+      const message = typeof body?.message === 'string' ? body.message.trim().slice(0, 1500) : '';
+      if (!message) throw new ApiError(400, 'a message is required');
+      const history = Array.isArray(body?.history)
+        ? body.history.slice(-8).map((h) => ({ role: h?.role === 'model' ? 'model' : 'user', text: String(h?.text ?? '').slice(0, 1500) })).filter((h) => h.text)
+        : [];
+      const nowMs = now();
+      await peopleReady;
+      const snap = people.snapshot(nowMs, await peopleContext());
+      const open = snap.leads.filter((l) => !l.closed);
+      const ranked = rescueSequence(open);
+      const [incident, telemetry] = await Promise.all([activeIncident(), storage.latestTelemetry()]);
+      const transcript = history.map((h) => `${h.role === 'model' ? 'Assistant' : 'Firefighter'}: ${h.text}`).join('\n');
+      let reply = null, provenance = 'deterministic';
+      if (geminiTransport) {
+        try {
+          const apiResponse = await geminiTransport({
+            contents: [{ role: 'user', parts: [
+              { text: RESCUE_CHAT_INSTRUCTIONS },
+              { text: `Site: ${JSON.stringify(site)}. Time: ${new Date(nowMs).toISOString()}.` },
+              { text: incident?.active
+                ? `${describeDetection(incident.latest)} First sighted ${incident.first_detected_at}.`
+                : 'No fire is currently detected; answer as search-and-rescue readiness.' },
+              { text: `Scenario conditions: ${JSON.stringify(body?.scenario ?? null)}. Drone telemetry: ${JSON.stringify(telemetry)}.` },
+              { text: `Open rescue leads ranked by deterministic urgency (0-100): ${JSON.stringify(triageLeadFacts(ranked))}.` },
+              { text: `${transcript ? `Conversation so far:\n${transcript}\n` : ''}Firefighter: ${message}` },
+            ] }],
+          }, { timeoutMs: GEMINI_PLAN_TIMEOUT_MS });
+          reply = extractGeminiText(apiResponse).trim() || null;
+          if (reply) provenance = 'gemini';
+          recordGeminiResult(null);
+        } catch (err) { recordGeminiResult(err); reply = null; }
+      }
+      if (!reply) {
+        const top = ranked[0];
+        reply = open.length
+          ? `${open.length} open lead${open.length === 1 ? '' : 's'}. Reach Target ${top.lead.number} first — urgency ${top.urgency}${top.lead.at_fire ? ', already at the fire edge' : top.lead.fire_arrival?.minutes != null ? `, fire arrival ~${top.lead.fire_arrival.minutes} min` : ''}${top.lead.fire_distance_m != null ? `, ${Math.round(top.lead.fire_distance_m)} m from the fire` : ''}. (Gemini unavailable — numeric answer only.)`
+          : 'No open rescue leads right now. (Gemini unavailable — numeric answer only.)';
+      }
+      sendJson(res, 200, { reply, provenance, model: geminiTransport?.lastModel ?? geminiModel });
       return;
     }
 
