@@ -227,6 +227,13 @@ performed by the setup or unit tests.
 
 ## Autonomous one-metre QR circle
 
+For the QR-as-demo-trigger workflow, use `pi --mode qr-demo --execute`, described
+in [Automatic QR demo preset](QR_AUTO_DEMO.md). The selected QR creates a fire
+incident, then starts a fixed one-metre-radius circle relative to launch heading
+and lands. This preset needs no camera calibration, QR-size or camera-offset
+measurement. Without `--execute`, it only creates the incident. Stop the
+observation receiver before starting either flight runtime.
+
 The separate `qr-circle` flight mode is described in
 [Automatic QR fire circle](QR_AUTO_CIRCLE.md). It uses the measured marker
 position and the normal fire-incident pipeline. `--execute` enables automatic

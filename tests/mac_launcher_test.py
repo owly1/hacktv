@@ -94,6 +94,19 @@ class MacLauncherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mac.runtime_command(mac.DEFAULTS, 'unknown', True)
 
+    def test_automatic_preset_selects_fixed_path_without_calibration(self):
+        live=mac.runtime_command(mac.DEFAULTS,'qr-demo',True)
+        rehearsal=mac.runtime_command(mac.DEFAULTS,'qr-demo',False)
+        self.assertIn('qr_auto_circle.py',live)
+        self.assertIn('--preset',live)
+        self.assertIn('--video-fps 30',live)
+        self.assertIn('--execute',live)
+        self.assertNotIn('--execute',rehearsal)
+        for text in (live,rehearsal):
+            self.assertNotIn('--camera-calibration',text)
+            self.assertNotIn('--preflight-file',text)
+            self.assertNotIn('ARM QR PRESET',text)
+
     def test_connection_guards_precede_runtime_start(self):
         preparation = mac.prepare_command(mac.DEFAULTS)
         self.assertLess(preparation.index('A flight checkout is already running'), preparation.index('systemctl --user stop'))

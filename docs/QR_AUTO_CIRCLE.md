@@ -1,5 +1,9 @@
 # Automatic QR fire circle
 
+For a QR that simply selects the autonomous demo preset, use
+[QR_AUTO_DEMO.md](QR_AUTO_DEMO.md). That mode needs no QR-size measurement or
+camera calibration. This document describes the separate measured-marker orbit.
+
 Branch: `codex/qr-code-circle-flight`. This is a separate, opt-in flight runtime;
 `npm start`, the historical Replay button and the ordinary observation receiver
 continue to receive data without launching the aircraft.

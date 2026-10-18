@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Opt-in autonomous QR fire -> takeoff -> measured 1 m-radius orbit -> land.
+"""Opt-in autonomous QR fire -> takeoff -> 1 m-radius circle -> land.
 
 --execute enables one automatic flight per process after a stable selected QR
 creates a backend incident. Without it, detection works but motors stay disabled.
+--preset uses the fixed launch-relative demo instead of a measured-marker orbit.
 """
 import os
+import math
 from pathlib import Path
 import queue
 import secrets
@@ -20,19 +22,23 @@ from fire_monitor import detection_payload
 from hover_checkout import HoverCheckout
 from qr_circle_core import ScanGate, camera_pitch, circle
 from qr_orbit_bridge import read_preflight
-from qr_orbit_core import Limits, Trigger
+from qr_orbit_core import Limits, Trigger, Vehicle
 from qr_orbit_pose import CalibratedPose
+from qr_preset_core import fly_preset
 from terminal_controls import commands as terminal_commands
 
 
 class QRAutoCircle(HoverCheckout):
+    flight_protocol = 'qr-auto-circle'
+    path_reference = 'measured-marker'
+
     def __init__(self, args, publisher, detector, pose, marker):
         super().__init__(args, publisher, detector)
         self.pose = pose
         self.limits = Limits(radius_m=1., height_m=1., segments=24, mission_seconds=90)
         self.trigger = Trigger(marker, self.limits)
         self.scan = ScanGate(marker)
-        self.episode_id = 'qr-circle-' + secrets.token_hex(8)
+        self.episode_id = self.flight_protocol + '-' + secrets.token_hex(8)
         self.incident_queue = queue.Queue(maxsize=1)
         self.incident_pending = False
         self.incident_id = None
@@ -75,7 +81,8 @@ class QRAutoCircle(HoverCheckout):
                     payload = detection_payload(hit, jpeg.tobytes(), captured, self.episode_id, self.telemetry)
                     # The map has no measured geographic position indoors. The
                     # relative orbit is deliberately independent of scenario GPS.
-                    payload['details'].update(flight_protocol='qr-auto-circle', orbit_radius_m=1.)
+                    payload['details'].update(flight_protocol=self.flight_protocol, orbit_radius_m=1.,
+                                              path_reference=self.path_reference)
                     self.incident_pending = True
                     self.incident_queue.put_nowait(payload)
             self._maybe_start()
@@ -101,6 +108,11 @@ class QRAutoCircle(HoverCheckout):
                     self.report('preflight', 'incident unconfirmed or QR lost; waiting on fresh scans')
                 self._maybe_start()
 
+    def _validate_flight_setup(self):
+        if self.pose is None:
+            raise ValueError('measured camera calibration is required')
+        read_preflight(self.args.preflight_file, terminal_control=True)
+
     def _maybe_start(self):
         # Caller holds takeoff_lock. LAND wins this same lock before TakeOff.
         if self.scan.ack_at is not None and time.monotonic()-self.scan.ack_at > 5:
@@ -110,9 +122,7 @@ class QRAutoCircle(HoverCheckout):
         if not self.scan.stable(time.monotonic()) or self.scan.ack_at is None:
             return
         try:
-            if self.pose is None:
-                raise ValueError('measured camera calibration is required')
-            read_preflight(self.args.preflight_file, terminal_control=True)
+            self._validate_flight_setup()
             reason = self.checkout_reason(starting=True)
             if reason:
                 raise ValueError(reason)
@@ -120,7 +130,7 @@ class QRAutoCircle(HoverCheckout):
             self.report('preflight', str(error))
             return
         if self.scan.consume(time.monotonic()):
-            self.takeoff_used = True
+            self.takeoff_used = self.hold_connection = True
             self.mission = threading.Thread(target=self._automatic_mission)
             self.mission.start()
 
@@ -153,6 +163,15 @@ class QRAutoCircle(HoverCheckout):
             return 'mission time limit'
         return None
 
+    def _camera_pitch(self):
+        _, marker = self.sample()
+        if marker and marker.text == self.scan.expected and 0 <= time.monotonic()-marker.at <= .8:
+            return camera_pitch(marker, self.pose.offset)
+        # During vertical takeoff, aim at the planned floor point. This
+        # estimate only aims the camera; it never supplies a measured XY pose.
+        height = (self.telemetry or {}).get('altitude_m') or 0
+        return -math.degrees(math.atan2(max(0., height), self.limits.radius_m))
+
     def _camera_loop(self):
         pending = None
         sent_at = None
@@ -168,15 +187,7 @@ class QRAutoCircle(HoverCheckout):
                         continue
                     if not pending.success():
                         raise RuntimeError('camera rejected tracking target')
-                _, marker = self.sample()
-                if marker and marker.text == self.scan.expected and 0 <= time.monotonic()-marker.at <= .8:
-                    pitch = camera_pitch(marker, self.pose.offset)
-                else:
-                    # During the vertical takeoff only, point toward the launch
-                    # setup. This estimate aims the camera; it never steers XY.
-                    import math
-                    height = (self.telemetry or {}).get('altitude_m') or 0
-                    pitch = -math.degrees(math.atan2(max(0., height), 1.))
+                pitch = self._camera_pitch()
                 pending = self.drone(gimbal.set_target(
                     gimbal_id=0, control_mode='position',
                     yaw_frame_of_reference='none', yaw=0.,
@@ -214,6 +225,57 @@ class QRAutoCircle(HoverCheckout):
             worker.join(timeout=1)
 
 
+class QRAutoPreset(QRAutoCircle):
+    """Selected QR -> fire incident -> fixed launch-relative circle -> land.
+
+    QR content selects this preset; QR dimensions, apparent location and camera
+    calibration have no role in its path. --execute enables the one-shot trigger.
+    """
+    flight_protocol = 'qr-auto-preset'
+    path_reference = 'launch-heading'
+
+    def __init__(self, args, publisher, detector, marker):
+        super().__init__(args, publisher, detector, None, marker)
+
+    def _validate_flight_setup(self):
+        # This path uses the aircraft's relative movement commands. There is
+        # no camera-derived target position to calibrate or verify here.
+        pass
+
+    def _ready_message(self):
+        return ('AUTONOMOUS PRESET: selected QR + fire incident starts one circle' if self.args.execute
+                else 'PRESET REHEARSAL: QR creates a fire incident; no flight commands')
+
+    def _print_instructions(self):
+        print(self._ready_message(), flush=True)
+        print('One metre radius, centre 1 m ahead of launch heading; one circle, then land.', flush=True)
+        print('QR is only the demo trigger. Camera aims toward the planned centre; no visual position tracking.', flush=True)
+        print('X, Esc, LAND or Ctrl+C requests landing. Keep this terminal open. Restart for another flight.', flush=True)
+
+    def _hover_observed_message(self):
+        return 'hover established; beginning the demo circle relative to launch heading'
+
+    def _preset_vehicle(self):
+        sample = self.telemetry or {}
+        ages = dict(self.sensor_ages.ages) if self.sensor_ages else {}
+        attitude = sample.get('attitude_deg') or {}
+        oldest = min(ages.get(key, float('-inf')) for key in ('altitude', 'speed', 'attitude'))
+        video_fresh = 0 <= time.time()-self.last_frame_time <= 1.5
+        return Vehicle(oldest, bool(self.connected and self._aircraft_link() and video_fresh),
+                       sample.get('state'), sample.get('battery_pct'), sample.get('altitude_m'),
+                       sample.get('ground_speed_mps'),
+                       max(abs(attitude.get('roll', float('inf'))), abs(attitude.get('pitch', float('inf')))),
+                       not self.input_closed.is_set())
+
+    def _camera_pitch(self):
+        height = (self.telemetry or {}).get('altitude_m') or 0
+        return -math.degrees(math.atan2(max(0., height), self.limits.radius_m))
+
+    def _after_hover(self):
+        fly_preset(self.driver, self.limits, self._preset_vehicle, self.abort_flight, self.report,
+                   hold_seconds=1, flight_started=self.started_at, clock=time.monotonic, sleep=time.sleep)
+
+
 def main():
     parser = argument_parser()
     parser.description = __doc__
@@ -221,6 +283,7 @@ def main():
     parser.add_argument('--marker-file', default=str(Path(__file__).with_name('orbit-marker.txt')))
     parser.add_argument('--camera-calibration')
     parser.add_argument('--preflight-file')
+    parser.add_argument('--preset', action='store_true', help='QR selects a fixed launch-relative demo; no camera calibration or QR-size measurement')
     args = parser.parse_args()
     if args.controller != 'direct' or args.demo_flight or args.gimbal_pitch is not None or args.radius != 1:
         parser.error('Use direct control, a one-metre radius, and no other flight/gimbal mode')
@@ -234,15 +297,19 @@ def main():
         marker = Path(args.marker_file).read_text().strip()
         if parse_marker(marker) is None:
             raise ValueError('Select a valid EW1 fire marker')
+        if args.preset and (args.camera_calibration or args.preflight_file):
+            raise ValueError('Preset mode does not use marker-pose calibration or its preflight file')
         pose = CalibratedPose(args.camera_calibration, require_verified=args.execute) if args.camera_calibration else None
-        if args.execute:
+        if args.execute and not args.preset:
             if pose is None or not args.preflight_file:
                 raise ValueError('Live execution requires measured calibration and a current physical preflight')
             read_preflight(args.preflight_file, terminal_control=True)
     except (ValueError, TypeError, KeyError, OSError) as error:
         parser.error(str(error))
-    bridge = QRAutoCircle(args, Publisher(args.out_dir, args.backend, os.environ['INGEST_TOKEN']),
-                          FireDetector(args.model, args.conf, use_yolo=False), pose, marker)
+    publisher = Publisher(args.out_dir, args.backend, os.environ['INGEST_TOKEN'])
+    detector = FireDetector(args.model, args.conf, use_yolo=False)
+    bridge = (QRAutoPreset(args, publisher, detector, marker) if args.preset else
+              QRAutoCircle(args, publisher, detector, pose, marker))
     def stop(signum, frame):
         bridge._request_landing(force=False)
         bridge.running = False
