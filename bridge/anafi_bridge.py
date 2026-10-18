@@ -85,11 +85,12 @@ try:
     # GPS/optical-flow into a NED wind vector (what FreeFlight shows). Not all
     # firmware/olympe builds expose it, so a missing import just disables the
     # field — the bridge still runs and the field stays None.
+    from olympe.messages.flight_data import Command as FlightDataCommand
     from olympe.messages.flight_data.Event import State as FlightDataState
     from olympe.messages.flight_data.Event import WindSpeed
     from olympe.messages.ardrone3.PilotingState import WindStateChanged
 except ImportError:
-    WindSpeed = FlightDataState = WindStateChanged = None
+    FlightDataCommand = WindSpeed = FlightDataState = WindStateChanged = None
 
 DEFAULT_DRONE_IP = "192.168.42.1"  # ANAFI's address on its own Wi-Fi network
 WINDOW = "ANAFI live"
@@ -368,8 +369,10 @@ class AnafiBridge:
                 pass
         if WindStateChanged is not None and (s := self._state(WindStateChanged)) is not None:
             try:
-                t["extra"]["fc_wind_state"] = s["state"].name  # ok / warning / critical
-            except (KeyError, AttributeError):
+                v = s["state"]
+                # enum member on most paths, raw string on others — take either
+                t["extra"]["fc_wind_state"] = getattr(v, "name", v)  # ok / warning / critical
+            except (KeyError, TypeError):
                 pass
         self.telemetry = t
 
@@ -757,9 +760,25 @@ class AnafiBridge:
             self.last_frame_time = time.time() + 5  # grace period for the decoder's first frame
         print("[+] Connected — streaming video.")
         self._set_status("Connected - waiting for first video frame ...")
+        self._probe_wind_capability(drone)
         if self.args.gimbal_pitch is not None:
             self._aim_gimbal(self.args.gimbal_pitch)
         return True
+
+    def _probe_wind_capability(self, drone):
+        """Ask the FC whether it streams a wind estimate. GetState makes the drone
+        emit flight_data.Event.State right away, so is_wind_speed_available is
+        known at connect — not first flight. Failures just leave the field at
+        None; the bridge works regardless."""
+        if FlightDataCommand is None or FlightDataState is None:
+            return
+        try:
+            drone(FlightDataCommand.GetState(include_default_capabilities=True)).wait(_timeout=5)
+            s = drone.get_state(FlightDataState)
+            print(f"[+] FC wind estimation available: "
+                  f"{None if s is None else s.get('is_wind_speed_available')}")
+        except Exception as e:
+            print(f"[!] FC wind capability probe failed (estimate fields stay off): {e!r}")
 
     def _aircraft_link(self):
         if self.drone is None or not self.drone.connected:
