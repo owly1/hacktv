@@ -89,13 +89,15 @@
     const p = pose(scene, t, anchor), time = s => new Date(scene.startedAt + s * 1000).toISOString();
     const leads = scene.targets.filter(x => x.samples.length).map(target => {
       const samples = target.samples, last = samples.at(-1), [latitude, longitude] = ll(scene, target.e, target.n);
-      const angles = [...new Set(samples.map(s => Math.round(s.az / 30) * 30 % 360))], multi = angles.length >= 2;
+      const angles = [...new Set(samples.map(s => Math.round(s.az / 30) * 30 % 360))];
+      const span = Math.max(0, ...angles.flatMap(a => angles.map(b => Math.min(Math.abs(a-b), 360-Math.abs(a-b)))));
+      const multi = angles.length >= 2 && span >= 35;
       const accuracy = Math.max(3, Math.round(12 / Math.sqrt(samples.length)));
       return {id: target.id, number: target.number, title: `${multi ? 'Possible person' : 'Candidate'} — Target ${target.number}`,
         latitude, longitude, uncertainty: {major_95_m: accuracy, minor_95_m: accuracy, bearing_deg: 0, method: 'illustrative simulated uncertainty'},
         status: target.closed ? 'closed' : multi ? 'possible-person' : 'needs-another-view', status_text: 'Simulated camera sighting',
         first_seen_at: time(samples[0].t), last_seen_at: time(last.t), last_seen_age_s: Math.round(t - last.t),
-        views: angles.length, angle_span_deg: multi ? 60 : 0, view_azimuths_deg: angles, sensors: ['visible'], observations: samples.length,
+        views: angles.length, angle_span_deg: span, view_azimuths_deg: angles, sensors: ['visible'], observations: samples.length,
         movement: {status: 'stationary', detail: 'Simulated person at a fixed location'}, missed_looks: 0,
         delayed: {any: false, max_delay_s: 0}, fire_distance_m: Math.round(Math.hypot(target.e, target.n)),
         fire_arrival: {minutes: 0, basis: 'inside the simulated fire footprint'}, at_fire: !target.closed,
