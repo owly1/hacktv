@@ -594,8 +594,10 @@ function applyWindEstimate(a) {
   const deg = w.direction_deg != null ? ((Math.round(w.direction_deg) % 360) + 360) % 360 : null;
   if (kmh === null && deg === null) return;
   const changed = (kmh !== null && kmh !== state.scenario.wind) || (deg !== null && deg !== state.scenario.direction);
-  if (kmh !== null) state.scenario.wind = kmh;
-  if (deg !== null) state.scenario.direction = deg;
+  /* The scenario eases toward the new evidence instead of snapping: a real
+     wind shift develops over seconds, and the ellipse should merge onto its
+     new path, not teleport there. */
+  if (kmh !== null || deg !== null) state.windEase = {wind: kmh ?? state.scenario.wind, direction: deg ?? state.scenario.direction};
   state.windAuto = a.created_at; state.windDerived = w;
   if (changed) {
     markPlanDirty(); renderSpread(); refreshFireTiming();
@@ -1266,7 +1268,7 @@ async function connect() {
   streamVideo();
 }
 
-let lastFrame = 0, lastSpread = 0, lastWind = 0;
+let lastFrame = 0, lastSpread = 0, lastWind = 0, lastEaseSpread = 0;
 /** Animate the band rings/orbit from their last rendered positions to `targets`.
    Vertex counts are fixed (72), so index-wise lat/lon lerp glides the shape. */
 const raf = globalThis.requestAnimationFrame ?? (cb => setTimeout(() => cb(performance.now()), 16));
@@ -1318,6 +1320,19 @@ function animate(now) {
     const el = $('wind-value');
     if (Math.abs(state.windShown - state.scenario.wind) < .05) state.windShown = state.scenario.wind;
     if (el && el.textContent !== String(Math.round(state.windShown))) el.textContent = Math.round(state.windShown);
+  }
+  /* Scenario wind easing: new evidence sets a target; the wind and bearing
+     glide toward it over ~3 s (shortest arc for direction), re-rendering the
+     spread every ~250 ms so the old projected path merges into the new one. */
+  if (state.windEase) {
+    const k = Math.min(1, delta / 3000), sc = state.scenario, tgt = state.windEase;
+    sc.wind += (tgt.wind - sc.wind) * k;
+    const dd = ((tgt.direction - sc.direction + 540) % 360) - 180;
+    sc.direction = ((sc.direction + dd * k) % 360 + 360) % 360;
+    if (Math.abs(tgt.wind - sc.wind) < .2 && Math.abs(dd) < .5) {
+      sc.wind = tgt.wind; sc.direction = tgt.direction; state.windEase = null;
+    }
+    if (now - lastEaseSpread > 250) { lastEaseSpread = now; renderSpread(); }
   }
   if (state.playing) { state.minute = (state.minute + delta * .002 * state.speed) % 60; if (now - lastSpread > 66) { lastSpread = now; renderSpread(); } }
   animateDemoFlight(now); animateDemoCase(now);
