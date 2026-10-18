@@ -1,7 +1,7 @@
 """Grounded pitch sweep. No SDK, aircraft movement or flight authorization."""
 
-def image_bearing_pitch(observation,calibration,camera):
-    """Camera aim from pixels and actual attitude; independent of QR size/PnP."""
+def image_bearing_ray(observation,calibration,camera):
+    """Unit NED ray from fresh QR pixels; supplies direction, never range."""
     import math
     import cv2
     import numpy as np
@@ -16,7 +16,14 @@ def image_bearing_pitch(observation,calibration,camera):
                            np.asarray(calibration['distortion_coefficients'],dtype=float)).reshape(2)
     angles=[float(camera[k+'_absolute']) for k in ('roll','pitch','yaw')]
     if not all(math.isfinite(v) for v in angles):raise ValueError('Invalid camera attitude')
-    forward,right,down=rotation(*angles) @ np.array([1.,x,y])
+    ray=rotation(*angles) @ np.array([1.,x,y])
+    return ray / np.linalg.norm(ray)
+
+
+def image_bearing_pitch(observation,calibration,camera):
+    """Camera aim from pixels and actual attitude; independent of QR size/PnP."""
+    import math
+    forward,right,down=image_bearing_ray(observation,calibration,camera)
     return max(-85.,min(85.,-math.degrees(math.atan2(down,math.hypot(forward,right)))))
 
 

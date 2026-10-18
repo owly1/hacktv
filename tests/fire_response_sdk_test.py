@@ -534,6 +534,33 @@ class ResponseTests(unittest.TestCase):
             self.assertEqual(b.target_vertical_anchor,.6)
             self.assertFalse(b.abort_flight.is_set())
 
+    def test_rejected_depth_preserves_fresh_pixel_bearing_but_profile_failure_clears_it(self):
+        b=self.bridge();b.takeoff_used=True;b.episode='fire';b.target_vertical_anchor=.2
+        b.geometry=Mock();b.geometry.models={'qr-test':Mock()}
+        b.geometry.models['qr-test'].origin.return_value=(.08,0.,0.)
+        b.geometry_snapshot={'image_size':[200,100],
+            'camera_matrix':[[100,0,100],[0,100,50],[0,0,1]],'distortion_coefficients':[0]*5}
+        b.control={'target':{'at':time.time()*1000,'source':'qr-test','episode_id':'fire',
+            'width':200,'height':100,'qr_corners':[[80,30],[120,30],[120,70],[80,70]]}}
+        now=time.monotonic();b.sensor_ages.history=PoseHistory()
+        for name,values in [('altitude',{'altitude':1.}),('attitude',{'roll':0.,'pitch':0.,'yaw':0.}),
+                            ('camera',{'roll_absolute':0.,'pitch_absolute':-45.,'yaw_absolute':90.})]:
+            b.sensor_ages.history.record(name,now,values)
+        with patch.object(b,'_qr_candidate',return_value=FireTarget(now,'fire',1.,0.,2.,.12)):
+            b._update_target()
+        self.assertIsNone(b.target)
+        self.assertIn('scale/pose disagrees',b.target_error)
+        self.assertIsNotNone(b.orbit_bearing)
+        self.assertAlmostEqual(b.orbit_bearing.north,0.)
+        self.assertAlmostEqual(b.orbit_bearing.east,2**-.5)
+        self.assertAlmostEqual(b.orbit_bearing.origin_north_m,.08)
+        self.assertEqual(b.target_vertical_anchor,.2)
+        self.assertFalse(b.abort_flight.is_set())
+        b.projected_at=None
+        with patch.object(b,'_camera_profile_reason',return_value='Camera profile changed'):
+            b._update_target()
+        self.assertIsNone(b.orbit_bearing)
+
     def test_claimed_target_uses_single_fresh_frame_but_grounded_fire_still_needs_confirmation(self):
         for airborne in (False,True):
             b=self.bridge();b.geometry=Mock();b.geometry_error=None;b.takeoff_used=airborne;b.episode='fire'

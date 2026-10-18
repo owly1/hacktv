@@ -35,6 +35,17 @@ class Control:
     gaz: int = 0
 
 
+@dataclass(frozen=True)
+class Bearing:
+    """Capture-time NED unit ray and lens origin; no measured depth."""
+    at: float
+    episode: str
+    north: float
+    east: float
+    origin_north_m: float = 0.
+    origin_east_m: float = 0.
+
+
 def clamp(value, low, high):
     return max(low, min(high, value))
 
@@ -81,7 +92,7 @@ def _coherent_correction(samples):
 
 def run_continuous_orbit(target, limits, check, motion, command, report,
                          remember=None, diagnostic=None,
-                         clock=time.monotonic, sleep=time.sleep):
+                         clock=time.monotonic, sleep=time.sleep, get_bearing=None):
     """Orbit a fixed 3D point; correct drift inward before resuming a lap.
 
     Received velocity propagates aircraft position between visual sightings.
@@ -99,6 +110,7 @@ def run_continuous_orbit(target, limits, check, motion, command, report,
     history = deque()
     visual_ranges = deque()
     observed_at = float('-inf')
+    bearing_at = float('-inf')
     visual_outward = 0.
     visual_at = float('-inf')
     integral_x = integral_y = 0.
@@ -221,6 +233,41 @@ def run_continuous_orbit(target, limits, check, motion, command, report,
                             'age_s':now-observed.at, 'centre_m':list(centre),
                             'aircraft_correction_m':[dx,dy], 'innovation_m':innovation,
                             'visual_radius_m':visual_ranges[-1][1], 'visual_outward_mps':visual_outward})
+
+            # A decoded QR can retain a reliable direction when its tiny-square
+            # depth fit fails. Correct only perpendicular to that viewing ray:
+            # no invented depth, height anchor, visual range rate or lap travel.
+            # This path is deliberately below the measured-centre startup gate.
+            sight = get_bearing() if get_bearing is not None else None
+            if (sight is not None and sight.episode == target.episode
+                    and all(isinstance(v,(int,float)) and math.isfinite(v) for v in
+                            (sight.at,sight.north,sight.east,sight.origin_north_m,sight.origin_east_m))
+                    and max(bearing_at,observed_at) < sight.at <= now
+                    and now-sight.at <= .8 and .2 <= math.hypot(sight.north,sight.east) <= 1.001
+                    and math.hypot(sight.origin_north_m,sight.origin_east_m) <= .3):
+                bearing_at = sight.at
+                captured = _capture_pose(history,sight.at)
+                if captured is not None:
+                    px,py,_,_ = captured
+                    length = math.hypot(sight.north,sight.east)
+                    ux,uy = sight.north/length,sight.east/length
+                    rx = centre[0]-px-sight.origin_north_m
+                    ry = centre[1]-py-sight.origin_east_m
+                    along = rx*ux+ry*uy
+                    cross = -rx*uy+ry*ux
+                    # Large contradictory rays cannot rotate the estimated
+                    # location around the aircraft on a single observation.
+                    if along > .2 and abs(math.atan2(cross,along)) <= math.radians(30):
+                        dx,dy = bounded(-.25*cross*uy,.25*cross*ux,.08)
+                        x += dx; y += dy
+                        old_x += dx; old_y += dy
+                        history = deque((at,hx+dx,hy+dy,hyaw,h) for at,hx,hy,hyaw,h in history)
+                        diagnostic('continuous_bearing_corrected', {'captured_at_mono':sight.at,
+                            'age_s':now-sight.at,'cross_track_error_m':cross,
+                            'aircraft_correction_m':[dx,dy],'centre_m':list(centre)})
+                    else:
+                        diagnostic('continuous_bearing_rejected', {'age_s':now-sight.at,
+                            'reason':'bearing disagrees with locked location by over 30 degrees or is behind camera'})
 
             rx, ry = centre[0]-x, centre[1]-y
             radius = math.hypot(rx, ry)

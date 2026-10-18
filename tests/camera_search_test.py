@@ -2,10 +2,25 @@ import sys
 from pathlib import Path
 import unittest
 sys.path.insert(0,str(Path(__file__).parents[1]/'bridge'))
-from camera_search import CameraSearch, BearingAim, AcquisitionAim, image_bearing_pitch
+from camera_search import CameraSearch, BearingAim, AcquisitionAim, image_bearing_pitch, image_bearing_ray
 
 
 class SearchTests(unittest.TestCase):
+    def test_pixel_ray_uses_capture_compass_heading_without_assuming_metric_depth(self):
+        import math
+        calibration={'image_size':[200,100],'camera_matrix':[[100,0,100],[0,100,50],[0,0,1]],
+                     'distortion_coefficients':[0,0,0,0,0]}
+        # Centre pixel, camera pointing east and down 45 degrees. The QR's
+        # changing apparent size cannot change that independently known ray.
+        for radius in (5,15):
+            observation={'width':200,'height':100,'qr_corners':[[100-radius,50-radius],
+                [100+radius,50-radius],[100+radius,50+radius],[100-radius,50+radius]]}
+            ray=image_bearing_ray(observation,calibration,
+                {'roll_absolute':0.,'pitch_absolute':-45.,'yaw_absolute':90.})
+            self.assertAlmostEqual(ray[0],0.)
+            self.assertAlmostEqual(ray[1],math.sqrt(.5))
+            self.assertAlmostEqual(ray[2],math.sqrt(.5))
+
     def test_pixel_tracking_is_independent_of_qr_size_and_compensates_camera_pitch(self):
         import math
         calibration={'image_size':[200,100],'camera_matrix':[[100,0,100],[0,100,50],[0,0,1]],
