@@ -17,8 +17,16 @@
   function envFactor(sc) {
     return Math.max(.5, Math.min(2.2, 1 + (sc.dryness-50)/120 + (sc.temp-20)/90 - (sc.rh-40)/140));
   }
+  /* Wind drives the head-fire rate superlinearly, then saturates: published
+     grass-fire curves (McArthur / CSIRO) are convex in wind speed until
+     flame-front heat transfer, not wind, becomes the limit. Coefficient is
+     tuned so the 18 km/h baseline matches the previous linear model; the
+     ~60 km/h cap marks where extrapolation would be irresponsible rather
+     than a physical constant. Illustrative — honest shape, not fitted data. */
+  const RATE_WIND_EXP = 1.2, RATE_WIND_COEF = .505, RATE_WIND_CAP_KMH = 60;
+  function windRateFactor(kmh) { return RATE_WIND_COEF * Math.pow(Math.min(Math.max(0, kmh), RATE_WIND_CAP_KMH), RATE_WIND_EXP); }
   /* Head-fire spread rate in metres per minute. */
-  function baseRate(sc) { return (1.5 + sc.wind*.9)*envFactor(sc); }
+  function baseRate(sc) { return (1.5 + windRateFactor(sc.wind)) * envFactor(sc); }
   /* A reported rate holds at the reported conditions; changing the inputs scales it. */
   function spreadRate(sc, details) {
     if (details && Number.isFinite(details.spread_m_per_min)) return details.spread_m_per_min*baseRate(sc)/baseRate(scenarioFrom(details));
@@ -48,7 +56,7 @@
     const lw = Math.min(4, 1 + sc.wind/35);                // length-to-width ratio
     const head = r0 + rate*t, back = r0 + rate*t*.12;
     const a = (head+back)/2, b = Math.max(r0, a/lw);
-    const shift = (head-back)/2 + (1-scale)*a*.35;          // inner bands lean downwind
+    const shift = (head-back)/2 + (1-scale)*a*Math.min(.5, .2 + sc.wind/80); // inner bands lean downwind, more so in stronger wind
     const centre = destPoint(origin[0], origin[1], sc.direction, shift);
     const pts = [];
     for (let i = 0; i < 72; i++) {
@@ -102,7 +110,7 @@
     while (hi - lo > .5) { const mid = (lo + hi)/2; if (insidePolygon(point, footprint(origin, mid, sc, details))) hi = mid; else lo = mid; }
     return Math.round(hi);
   }
-  const api = {BASE, compass, destPoint, envFactor, spreadRate, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter, insidePolygon, arrivalMinutes};
+  const api = {BASE, compass, destPoint, envFactor, windRateFactor, spreadRate, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter, insidePolygon, arrivalMinutes};
   root.EmberModel = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
