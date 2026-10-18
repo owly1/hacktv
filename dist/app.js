@@ -373,9 +373,22 @@ function updateWindSamples() {
     alt_m: Number(t.altitude_m) || 10, captured_at: Date.parse(t.observed_at) || Date.now(), flight_state: t.state};
 }
 
+/* Air readings riding the same telemetry stream: humidity and temperature
+   drift feeds the scenario exactly like wind does, so a moist lull or a
+   hot dry gust reshapes the contour on the very next render. */
+function applyEnvSamples() {
+  const extra = state.telemetry?.extra || {};
+  const rh = Number(extra.rh_pct), temp = Number(extra.temp_c);
+  let changed = false;
+  if (Number.isFinite(rh)) { const v = Math.round(Math.min(100, Math.max(0, rh))); if (v !== state.scenario.rh) { state.scenario.rh = v; changed = true; } }
+  if (Number.isFinite(temp)) { const v = Math.round(temp * 10) / 10; if (v !== state.scenario.temp) { state.scenario.temp = v; changed = true; } }
+  if (changed && state.mode === 'live') { markPlanDirty(); renderSpread(); refreshFireTiming(); }
+}
+
 function renderTelemetry() {
   if (state.mode === 'demo') return;
   updateWindSamples();
+  applyEnvSamples();
   const t = state.telemetry;
   if (!t) { for (const id of ['altitude', 'ground-speed', 'power']) $(id).innerHTML = `— <small>${id === 'power' ? '%' : id === 'altitude' ? 'm' : 'm/s'}</small>`; $('flight-state').textContent = '—'; return; }
   const age = Math.max(0, (Date.now() - Date.parse(t.observed_at)) / 1000), stale = age * 1000 > STALE_MS;
