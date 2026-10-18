@@ -252,12 +252,25 @@ function origin() {
   const loc = fireLocation(); return loc ? [loc.latitude, loc.longitude] : null;
 }
 
+/* Minutes the live fire has already burned since first detection — the
+   contour is a continuous function of real elapsed time, not a frozen
+   snapshot of the first sighting. Size, wind, direction and fuels all feed
+   the same rings, so any change morphs the whole stack. */
+function fireAgeMin() {
+  const inc = state.mode === 'live' ? activeFire() : null;
+  const t0 = inc?.first_detected_at || inc?.latest?.detected_at;
+  const ms = t0 ? Date.now() - new Date(t0).getTime() : 0;
+  return Math.min(60, Math.max(0, ms / 60000));
+}
+/** Model minutes for the rendered rings: fire age + the timeline lookahead. */
+const spreadMinutes = () => fireAgeMin() + state.minute;
+
 /* Projected spread at the selected minute, drawn as layered intensity bands. */
 function renderSpread() {
-  const sc = state.scenario, t = state.minute;
+  const sc = state.scenario, t = spreadMinutes(), age = fireAgeMin();
   renderDetectionDetails();
-  $('time-label').textContent = `T + ${Math.round(t)} min`; $('timeline').value = t;
-  document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - t) < .5));
+  $('time-label').textContent = `T + ${Math.round(state.minute)} min`; $('timeline').value = state.minute;
+  document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - state.minute) < .5));
   const consensus = globalThis.BoscoFleet?.windConsensus(Object.values(state.windSamples));
   const fleetTag = consensus && consensus.samples > 1 ? ` · fleet ×${consensus.samples} ±${consensus.sigma_dir_deg}°` : '';
   $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '') + fleetTag;
@@ -275,7 +288,7 @@ function renderSpread() {
     const details = fireDetails();
     ring = scale => M.footprint(o, t, sc, details, scale);
     outline = ring(1);
-    L.polygon(M.footprint(o, 0, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip('Fire now');
+    L.polygon(M.footprint(o, age, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip(age > .1 ? `Fire now — burning for ~${Math.round(age)} min` : 'Fire now');
   }
   // Contours morph between states: a fire's outline is (roughly) an ellipse,
   // so vertex-lerping the 72-point rings glides the zone instead of jumping.
@@ -300,7 +313,7 @@ function renderSpread() {
   }
   const area = M.areaHa(outline);
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
-  $('area-context').textContent = t < .5 ? 'now' : `projected at +${Math.round(t)} min`;
+  $('area-context').textContent = state.minute < .5 ? (age > .1 ? `now · burning ~${Math.round(age)} min` : 'now') : `projected at +${Math.round(state.minute)} min`;
   const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
   const windHead = M.destPoint(o[0], o[1], sc.direction, reach);
   L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
@@ -567,7 +580,7 @@ function projection() {
   if (demoCase()) return demoProjection();
   const details = fireDetails();
   const loc = fireLocation();
-  return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(M.footprint(o, state.minute, state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(state.minute, state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1], position_source: loc?.position_source ?? null, simulated: loc?.simulated ?? state.mode === 'demo'}};
+  return {minutes_ahead: Math.round(spreadMinutes()), area_ha: +M.areaHa(M.footprint(o, spreadMinutes(), state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(spreadMinutes(), state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1], position_source: loc?.position_source ?? null, simulated: loc?.simulated ?? state.mode === 'demo'}};
 }
 /** Invalidate an existing plan and its scenario cache after relevant conditions change. */
 function markPlanDirty() { if (state.plan && !state.planDirty) { state.planDirty = true; const r = demoResults(); if (r) r.planDirty = true; renderPlan(); } }
