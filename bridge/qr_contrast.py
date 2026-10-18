@@ -6,10 +6,12 @@ import numpy as np
 def decode_candidate_crop(gray, candidates, reader, expected):
     """Try at most two small candidate crops; return original camera corners.
 
+    ``expected`` is an exact payload string or an allowlist of payloads.
     A detected quadrilateral only selects pixels to inspect. It is never an
     identity match: an actual successful payload decode remains mandatory.
     """
     height, width = gray.shape
+    accepted = (expected,) if isinstance(expected, str) else tuple(expected)
     attempted = []
     other_code = False
     for candidate in candidates:
@@ -46,9 +48,9 @@ def decode_candidate_crop(gray, candidates, reader, expected):
                 text, recovered, modules = reader.detectAndDecode(enlarged)
             except cv2.error:
                 continue
-            if text and text != expected:
+            if text and text not in accepted:
                 other_code = True
-            if text != expected or recovered is None:
+            if text not in accepted or recovered is None:
                 continue
             recovered = (recovered.astype(np.float64)+.5)/scale-.5+[x0, y0]
             if (np.any(recovered < 2) or np.any(recovered[..., 0] > width-3)

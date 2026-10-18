@@ -131,8 +131,10 @@ from updated `main`. See [the integration handoff](docs/DRONE_MAIN_INTEGRATION.m
   estimate; retain source labels and disclose disagreement. Neither is an anemometer.
   Encoded fire-QR weather remains the reproducible scenario input. Wind curves,
   projected arrival times and incident Q&A are illustrative decision support.
-- The only fire QR is `EW1:Alpha|120|X|35|M|30|60|31|18|18`.
-  Change all pinned copies and tests together if its identity changes.
+- Exact fire QR allowlist: original `EW1:Alpha|120|X|35|M|30|60|31|18|18`
+  and tiny contour demo `EW1:Tiny|0.0001|L|0.01|G|0.2|60|22|45|18`.
+  Alpha remains unchanged. Tiny represents 1 m², growing at 0.01 m/min.
+  Change pinned copies and tests together; never accept arbitrary EW1 payloads.
 - Aircraft commands belong to a separately enabled flight runtime. The Live
   dashboard's Start BOSCO / LAND controls authorize and end its expiring
   session; ordinary dashboard startup, Replay, maps and Gemini cannot pilot.
@@ -153,6 +155,12 @@ from updated `main`. See [the integration handoff](docs/DRONE_MAIN_INTEGRATION.m
   fire location through visual gaps, and renews correction attempts on measured
   progress. Keep its control and sensor watchdogs separate from UI/replay pacing.
 - Unit tests, configured services and sent landing commands are not physical proof.
+- The separate Live GPS contour action uses a fixed general-area marker anchor
+  and the uniform-fuel +5-minute forecast, advancing on real elapsed time.
+  It requires Tiny plus fresh accurate GPS; it never substitutes scenario/home
+  coordinates. Default Start BOSCO remains the existing circular response.
+  Frontend Pi/fleet architecture describes expansion potential; live ingest
+  and aircraft control still serve one drone. See [contour mode](docs/FIRE_CONTOUR_MODE.md).
 
 ## Working routine
 

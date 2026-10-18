@@ -71,16 +71,20 @@ behavior. Status exposes `gemini.automatic_analysis`; authenticated legacy
 analysis routes remain compatible. The shared replay/live dashboard does not
 request or poll scene analysis.
 
-The only selected QR payload is:
+The selected QR payloads are:
 
 ```text
 EW1:Alpha|120|X|35|M|30|60|31|18|18
+EW1:Tiny|0.0001|L|0.01|G|0.2|60|22|45|18
 ```
 
 Other QR text, including other `EW1:` payloads, is rejected/ignored. Keep
-`bridge/fire_detection.py`, `make_test_marker.py`, `orbit-marker.txt`, backend
+`bridge/fire_detection.py`, `make_test_marker.py`, `orbit-marker.txt`, `tiny-marker.txt`, backend
 validation and tests synchronized. Regenerate with `python3 bridge/make_test_marker.py`.
-The backend checks the exact Alpha fields above. Allowed scenario additions
+The backend checks the exact fields for either complete scenario; mixed Alpha/Tiny
+fields are rejected. Tiny is 0.0001 ha (1 m²), low intensity, 0.01 m/min spread,
+cured grass, 0.2 km/h wind toward 60°, 22°C, 45% RH and the same 0.18 m printed
+black-square width. Allowed scenario additions
 are `position_simulated` and `location_note`. Flight annotations must include
 all of `flight_protocol`, `orbit_radius_m: 1`, `path_reference`, using only
 `qr-auto-preset`/`launch-heading` or `qr-auto-circle`/`measured-marker` pairs.
@@ -130,7 +134,9 @@ Target bodies contain `captured_at`, integer `width`/`height`, `episode_id`, and
 Capture times must strictly increase and be less than 1.5 seconds old; a candidate
 must be less than one second old. The source is `yolo` or `qr-test`, the label is
 `fire`, confidence is at least 0.65, and boxes are ordered normalized coordinates.
-QR identity must exactly match the approved payload. Corners are four finite
+QR identity must exactly match one approved payload. Changing markers resets
+confirmation, and a mission only accepts its original marker's visual evidence.
+Corners are four finite
 TL/TR/BR/BL pixel pairs inside that frame. Before the first claim, five consistent
 decoded observations spanning at least 800 ms after Enable must match an accepted
 `/api/ingest/detection` incident from the last seven seconds. Overlay boxes,
@@ -170,6 +176,37 @@ battery and a 300-second session flight limit. Explicit short-test mode uses 30%
 to start, 25% in flight and 60 seconds. Altitude is relative to takeoff, not terrain
 clearance. The receiver enforces its own battery, sensor, motion and control guards;
 backend acceptance does not itself execute an aircraft command.
+
+### Additive contour selection
+
+`{action: "enable", mode: "contour", camera_search: true}` explicitly selects
+the new GPS contour mode. Omitted `mode` or `mode: "circle"` retains the existing
+circular flight. Mode is fixed for the session; heartbeat cannot change it.
+The receiver must advertise `contour_supported: true`, `contour_ready: true`
+and an explanatory `contour_reason`. Legacy receivers cannot enable contour.
+The receiver's default `ready` and circular preflight are unchanged.
+
+Contour claims require the exact Tiny marker and its matching accepted incident.
+Claims add `mission.mode`, `mission.qr_text`, and
+`mission.contour: {forecast_minutes: 5, started_at, details}`. `started_at` is
+server epoch milliseconds at claim; `details` is the complete pinned Tiny
+scenario. Alpha is too large for this bounded course and cannot authorize a
+contour claim. The original circular mode still accepts Alpha/RGB evidence.
+
+Receiver `contour` status adds a frozen
+`anchor: {latitude, longitude, position_source: "gps"}`, `forecast_minutes: 5`,
+the matching `started_at`, pinned `details`, and `speed_mps` in 0–0.2 m/s.
+This is reporting from the sole aircraft owner, not a dashboard waypoint API.
+The frontend renders this plan independently of replay speed, map forecast
+sliders, weather edits and general incident geolocation. Expired/LAND sessions
+drop stale reported plans. Missing anchor/GPS never produces a fabricated pin.
+
+The exact uniform-fuel 72-vertex wind/wobble outline is computed at five minutes
+plus real elapsed mission time. Its outward growth follows the encoded model;
+bounded tangential patrol speed is separately derived from head spread rate.
+After anchoring, QR visibility is not a control requirement. GPS, sensor and
+control watchdogs remain mandatory. See [physical gates](FIRE_CONTOUR_MODE.md).
+No fleet ingest, fleet command endpoint or second physical drone is added.
 
 ## Person observation
 
@@ -233,4 +270,3 @@ Dashboard-authenticated `POST /api/people/sighting/ack` and `/close` accept
 (`found|not-a-person|duplicate|handed-off`). Reviews survive repeat sightings
 and backend restart. Vision health adds `people_model_status` and
 `last_person_at`. None of these routes commands the aircraft.
-

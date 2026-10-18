@@ -61,14 +61,22 @@ function renderAutonomy() {
   const a=state.autonomy, enabled=!!a?.enabled;
   const search=a?.receiver?.search_state;
   const phase=a?.receiver?.phase, emergency=aircraftEmergency();
+  const contour=a?.mode==='contour';
   const adaptiveScale=a?.receiver?.qr_scale_mode==='adaptive';
   const currentMetricScale=a?.receiver?.position?.source==='measured-qr-3d';
-  const acquiring=!!a?.mission&&!['takeoff','climb','recover','circle','return','landing'].includes(phase);
-  $('autonomy-state').textContent=emergency?'EMERGENCY':autonomyConnectionError?'CONNECTION LOST':enabled?(acquiring?'ACQUIRING':phase==='recover'?'REACQUIRING':search==='scanning'?'SEARCHING':search==='acquiring'?'FIRE FOUND':a?.mission?'TRACKING':'ENABLED'):'OFF';
+  const acquiring=!!a?.mission&&!['takeoff','climb','recover','circle','contour','return','landing'].includes(phase);
+  $('autonomy-state').textContent=emergency?'EMERGENCY':autonomyConnectionError?'CONNECTION LOST':enabled?(acquiring?'ACQUIRING':phase==='recover'?'REACQUIRING':search==='scanning'?'SEARCHING':search==='acquiring'?'FIRE FOUND':a?.mission?(contour?'GPS CONTOUR':'TRACKING'):'ENABLED'):'OFF';
   $('autonomy-state').className='pill '+(enabled?'soft-orange':'muted');
   $('autonomy-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported;
-  $('autonomy-enable').textContent=enabled?'BOSCO active':'Start BOSCO';
+  $('autonomy-enable').textContent=enabled&&!contour?'BOSCO active':'Start BOSCO';
+  $('autonomy-contour-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported||!a?.receiver?.contour_supported||!a?.receiver?.contour_ready;
+  $('autonomy-contour-enable').textContent=enabled&&contour?'Contour active':'Start contour response';
   $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.lap_seconds===15?'15 s target per lap · ':''}${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
+  if(contour&&enabled) $('autonomy-limits').textContent=`Tiny fire · GPS path on the +5-minute forecast · about 1 m above launch · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
+  $('contour-readiness').textContent=state.mode!=='live'?'Contour flight is available in Live. The tiny-fire preview works in either mode.':
+    enabled&&contour?'GPS follows the growing +5-minute contour around the initial marker area. The fire grows in real time; explorer and replay speeds do not change the flight.':
+    a?.receiver?.contour_ready?'Contour ready · Tiny marker only · measured GPS accuracy ≤0.5 m.':
+    a?.receiver?.contour_reason||'Contour awaits a compatible receiver and fresh GPS with accuracy ≤0.5 m. Preview the tiny fire below.';
   if (a?.receiver?.localization_sources) {
     const sources=a.receiver.localization_sources;
     if (adaptiveScale&&!currentMetricScale&&sources.includes('qr-test')) {
@@ -95,10 +103,12 @@ function renderAutonomy() {
     enabled&&phase==='recover'?`Holding position and reacquiring the fire · ${a.receiver.reason}`:
     enabled&&acquiring?`Fire response claimed; checking takeoff readiness · ${a.receiver.reason}`:
     enabled&&!a.mission?`${a.waiting_reason||a.reason}${position?` · Measured location: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right`:''}`:
+    enabled&&contour?`GPS contour response · ${a.receiver.reason||phase} · fixed initial fire area; continuing QR tracking is not required.`:
     enabled?(position?`Tracking fire: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right${Number.isFinite(position.down_m)?`, ${position.down_m.toFixed(2)} m below drone`:''} · ${phase}`:
       a.mission?`Locating fire · ${a.receiver.reason}`:a.waiting_reason||a.reason):
       a.receiver.ready&&!a.receiver.camera_search_supported?'Waiting for automatic camera search capability.':a.receiver.reason||a.reason;
   document.querySelector?.('.autonomy-panel')?.setAttribute('data-enabled',String(enabled));
+  renderContourRoute();
 }
 /** Renew only this live page's session; leaving live requests LAND and stops renewing it. */
 async function pollAutonomy() {
@@ -145,7 +155,7 @@ async function setAutonomy(action,extra={}) {
     state.autonomy=response;
     autonomyConnectionError=false;
     autonomousSession=action==='enable'?state.autonomy.session_id:null;
-    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?'BOSCO active: camera search and automatic fire response enabled.':'Landing requested; BOSCO stopped.');
+    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?(extra.mode==='contour'?'Contour response enabled: find the Tiny marker, then follow the GPS forecast.':'BOSCO active: camera search and automatic fire response enabled.'):'Landing requested; BOSCO stopped.');
   } catch(error) {toast(error.message);}
   finally {if(revision===autonomyRevision){autonomyActionPending=false;renderAutonomy();}}
 }
@@ -253,6 +263,7 @@ function initMap() {
   }
   state.tiles.osm.addTo(map);
   for (const name of ['fuel', 'spread', 'wind', 'fire', 'drone', 'demo', 'orbit']) state.layers[name] = L.layerGroup().addTo(map);
+  state.layers.contour = L.layerGroup().addTo(state.layers.drone);
   renderFuels();
   state.layers.path = L.polyline([], {color: '#3A372E', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
   state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
@@ -371,6 +382,60 @@ const spreadMinutes = () => fireAgeMin() + state.minute;
 /** Incident identity for forecast-trail scoping; empty string when no fire. */
 const incIdentity = () => activeFire()?.episode_id || '';
 
+/** Read only a receiver-confirmed fixed GPS anchor, never an explorer/demo pin. */
+function contourMissionGeometry(now=Date.now()) {
+  const a=state.autonomy, c=a?.receiver?.contour, anchor=c?.anchor;
+  if(state.mode!=='live'||!a?.enabled||a.mode!=='contour'||!globalThis.BoscoContour||
+     anchor?.position_source!=='gps'||!Number.isFinite(anchor.latitude)||!Number.isFinite(anchor.longitude)) return null;
+  const config=a.mission?.contour, started=c.started_at??config?.started_at, details=c.details??config?.details;
+  if(!Number.isFinite(started)||!details) return null;
+  return {...BoscoContour.forecast([anchor.latitude,anchor.longitude], details, Math.max(0,now-started)/60000), anchor};
+}
+
+/** Draw the exact flight forecast independently of mutable explorer conditions. */
+function renderContourRoute() {
+  const layer=state.layers.contour;
+  if(!layer) return;
+  layer.clearLayers();
+  if(state.mode==='live'&&state.autonomy?.enabled&&state.autonomy.mode==='contour') state.layers.orbit?.clearLayers();
+  const geometry=contourMissionGeometry();
+  if(!geometry) return;
+  L.polygon(geometry.current,{color:'#d9480f',weight:1.5,fillColor:'#d9480f',fillOpacity:.28})
+    .addTo(layer).bindTooltip('Contour mission · fire now · fixed initial QR area');
+  L.polygon(geometry.route,{color:'#249bc5',weight:3,fill:false})
+    .addTo(layer).bindTooltip(`GPS flight route · +5-minute contour · patrol ${geometry.speedMps.toFixed(3)} m/s · real-time growth`);
+  const mission=state.autonomy.mission?.id;
+  if(mission&&state.contourFittedMission!==mission) {state.contourFittedMission=mission;fitToFire();}
+}
+
+let contourPreviewStarted=0, contourPreviewOffset=0, contourPreviewLast=0;
+/** Reset the aircraft-free preview clock; its minutes never reach the flight API. */
+function resetContourPreview(minutes=0) {
+  contourPreviewStarted=Date.now(); contourPreviewOffset=minutes;
+  renderTinyContourPreview();
+}
+
+/** Render one hypothetical aircraft on the same uniform-fuel +5-minute model. */
+function renderTinyContourPreview(now=Date.now()) {
+  const C=globalThis.BoscoContour; if(!C) return;
+  const age=Math.min(5,Math.max(0,contourPreviewOffset+(now-contourPreviewStarted)/60000));
+  const geometry=C.forecast([0,0],C.TINY,age), final=C.forecast([0,0],C.TINY,5).route;
+  // Local metre coordinates deliberately have no geographic/site provenance.
+  const xs=final.map(p=>p[1]*111320), ys=final.map(p=>-p[0]*111320);
+  const centreX=(Math.min(...xs)+Math.max(...xs))/2, centreY=(Math.min(...ys)+Math.max(...ys))/2;
+  const scale=Math.min(530/(Math.max(...xs)-Math.min(...xs)),285/(Math.max(...ys)-Math.min(...ys)));
+  /** Project model coordinates into a fixed viewport so growth remains visible. */
+  const point=p=>[320+(p[1]*111320-centreX)*scale,185+(-p[0]*111320-centreY)*scale];
+  /** Serialize a numeric model ring for SVG without exposing markup input. */
+  const path=ring=>ring.map((p,i)=>`${i?'L':'M'}${point(p).map(n=>n.toFixed(2)).join(' ')}`).join(' ')+' Z';
+  const drone=point(C.alongRing(geometry.route,age*60*geometry.speedMps));
+  const marker=point([0,0]);
+  $('contour-preview-plot').innerHTML=`<path class="preview-current" d="${path(geometry.current)}"/><path class="preview-forecast" d="${path(geometry.route)}"/><circle class="preview-origin" cx="${marker[0]}" cy="${marker[1]}" r="4"/><g class="preview-aircraft" transform="translate(${drone[0]-12} ${drone[1]-12})"><use href="#i-drone" width="24" height="24"/></g><path class="preview-scale" d="M35 340h${scale.toFixed(2)}m-${scale.toFixed(2)} -4v8m${scale.toFixed(2)} -8v8"/><text x="35" y="365">1 metre · local coordinates</text>`;
+  $('contour-preview-time').value=age.toFixed(2);
+  $('contour-preview-age').textContent=`${age.toFixed(1)} min elapsed`;
+  $('contour-preview-speed').textContent=`${geometry.speedMps.toFixed(3)} m/s patrol · ${C.TINY.wind_kmh} km/h wind · 1 cm/min head spread · real-time growth`;
+}
+
 /* Projected spread at the selected minute, drawn as layered intensity bands. */
 function renderSpread() {
   const sc = state.scenario, t = spreadMinutes(), age = fireAgeMin();
@@ -424,7 +489,7 @@ function renderSpread() {
      with fire size — a soccer-ball fire means tight orbits, a block-wide
      fire means a long spaced-out track. */
   const fleet = globalThis.BoscoFleet;
-  if (fleet && modelledFire()) {
+  if (fleet && modelledFire() && !(state.mode==='live'&&state.autonomy?.enabled&&state.autonomy.mode==='contour')) {
     const margin = 40;
     const retreat = fleet.orbitSpeedMps(o, t, sc, fireDetails(), sc.direction, margin, M);
     const orbitPts = fleet.offsetContour(outline, margin);
@@ -456,6 +521,13 @@ function renderFirePin() {
 
 /** Frame the relevant search sector, fire footprint or drone fallback on the map. */
 function fitToFire() {
+  const contour=contourMissionGeometry();
+  if(contour) {
+    const drone=dronePosition(), points=drone?[...contour.route,drone]:contour.route;
+    state.map.invalidateSize();
+    state.map.fitBounds(L.latLngBounds(points).pad(.35),{maxZoom:22});
+    return;
+  }
   if (peopleDemoActive() && fitPeople()) return;
   if (demoCase() && state.demo.scout) {
     state.map.invalidateSize();
@@ -1262,6 +1334,9 @@ function bindUi() {
   for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => b.closest('dialog').close());
   for (const d of document.querySelectorAll('dialog')) d.addEventListener('click', e => { const r = d.getBoundingClientRect(); if (e.target === d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) d.close(); });
   $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'From the detected fire.' : ''; openDialog('scenario-dialog'); };
+  $('contour-preview-open').onclick=()=>{resetContourPreview();openDialog('contour-preview-dialog');};
+  $('contour-preview-reset').onclick=()=>resetContourPreview();
+  $('contour-preview-time').oninput=()=>resetContourPreview(Number($('contour-preview-time').value));
   for (const [id, key] of [['wind-input', 'wind'], ['direction-input', 'direction'], ['dry-input', 'dryness'], ['temp-input', 'temp'], ['rh-input', 'rh']]) $(id).oninput = () => { pending[key] = +$(id).value; scenarioControls(pending); };
   $('reset-scenario').onclick = () => { pending = {...(state.detectedScenario || M.BASE)}; scenarioControls(pending); };
   $('apply-scenario').onclick = () => { state.scenario = {...pending}; state.windManual = 'manual'; state.windDerived = null; renderSpread(); refreshFireTiming(); $('scenario-dialog').close(); };
@@ -1313,6 +1388,7 @@ async function connect() {
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
   $('autonomy-enable').onclick=()=>setAutonomy('enable',{camera_search:true});
+  $('autonomy-contour-enable').onclick=()=>setAutonomy('enable',{camera_search:true,mode:'contour'});
   $('autonomy-land').onclick=()=>setAutonomy('land');
   $('camera-level').onclick=()=>setAutonomy('camera',{pitch_deg:0});
   $('camera-shallow').onclick=()=>setAutonomy('camera',{pitch_deg:-30});
@@ -1368,6 +1444,7 @@ function morphSpread(targets) {
 /** Advance active spread/replay animations and schedule the next browser frame. */
 function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
+  if($('contour-preview-dialog').open&&now-contourPreviewLast>100) {contourPreviewLast=now;renderTinyContourPreview();}
   // 100 ms wind ticker: the readout counts smoothly toward the scenario wind
   // (FC landings, conditions, sweeps) instead of stepping to each new value.
   if (now - lastWind >= 100) {

@@ -220,15 +220,23 @@ export function validateSnapshotEnvelope(body, nowMs) {
 
 export const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const DETECTION_SOURCES = new Set(['yolo', 'qr-test']);
-// The one QR code the drone treats as a fire (the FireSimulationDemo printout).
-// The bridge accepts only FIRE_MARKER_PAYLOAD; a 'qr-test' sighting must carry
-// exactly the fire it decodes to. Must match bridge/fire_detection.py.
+// Exact fire scenarios; Alpha retains its original circular-demo identity.
+// A qr-test sighting must match one complete scenario, never a mixture.
+// These payloads and details must agree with bridge/fire_detection.py.
 export const FIRE_MARKER_PAYLOAD = 'EW1:Alpha|120|X|35|M|30|60|31|18|18';
+export const TINY_FIRE_MARKER_PAYLOAD = 'EW1:Tiny|0.0001|L|0.01|G|0.2|60|22|45|18';
+export const FIRE_MARKER_PAYLOADS = Object.freeze([FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_PAYLOAD]);
 export const FIRE_MARKER_DETAILS = Object.freeze({
   name: 'Alpha', area_ha: 120, intensity: 'extreme', spread_m_per_min: 35,
   fuel: 'dry mixed forest and grass', wind_kmh: 30, wind_dir_deg: 60, temp_c: 31, rh_pct: 18,
   marker_size_m: 0.18, test_marker: true,
 });
+export const TINY_FIRE_MARKER_DETAILS = Object.freeze({
+  name: 'Tiny', area_ha: 0.0001, intensity: 'low', spread_m_per_min: 0.01,
+  fuel: 'cured grass', wind_kmh: 0.2, wind_dir_deg: 60, temp_c: 22, rh_pct: 45,
+  marker_size_m: 0.18, test_marker: true,
+});
+const FIRE_MARKER_SCENARIOS = [FIRE_MARKER_DETAILS, TINY_FIRE_MARKER_DETAILS];
 // Scenario notes and tightly constrained annotations from automatic QR flights.
 const FIRE_FLIGHT_ANNOTATIONS = ['flight_protocol', 'orbit_radius_m', 'path_reference'];
 const FIRE_MARKER_ANNOTATIONS = new Set(['position_simulated', 'location_note', ...FIRE_FLIGHT_ANNOTATIONS]);
@@ -237,7 +245,7 @@ const FIRE_FLIGHT_PATHS = new Map([
   ['qr-auto-preset', 'launch-heading'],
 ]);
 const FLIGHT_PHASES = new Set([
-  'preflight', 'takeoff', 'climb', 'recover', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
+  'preflight', 'takeoff', 'climb', 'recover', 'circle', 'contour', 'return', 'landing', 'landed', 'aborted', 'error',
 ]);
 
 /** Check a buffer's JPEG signature before accepting camera evidence. */
@@ -325,12 +333,12 @@ export function validateDetection(body, nowMs) {
   if (body.source === 'qr-test') {
     const details = body.details ?? {};
     const fireKeys = Object.keys(FIRE_MARKER_DETAILS);
-    if (!fireKeys.every((k) => details[k] === FIRE_MARKER_DETAILS[k])
+    if (!FIRE_MARKER_SCENARIOS.some(scenario => fireKeys.every((k) => details[k] === scenario[k]))
         || !Object.keys(details).every((k) => Object.hasOwn(FIRE_MARKER_DETAILS, k) || FIRE_MARKER_ANNOTATIONS.has(k))) {
-      throw new ApiError(400, `qr-test details must match the fire marker ${FIRE_MARKER_PAYLOAD}`);
+      throw new ApiError(400, 'qr-test details must exactly match the Alpha or Tiny fire marker');
     }
     if (FIRE_FLIGHT_ANNOTATIONS.some((key) => Object.hasOwn(details, key))
-        && (!FIRE_FLIGHT_PATHS.has(details.flight_protocol)
+        && (details.name !== FIRE_MARKER_DETAILS.name || !FIRE_FLIGHT_PATHS.has(details.flight_protocol)
             || details.path_reference !== FIRE_FLIGHT_PATHS.get(details.flight_protocol)
             || details.orbit_radius_m !== 1)) {
       throw new ApiError(400, 'QR flight annotations require a supported protocol, matching path reference and one-metre radius');

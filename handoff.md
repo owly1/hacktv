@@ -4,6 +4,8 @@ The shared features are integrated on `main`; old branch names are not setup
 instructions. Start with [README.md](README.md) and give each assistant
 [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md).
 
+Current contour branch: [real flight mode, validation and hardware limits](docs/FIRE_CONTOUR_HANDOFF.md).
+
 ## Work areas
 
 | Owner area | Main files | Check before handoff |

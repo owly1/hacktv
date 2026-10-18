@@ -1,5 +1,29 @@
 import crypto from 'node:crypto';
-import {ApiError, FIRE_MARKER_PAYLOAD} from './validation.mjs';
+import {ApiError, FIRE_MARKER_PAYLOAD, FIRE_MARKER_DETAILS, FIRE_MARKER_PAYLOADS,
+  TINY_FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_DETAILS} from './validation.mjs';
+
+/** Recover the allowlisted marker identity from an accepted incident's scenario. */
+function markerIdentity(details) {
+  return [[FIRE_MARKER_PAYLOAD,FIRE_MARKER_DETAILS],[TINY_FIRE_MARKER_PAYLOAD,TINY_FIRE_MARKER_DETAILS]]
+    .find(([,expected])=>Object.entries(expected).every(([key,value])=>details?.[key]===value))?.[0];
+}
+
+/** Sanitize the receiver's fixed GPS anchor; this is reporting, never a waypoint API. */
+function contourStatus(value, mission) {
+  // A status request may race LAND/expiry; acknowledge the receiver while
+  // dropping its old plan instead of obscuring the authoritative disable.
+  if (value==null || !mission?.contour) return null;
+  const anchor=value.anchor;
+  if (!anchor || anchor.position_source!=='gps'
+      || !Number.isFinite(anchor.latitude) || Math.abs(anchor.latitude)>90
+      || !Number.isFinite(anchor.longitude) || Math.abs(anchor.longitude)>180
+      || value.forecast_minutes!==5 || value.started_at!==mission.contour.started_at
+      || markerIdentity(value.details)!==TINY_FIRE_MARKER_PAYLOAD
+      || !Number.isFinite(value.speed_mps) || value.speed_mps<0 || value.speed_mps>.2)
+    throw new ApiError(400,'Invalid GPS contour status');
+  return {anchor:{latitude:anchor.latitude,longitude:anchor.longitude,position_source:'gps'},
+    forecast_minutes:5,started_at:value.started_at,details:{...TINY_FIRE_MARKER_DETAILS},speed_mps:value.speed_mps};
+}
 
 const fresh = (at, now, age) => Number.isFinite(at) && now >= at && now-at < age;
 function overlap(a, b) {
@@ -40,6 +64,9 @@ export class AutonomousResponse {
       throw new ApiError(400,'Invalid blocked fire source');
     if (body.qr_scale_mode!=null && !['measured','adaptive'].includes(body.qr_scale_mode))
       throw new ApiError(400,'Invalid QR scale mode');
+    if (['contour_supported','contour_ready'].some(key=>body[key]!=null && typeof body[key]!=='boolean')
+        || (body.contour_reason!=null && (typeof body.contour_reason!=='string' || body.contour_reason.length>300)))
+      throw new ApiError(400,'Invalid contour receiver readiness');
     const c=body.calibration;
     if (c!=null && (typeof c!=='object' || Array.isArray(c)
         || Object.keys(c).some(k=>!['qr_side_m','offset_body_m','image_size','rms_px','qr_verified','profile_verified'].includes(k))
@@ -54,6 +81,7 @@ export class AutonomousResponse {
         || typeof c.qr_verified!=='boolean' || ![null,true,false].includes(c.profile_verified)))
       throw new ApiError(400,'Invalid receiver calibration summary');
     if (this.receiver && this.receiver.receiver_id !== body.receiver_id) this.disable('Receiver restarted; enable a new session');
+    const contour=contourStatus(body.contour,this.session?.mission);
     this.receiver = {receiver_id: body.receiver_id, ready: body.ready, reason: body.reason,
       phase: String(body.phase ?? 'waiting').slice(0,40), at: this.now(), position: body.position ?? null,
       camera_ready: body.camera_ready === true,short_test:body.short_test===true,
@@ -62,6 +90,9 @@ export class AutonomousResponse {
       lap_seconds:body.lap_seconds===15?15:null,
       calibration:c?{...c,offset_body_m:[...c.offset_body_m],image_size:[...c.image_size]}:null,
       camera_search_supported:body.camera_search_supported===true,
+      contour_supported:body.contour_supported===true,contour_ready:body.contour_ready===true,
+      contour_reason:body.contour_reason??'This receiver does not support GPS contour flight',
+      contour,
       search_state:['scanning','acquiring','tracking','error'].includes(body.search_state)?body.search_state:'off'};
     if (this.session && (body.aircraft_connected===false || (!this.session.mission && !body.ready)))
       this.disable('Aircraft disconnected or preflight no longer ready; start BOSCO again when ready');
@@ -79,13 +110,17 @@ export class AutonomousResponse {
       if (![0,-30,-45,-55,-70].includes(body.pitch_deg)) throw new ApiError(400,'Select level, down 30°, down 45°, down 55°, or down 70°');
       this.camera={id:crypto.randomUUID(),pitch_deg:body.pitch_deg,at:this.now(),receiver_id:this.receiver.receiver_id};
     } else if (body?.action === 'enable') {
+      const mode=body.mode??'circle';
+      if (!['circle','contour'].includes(mode)) throw new ApiError(400,'Select circle or contour response mode');
       if (body.camera_search!=null && typeof body.camera_search!=='boolean') throw new ApiError(400,'camera_search must be boolean');
       if (this.session) throw new ApiError(409,'An autonomous session is already enabled');
       if (!this.receiverFresh() || !this.receiver.ready) throw new ApiError(409,this.receiver?.reason || 'Response receiver is offline');
+      if (mode==='contour' && (!this.receiver.contour_supported || !this.receiver.contour_ready))
+        throw new ApiError(409,this.receiver.contour_reason || 'GPS contour flight is not ready');
       if (body.camera_search && (!this.receiver.camera_ready || !this.receiver.camera_search_supported))
         throw new ApiError(409,'Automatic camera search is not ready on this receiver');
       this.session = {id: crypto.randomUUID(), enabled_at: this.now(), heartbeat: this.now(), mission: null,
-        heartbeat_confirmed:false,camera_search:body.camera_search===true};
+        heartbeat_confirmed:false,camera_search:body.camera_search===true,mode};
       this.target = null; this.camera = null;
       this.consumed.clear(); // A deliberate new session authorizes one new response, including to the same QR.
       this.reason = body.camera_search?'BOSCO is searching; a confirmed fire will trigger takeoff':'Waiting for a newly confirmed fire';
@@ -98,7 +133,8 @@ export class AutonomousResponse {
   }
   incident(record) {
     if (record.label !== 'fire') return;
-    this.accepted.set(record.episode_id, {at:this.now(), id:record.id, source:record.source});
+    this.accepted.set(record.episode_id, {at:this.now(), id:record.id, source:record.source,
+      qr_text:record.source==='qr-test'?markerIdentity(record.details):undefined});
     for (const [id,value] of this.accepted) if (!fresh(value.at,this.now(),15000)) this.accepted.delete(id);
   }
   observe(body) {
@@ -110,7 +146,7 @@ export class AutonomousResponse {
     if (h == null) { this.lastFrameAt=at; this.target=null; return; }
     if (h.label!=='fire' || !['yolo','qr-test'].includes(h.source)
         || !Number.isFinite(h.confidence) || h.confidence<.65 || h.confidence>1
-        || (h.source==='qr-test' && h.qr_text!==FIRE_MARKER_PAYLOAD)
+        || (h.source==='qr-test' && !FIRE_MARKER_PAYLOADS.includes(h.qr_text))
         || !Array.isArray(h.bbox) || h.bbox.length!==4 || !h.bbox.every(x=>Number.isFinite(x)&&x>=0&&x<=1)
         || h.bbox[2]<=h.bbox[0] || h.bbox[3]<=h.bbox[1]
         || (body.episode_id!=null && !/^[A-Za-z0-9_-]{4,64}$/.test(body.episode_id))) throw new ApiError(400,'Invalid fire target');
@@ -129,6 +165,7 @@ export class AutonomousResponse {
       throw new ApiError(400,'Visual QR tracking requires a recent decode and current corners');
     if (template && (h.source!=='qr-test' || !corners || !mission
         || mission.episode_id!==body.episode_id || mission.source!=='qr-test'
+        || mission.qr_text!==h.qr_text
         || !fresh(h.qr_decoded_at,at,300001) || h.qr_decoded_at<mission.qr_seed_at
         || !fresh(mission.last_visual_at,at,15000)
         || !Number.isFinite(h.qr_template_score) || h.qr_template_score<.85 || h.qr_template_score>1
@@ -139,17 +176,20 @@ export class AutonomousResponse {
     this.lastFrameAt=at;
     const previous=this.target;
     const continuous=previous && previous.source===h.source && previous.episode_id===body.episode_id
+      && (h.source!=='qr-test' || previous.qr_text===h.qr_text)
       && (!this.session || previous.first>=this.session.enabled_at)
       && fresh(previous.at,at,600) && overlap(previous.bbox,h.bbox)>=.1;
     this.target={at,captured_at:body.captured_at,width:body.width,height:body.height,
       source:h.source,bbox:h.bbox,confidence:h.confidence,episode_id:body.episode_id,qr_corners:corners,
+      qr_text:h.source==='qr-test'?h.qr_text:undefined,
       qr_tracking:h.qr_tracking??'decoded',qr_decoded_at:h.qr_decoded_at,
       qr_template_score:template?h.qr_template_score:undefined,
       qr_template_data_score:template?h.qr_template_data_score:undefined,
       qr_template_module_error:template?h.qr_template_module_error:undefined,
       qr_template_module_coverage:template?h.qr_template_module_coverage:undefined,
       hits:continuous?previous.hits+(tracked?0:1):(tracked?0:1), first:continuous?previous.first:at};
-    if (mission && mission.episode_id===body.episode_id && mission.source===h.source && h.qr_tracking!=='optical-flow')
+    if (mission && mission.episode_id===body.episode_id && mission.source===h.source
+        && (h.source!=='qr-test' || mission.qr_text===h.qr_text) && h.qr_tracking!=='optical-flow')
       mission.last_visual_at=at;
   }
   candidate() {
@@ -157,20 +197,28 @@ export class AutonomousResponse {
     // Receiving enable's response and renewing that exact session is part of
     // authorization. A lost enable reply must never create an ownerless flight.
     if (!s || !s.heartbeat_confirmed || !t || !fresh(t.at,this.now(),1000)) return null;
+    // Contour authorization is bounded to the explicit tiny scenario. The
+    // original Alpha/RGB circle remains independent of this new restriction.
+    if (s.mode==='contour' && (t.source!=='qr-test' || t.qr_text!==TINY_FIRE_MARKER_PAYLOAD)) return null;
     if (s.mission) {
       if (s.mission.episode_id!==t.episode_id || s.mission.source!==t.source || t.at<s.mission.target_at) return null;
+      if (t.source==='qr-test' && s.mission.qr_text!==t.qr_text) return null;
       if (t.qr_tracking==='optical-flow' && !fresh(t.qr_decoded_at,this.now(),2501)) return null;
       if (t.qr_tracking==='visual-template' && !fresh(t.qr_decoded_at,this.now(),300001)) return null;
       return {...t,incident_id:s.mission.incident_id};
     }
     if (['optical-flow','visual-template'].includes(t.qr_tracking) || t.hits<5 || t.at-t.first<800
         || t.first<s.enabled_at || !accepted || accepted.source!==t.source || !fresh(accepted.at,this.now(),7000)) return null;
+    if (s.mode==='contour' && accepted.qr_text!==t.qr_text) return null;
+    if (t.source==='qr-test' && accepted.qr_text && accepted.qr_text!==t.qr_text) return null;
     return {...t,incident_id:accepted.id};
   }
   claim(body) {
     this.tick(); const t=this.candidate(), s=this.session;
     if (!s || body?.session_id!==s.id || body?.receiver_id!==this.receiver?.receiver_id || !t
         || body.episode_id!==t.episode_id) throw new ApiError(409,'No fresh unconsumed fire is authorized');
+    if (s.mode==='contour' && !s.mission && (!this.receiver.contour_supported || !this.receiver.contour_ready))
+      throw new ApiError(409,this.receiver.contour_reason || 'GPS contour flight is not ready');
     if (s.mission) {
       // A reply can disappear after committing a claim. Return that same
       // authorization to its owner; never mint another mission on retry.
@@ -180,6 +228,9 @@ export class AutonomousResponse {
     }
     if (this.consumed.has(t.episode_id)) throw new ApiError(409,'No fresh unconsumed fire is authorized');
     s.mission={id:crypto.randomUUID(),episode_id:t.episode_id,source:t.source,incident_id:t.incident_id,
+      mode:s.mode,qr_text:t.qr_text,
+      ...(s.mode==='contour'?{contour:{forecast_minutes:5,started_at:this.now(),
+        details:{...TINY_FIRE_MARKER_DETAILS}}}:{}),
       receiver_id:body.receiver_id,claimed_at:this.now(),target_at:t.at,qr_seed_at:t.qr_decoded_at??t.at,last_visual_at:t.at}; this.consumed.add(t.episode_id);
     this.reason='Responding to confirmed fire'; return this.snapshot();
   }
@@ -188,17 +239,24 @@ export class AutonomousResponse {
     if (!s || s.mission) return null;
     if (!s.heartbeat_confirmed) return 'Waiting for the controlling dashboard to acknowledge this session';
     if (!t || !fresh(t.at,this.now(),1000)) return 'Searching for a fresh fire observation';
+    if (s.mode==='contour' && (t.source!=='qr-test' || t.qr_text!==TINY_FIRE_MARKER_PAYLOAD))
+      return 'Contour mode requires the Tiny 1 m² fire marker; Alpha remains available with circular response';
+    if (s.mode==='contour' && !this.receiver?.contour_ready)
+      return this.receiver?.contour_reason || 'Waiting for accurate GPS for contour flight';
     if (t.qr_tracking!=='decoded') return 'Waiting for an exact QR decode before takeoff';
     if (t.first<s.enabled_at) return 'Waiting for fresh observations captured after this session started';
     if (t.hits<5 || t.at-t.first<800) return `Confirming fire: ${Math.min(t.hits,5)}/5 fresh observations over at least 0.8 seconds`;
     const accepted=this.accepted.get(t.episode_id);
     if (!accepted || accepted.source!==t.source || !fresh(accepted.at,this.now(),7000))
       return 'Fire detected; waiting for its incident record to be accepted';
+    if (s.mode==='contour' && accepted.qr_text!==t.qr_text)
+      return 'Waiting for the matching Tiny fire incident record';
     return 'Fire confirmed; checking measured position and takeoff readiness';
   }
   snapshot() {
     this.tick(); const s=this.session;
     return {enabled:!!s,session_id:s?.id??null,mission:s?.mission??null,reason:this.reason,
+      mode:s?.mode??'circle',
       fire_presence:s?.mission?{episode_id:s.mission.episode_id,last_seen_at:s.mission.last_visual_at,
         expires_at:s.mission.last_visual_at+15000,present:fresh(s.mission.last_visual_at,this.now(),15000)}:null,
       waiting_reason:this.waitingReason(),

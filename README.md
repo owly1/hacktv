@@ -36,6 +36,14 @@ page's flight session; **LAND / STOP** ends it. Use
 [Mac setup](docs/MAC_SETUP.md) for calibration, launch-relative height and
 the continuous QR orbit. Replay never enables aircraft control.
 
+The separate **Start contour response** action follows the Tiny fire's growing
+five-minute forecast outline using a fixed GPS anchor. **Start BOSCO** retains
+the original circular response. Use **Preview tiny contour** to inspect the
+shape and motion without an aircraft. The small physical course requires GPS
+accuracy of 0.5 m or better; missing/ordinary coarse GPS blocks contour flight.
+See [contour setup and limits](docs/FIRE_CONTOUR_MODE.md). The Pi/fleet diagram
+describes the architecture; the live demo still uses only one drone.
+
 For a demonstration without an aircraft:
 
 ```sh
@@ -138,7 +146,10 @@ dashboard startup and observation do not start a flight.
 | Recognition-only browser preview | [Rehearsal](docs/QR_ORBIT_DEMO.md) |
 
 Print the selected fire QR from <http://127.0.0.1:8787/test-marker.html>.
-Only the exact payload in `bridge/orbit-marker.txt` is accepted as a test fire.
+Print the second, 1 m² fire QR from <http://127.0.0.1:8787/tiny-marker.html>.
+Only the two exact payloads in `bridge/orbit-marker.txt` and
+`bridge/tiny-marker.txt` are accepted as test fires. The original automatic
+preset/circle entry points retain their original Alpha marker selection.
 For flight modes, read the selected guide before enabling `--execute`:
 automatic modes can take off as soon as the marker is recognized.
 
