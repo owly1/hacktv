@@ -2,18 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#14130F">
+  <meta name="theme-color" content="#08080A">
   <meta name="description" content="BOSCO: Bushfire Observation, Simulation and Coordination Operations — live Parrot ANAFI fire detection, spread mapping and person-search observations.">
   <title>BOSCO · Incident workspace</title>
-  <link rel="preload" href="vendor/fonts/bricolage-grotesque-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="vendor/fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="bosco/assets/bosco-mark.svg" type="image/svg+xml">
+  <script src="bosco/theme.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="styles.css">
-  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="site-fuels.js"></script><script defer src="fleet.js"></script><script defer src="demo-cases.js"></script><script defer src="sim-camera.js"></script><script defer src="demo-scout.js"></script><script defer src="people.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script><script defer src="bosco.js"></script>
+  <link rel="stylesheet" href="bosco/tokens.css">
+  <link rel="stylesheet" href="bosco/mark.css">
+  <link rel="stylesheet" href="bosco/transition.css">
+  <link rel="stylesheet" href="bosco/dashboard.css">
+  <script defer src="bosco/mark.js"></script>
+  <script defer src="bosco/transition.js"></script>
+  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="site-fuels.js"></script><script defer src="fleet.js"></script><script defer src="demo-cases.js"></script><script defer src="sim-camera.js"></script><script defer src="demo-scout.js"></script><script defer src="people.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script><script defer src="bosco.js"></script><script defer src="bosco/dashboard.js"></script>
 </head>
-<body data-mode="idle">
+<body class="connected-dashboard" data-mode="idle">
 <svg class="sprite" aria-hidden="true"><defs>
  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c2 4-1 5 2 8 1-1 2-3 2-4 7 7 4 14-4 14S2 14 7 8c0 3 1 4 2 4 3-3-1-5 3-9Z"/></symbol>
  <symbol id="i-drone" viewBox="0 0 24 24"><rect x="9" y="9" width="6" height="6" rx="2"/><path d="m9 9-3-3m9 3 3-3M9 15l-3 3m9-3 3 3"/><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/></symbol>
@@ -38,11 +44,11 @@
  <symbol id="i-bosco" viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" fill="none" stroke="currentColor" stroke-width="13" stroke-dasharray="64.5 14" stroke-dashoffset="71.5"/><path d="M60 90 C44 90 36 78 38 66 C40 56 47 50 50 40 C54 46 57 51 58 56 C61 46 66 38 64 28 C76 38 84 52 82 68 C80 82 72 90 60 90Z" fill="currentColor" stroke="none"/><circle cx="24.6" cy="24.6" r="10" fill="#F3EFE6" stroke="#E8562A" stroke-width="5"/></symbol>
 </defs></svg>
 <aside class="rail" aria-label="Workspace navigation">
- <a class="brand-mark" href="home.html" title="BOSCO home" aria-label="BOSCO home"><svg viewBox="0 0 120 120"><use href="#i-bosco"/></svg></a>
+ <a class="brand-mark rail-home" id="rail-home" href="bosco/index.html" title="BOSCO home" aria-label="BOSCO home"><span data-bosco-mark data-size="30" data-bg-color="var(--surface)"></span></a>
  <div class="rail-links">
   <a href="#map-panel" class="rail-link" title="Fire spread explorer (full screen)" aria-label="Open fire spread explorer full screen"><svg><use href="#i-flame"/></svg></a>
   <a href="#people-panel" class="rail-link" title="People · rescue leads (full screen)" aria-label="Open rescue leads full screen"><svg><use href="#i-person"/></svg><b class="rail-badge" id="rail-people-badge" hidden></b></a>
-  <a href="#drone-panel" class="rail-link" title="ANAFI-01 live feed (full screen)" aria-label="Open ANAFI-01 live feed full screen"><svg><use href="#i-drone"/></svg></a>
+  <a href="#drone-panel" class="rail-link" title="Drone cameras and telemetry (full screen)" aria-label="Open drone cameras and telemetry full screen"><svg><use href="#i-drone"/></svg></a>
  </div>
  <button class="rail-link" id="open-integrations" title="Integrations" aria-label="Open integrations"><svg><use href="#i-link"/></svg></button>
 </aside>
@@ -57,14 +63,19 @@
     <span class="svc" data-svc="parrot-status"><i></i>ANAFI</span>
     <span class="svc" data-svc="tiger-status"><i></i>TigerData</span>
    </button>
+   <button type="button" class="theme-btn" id="theme-toggle" aria-label="Switch to light theme" aria-pressed="false" title="Switch to light theme">
+    <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+    <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15a8.5 8.5 0 0 1-11-11A8.5 8.5 0 1 0 20 15Z"/></svg>
+   </button>
   </div>
  </header>
- <main>
+ <main class="dash-main">
   <section class="incident-heading">
    <div><div class="eyebrow"><span class="incident-dot" id="incident-dot"></span> <span id="incident-eyebrow">LIVE MONITORING · ANAFI-01</span></div><h1><span id="incident-title">Monitoring for fire</span> <span class="tag" id="incident-tag" hidden>Fire detected</span></h1><p id="incident-sub">Waiting for the drone</p></div>
    <button class="button white" id="export-brief"><svg><use href="#i-down"/></svg>Export brief</button>
   </section>
   <div class="simulation-banner status-banner" id="status-banner" role="status"><svg><use href="#i-info"/></svg><span id="banner-text"><strong>Connecting to the BOSCO backend…</strong></span><button class="button compact" id="dismiss-fire" hidden>Mark false alarm</button></div>
+  <div class="replay-picker" id="replay-picker" hidden><label for="demo-fire">Replay case</label><select id="demo-fire" class="demo-select" aria-label="Replay case" hidden></select><span>Fleet patrol · person search · flight pattern</span></div>
   <section class="metrics" aria-label="Incident metrics">
    <article class="metric"><div class="metric-label"><svg><use href="#i-flame"/></svg>Fire area</div><div><strong id="area-value">—</strong><span class="unit">ha</span><span class="metric-context" id="area-context">no fire detected</span></div></article>
    <article class="metric"><div class="metric-label"><svg><use href="#i-wind"/></svg>Wind</div><div><strong id="wind-value">—</strong><span class="unit">km/h</span><span class="metric-context" id="wind-context">—</span></div></article>
@@ -82,7 +93,7 @@
     <div class="map-frame">
      <div class="map-viewport" id="map-viewport">
       <div id="map" role="application" aria-label="Map of rescue leads, drone coverage, the detected fire and its projected spread"></div>
-      <div class="map-top"><span class="map-location"><span class="dot"></span> <span id="map-location">UTSC</span></span><div class="map-top-right"><button id="demo-detected" type="button" class="button compact" hidden>Detected</button><select id="demo-fire" class="demo-select" aria-label="Replay case" hidden></select><button class="map-tool" id="layers-open" aria-label="Map layers" aria-expanded="false" aria-controls="layer-menu"><svg><use href="#i-layers"/></svg></button></div></div>
+      <div class="map-top"><span class="map-location"><span class="dot"></span> <span id="map-location">UTSC</span></span><div class="map-top-right"><button id="demo-detected" type="button" class="button compact" hidden>Detected</button><button class="map-tool" id="layers-open" aria-label="Map layers" aria-expanded="false" aria-controls="layer-menu"><svg><use href="#i-layers"/></svg></button></div></div>
       <div class="layer-menu" id="layer-menu" hidden><strong>Map layers</strong><span class="layer-group">People</span><label><input type="checkbox" id="layer-people" checked> Rescue leads + 95% areas</label><span class="layer-group">Coverage</span><label><input type="checkbox" id="layer-coverage" checked> Ground observed by the drone</label><span class="layer-group">Fire context</span><label><input type="checkbox" id="layer-spread" checked> Projected spread</label><label><input type="checkbox" id="layer-fire" checked> Fire position</label><label><input type="checkbox" id="layer-wind" checked> Wind direction</label><span class="layer-group">Mission</span><label><input type="checkbox" id="layer-drone" checked> Drone + flight path</label><label><input type="checkbox" id="layer-mission" checked> Suggested next looks</label><label><input type="checkbox" id="layer-sat"> Satellite imagery</label></div>
       <div class="map-zoom"><button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button id="zoom-reset" aria-label="Centre on the drone and fire" title="Centre on the drone and fire"><svg><use href="#i-target"/></svg></button><button id="zoom-drone" aria-label="Follow the drone" title="Follow the drone"><svg><use href="#i-drone"/></svg></button></div>
       <div class="map-bottom"><div class="map-legends"><div class="coverage-legend" id="coverage-legend" hidden><span>Seen</span><span><i class="cov-well"></i>2+ angles</span><span><i class="cov-partial"></i>1 angle</span><span><i class="cov-hidden"></i>not yet</span></div><div class="trail-legend" id="trail-legend" hidden><span>Trail</span><span><i class="tr-fire"></i>on fire</span><span><i class="tr-path"></i>fire path</span><span><i class="tr-other"></i>other</span></div><div class="legend"><span>Relative spread intensity</span><i></i><div><span>Low</span><span>High</span></div></div></div><div class="map-disclaimer" id="map-disclaimer">© OpenStreetMap contributors</div></div>
@@ -118,6 +129,5 @@
 <dialog id="scenario-dialog"><div class="dialog-heading"><div><p class="eyebrow">FIRE CONDITIONS</p><h2>Spread conditions</h2></div><button class="icon-button" data-close aria-label="Close conditions"><svg><use href="#i-close"/></svg></button></div><p class="dialog-intro" id="scenario-intro"></p><label class="range-label">Wind speed <strong><output id="wind-output">18</output> km/h</strong><input id="wind-input" type="range" min="0" max="120" value="18"></label><label class="range-label">Spread direction (toward) <strong id="direction-output">45° · NE</strong><input id="direction-input" type="range" min="0" max="359" value="45"></label><label class="range-label">Fuel dryness <strong><output id="dry-output">65</output>%</strong><input id="dry-input" type="range" min="0" max="100" value="65"></label><label class="range-label">Air temperature <strong><output id="temp-output">20</output> °C</strong><input id="temp-input" type="range" min="-10" max="50" value="20"></label><label class="range-label">Relative humidity <strong><output id="rh-output">40</output>%</strong><input id="rh-input" type="range" min="0" max="100" value="40"></label><label class="check-label" id="demo-wind-row" hidden><input type="checkbox" id="demo-wind"> Wind varies over time <span class="pill soft-orange">Dynamic</span></label><div class="dialog-actions"><button class="button" id="reset-scenario">Reset to detected conditions</button><button class="button primary" id="apply-scenario">Apply</button></div></dialog>
 <dialog id="integrations-dialog"><div class="dialog-heading"><div><p class="eyebrow">DATA SOURCES</p><h2>Integrations</h2></div><button class="icon-button" data-close aria-label="Close integrations"><svg><use href="#i-close"/></svg></button></div><p class="dialog-intro"></p><div class="integration-list"><div><span class="service-logo">P</span><span><strong>Parrot ANAFI</strong><small>Olympe bridge → video, telemetry, detections</small></span><span id="parrot-status" class="pill muted">Not checked</span></div><div><span class="service-logo tiger">T</span><span><strong>TigerData</strong><small>Timescale hypertables + continuous aggregate</small></span><span id="tiger-status" class="pill muted">Not checked</span></div></div><div class="history-chart" id="history-chart"><div class="history-head"><strong>Altitude per minute</strong><span id="history-source">no data yet</span></div><svg id="history-svg" viewBox="0 0 300 70" preserveAspectRatio="none" role="img" aria-label="Average drone altitude per minute"></svg></div><label class="field-label">Dashboard token<input id="api-token" type="password" placeholder="Only needed when not opened from this computer" autocomplete="off"></label><div id="connection-result" class="notice" role="status">Not connected yet.</div><div class="dialog-actions"><button class="button primary" id="connect-api">Connect</button></div></dialog>
 <div class="toast" role="status" id="toast" hidden></div>
-<div class="bx-intro" aria-hidden="true"><svg class="bx-intro-mark" viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="#F3EFE6" stroke-width="6" stroke-dasharray="67.68 14" stroke-dashoffset="74.68"/><path d="M60 3v14M60 103v14M3 60h14M103 60h14" stroke="#F3EFE6" stroke-width="4" stroke-linecap="round"/><path d="M60 90 C44 90 36 78 38 66 C40 56 47 50 50 40 C54 46 57 51 58 56 C61 46 66 38 64 28 C76 38 84 52 82 68 C80 82 72 90 60 90Z" fill="#E8562A"/><path d="M61 86 C52 86 47 79 49 71 C51 63 58 60 62 50 C68 58 74 66 73 74 C72 81 67 86 61 86Z" fill="#FFB347"/><circle cx="23.2" cy="23.2" r="8" fill="#F3EFE6" stroke="#14130F" stroke-width="4"/></svg></div>
 </body>
 </html>
