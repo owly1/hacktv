@@ -32,6 +32,25 @@
     if (details && Number.isFinite(details.spread_m_per_min)) return details.spread_m_per_min*baseRate(sc)/baseRate(scenarioFrom(details));
     return baseRate(sc);
   }
+  /* Self-intensification: a bigger fire entrains its own convection column and
+     throws embers further — real spread accelerates as the head advances
+     (documented in McDougall Creek/Camp Fire long-range spotting). Rate grows
+     smoothly with achieved head distance and saturates at +35% — honest cap,
+     not a physical constant. */
+  function intensify(headDistM) { return 1 + .35*Math.tanh(headDistM/300); }
+  /* Rate the head actually travels after `minutes` of growth feedback. */
+  function effectiveRate(sc, details, minutes) {
+    const base = spreadRate(sc, details);
+    return base*intensify(base*Math.max(0, minutes));
+  }
+  /* Infrastructure/fuel brake (dist/site-fuels.js): point inside a cover zone
+     returns its burn factor (<1 brake, ~0 barrier, >1 faster fuel); outside
+     all zones or module absent → 1 (normal fuel). */
+  function fuelFactorAt(lat, lon) {
+    const zones = (root.BoscoFuels && root.BoscoFuels.zones) || [];
+    for (const z of zones) if (insidePolygon([lat, lon], z.polygon)) return z.factor;
+    return 1;
+  }
   /** Convert reported hectares into an equivalent initial fire radius in metres. */
   function startRadius(details) {
     const ha = details && Number.isFinite(details.area_ha) && details.area_ha > 0 ? details.area_ha : .05;
@@ -52,7 +71,7 @@
      hotter inner bands, which sit toward the head of the fire. */
   function footprint(origin, minutes, sc, details, scale=1) {
     const r0 = startRadius(details), t = Math.max(0, minutes);
-    const rate = spreadRate(sc, details);
+    const rate = effectiveRate(sc, details, t);
     const lw = Math.min(4, 1 + sc.wind/35);                // length-to-width ratio
     const head = r0 + rate*t, back = r0 + rate*t*.12;
     const a = (head+back)/2, b = Math.max(r0, a/lw);
@@ -63,7 +82,13 @@
       const ang = i/72*Math.PI*2;
       const wob = 1 + .06*Math.sin(ang*5 + sc.direction/40) + .035*Math.cos(ang*9);
       const u = a*scale*Math.cos(ang)*wob, v = b*scale*Math.sin(ang)*wob;
-      pts.push(destPoint(centre[0], centre[1], sc.direction + Math.atan2(v, u)*180/Math.PI, Math.hypot(u, v)));
+      const dRaw = Math.hypot(u, v), brg = sc.direction + Math.atan2(v, u)*180/Math.PI;
+      // Infrastructure/fuel brake: the starting disc is measured area and stays
+      // exact; only projected growth past r0 is scaled by the cover under the
+      // vertex — the zone pinches around buildings and lots, widens in fuel.
+      const probe = destPoint(centre[0], centre[1], brg, dRaw);
+      const dEff = dRaw <= r0 ? dRaw : r0 + (dRaw - r0)*fuelFactorAt(probe[0], probe[1]);
+      pts.push(destPoint(centre[0], centre[1], brg, dEff));
     }
     return pts;
   }
@@ -79,7 +104,7 @@
     return Math.abs(s)/2*M_PER_DEG*M_PER_DEG/10000;
   }
   /** Return projected downwind head distance in metres after the specified minutes. */
-  function headDistance(minutes, sc, details) { return startRadius(details) + spreadRate(sc, details)*Math.max(0, minutes); }
+  function headDistance(minutes, sc, details) { return startRadius(details) + effectiveRate(sc, details, minutes)*Math.max(0, minutes); }
   /* Recorded burn ellipse for a historical (demo) fire, elongated along its spread direction. */
   function recordedPerimeter(f) {
     const area = f.areaHa*10000, a = Math.sqrt(area*2.4/Math.PI), b = area/(Math.PI*a);
@@ -110,7 +135,7 @@
     while (hi - lo > .5) { const mid = (lo + hi)/2; if (insidePolygon(point, footprint(origin, mid, sc, details))) hi = mid; else lo = mid; }
     return Math.round(hi);
   }
-  const api = {BASE, compass, destPoint, envFactor, windRateFactor, spreadRate, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter, insidePolygon, arrivalMinutes};
+  const api = {BASE, compass, destPoint, envFactor, windRateFactor, spreadRate, intensify, effectiveRate, fuelFactorAt, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter, insidePolygon, arrivalMinutes};
   root.EmberModel = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

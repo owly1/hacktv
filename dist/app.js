@@ -150,7 +150,8 @@ function initMap() {
     tiles.on('tileerror', () => { state.tileErrors++; if (!state.tilesOk && state.tileErrors >= 4) { $('map-viewport').classList.add('tiles-offline'); renderMapChip(); } });
   }
   state.tiles.osm.addTo(map);
-  for (const name of ['spread', 'wind', 'fire', 'drone', 'demo', 'ask']) state.layers[name] = L.layerGroup().addTo(map);
+  for (const name of ['fuel', 'spread', 'wind', 'fire', 'drone', 'demo', 'ask']) state.layers[name] = L.layerGroup().addTo(map);
+  renderFuels();
   state.layers.path = L.polyline([], {color: '#3A372E', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
   state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
@@ -159,6 +160,20 @@ function initMap() {
   peopleInitMap();
   window.addEventListener('resize', () => map.invalidateSize());
   if (window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe($('map-viewport'));
+}
+
+/** Draw the approximate site land-cover map once: brakes (buildings, pavement)
+   in grey and faster fuel (ravine, woodlot) in green, both faint underlays
+   that explain why the projected zone pinches and widens. */
+function renderFuels() {
+  const zones = globalThis.BoscoFuels?.zones || [];
+  for (const z of zones) {
+    const brake = z.factor < 1;
+    L.polygon(z.polygon, {color: brake ? '#8C8679' : '#3f7d4f', weight: .8, dashArray: '3 4',
+      fillColor: brake ? '#8C8679' : '#3f7d4f', fillOpacity: brake ? .07 : .09})
+      .addTo(state.layers.fuel)
+      .bindTooltip(`${escapeHTML(z.name)} — ${brake ? 'slows' : 'accelerates'} projected spread · approximate site cover`);
+  }
 }
 
 /** Switch OSM/satellite layers and keep the control and attribution in sync. */

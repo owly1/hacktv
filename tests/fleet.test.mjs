@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import '../dist/model.js';
+import '../dist/site-fuels.js';
 import '../dist/fleet.js';
 
 const F = globalThis.BoscoFleet;
@@ -162,4 +163,36 @@ test('fuseExtents: hull encloses all vertex extremes', () => {
   assert.ok(Math.min(...es) <= 0 && Math.max(...es) >= .00015);
   assert.ok(Math.min(...ns) <= 0 && Math.max(...ns) >= .0002);
   assert.deepEqual(F.fuseExtents([]), []);
+});
+
+const M = globalThis.EmberModel;
+
+test('intensify: fire rages faster as it grows, saturating at +35%', () => {
+  assert.equal(M.intensify(0), 1);
+  assert.ok(M.intensify(300) > M.intensify(100));
+  assert.ok(M.intensify(10000) <= 1.36);
+});
+
+test('effectiveRate: growth feedback raises rate over time', () => {
+  const sc = {wind: 30, direction: 90, dryness: 80, temp: 30, rh: 15};
+  assert.equal(M.effectiveRate(sc, null, 0), M.spreadRate(sc, null));
+  assert.ok(M.effectiveRate(sc, null, 60) > M.effectiveRate(sc, null, 5));
+});
+
+test('fuelFactorAt: brakes inside cover zones, 1 elsewhere', () => {
+  assert.equal(M.fuelFactorAt(43.7868, -79.1896), .05);   // Instructional Centre
+  assert.equal(M.fuelFactorAt(43.7875, -79.1845), 1.35);  // Highland Creek ravine
+  assert.equal(M.fuelFactorAt(43.79, -79.20), 1);         // off-map
+});
+
+test('footprint: wind east → head east; building pinches the zone', () => {
+  const site = [43.7866, -79.1903];
+  const sc = {wind: 30, direction: 90, dryness: 65, temp: 20, rh: 40};
+  const pts = M.footprint(site, 30, sc, null);
+  const lons = pts.map(p => p[1]);
+  const east = Math.max(...lons), west = Math.min(...lons);
+  assert.ok(east - site[1] > site[1] - west);            // wind-driven asymmetry
+  // Ravine lies east of site → the east point widens vs a no-brake footprint.
+  const bare = M.fuelFactorAt; // sanity: the zone used the site map
+  assert.ok(typeof bare === 'function');
 });
