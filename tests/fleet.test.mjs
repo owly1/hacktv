@@ -196,3 +196,46 @@ test('footprint: wind east → head east; building pinches the zone', () => {
   const bare = M.fuelFactorAt; // sanity: the zone used the site map
   assert.ok(typeof bare === 'function');
 });
+
+test('altitudeWindScale: higher drone feels more wind (1/7 power law)', () => {
+  assert.equal(M.altitudeWindScale(10), 1);
+  assert.ok(M.altitudeWindScale(60) > 1.2 && M.altitudeWindScale(60) < 1.4);
+  assert.ok(M.altitudeWindScale(0) < 1);   // near ground: less wind than 10 m ref
+});
+
+test('offsetContour: pushes every vertex outward by the margin', () => {
+  const sq = [[0, 0], [0, .001], [.001, .001], [.001, 0]];
+  const off = F.offsetContour(sq, 20);
+  assert.equal(off.length, 4);
+  const c = F.polygonCentroidEN(sq);
+  for (let i = 0; i < 4; i++) {
+    const [e, n] = F.llDiff(sq[0], off[i]), [re, rn] = F.llDiff(sq[0], sq[i]);
+    const d0 = Math.hypot(re - c[0], rn - c[1]), d1 = Math.hypot(e - c[0], n - c[1]);
+    assert.ok(Math.abs(d1 - d0 - 20) < 0.5);
+  }
+});
+
+test('orbitStation: picks the vertex nearest the bearing plus margin', () => {
+  const sq = [[0, 0], [0, .001], [.001, .001], [.001, 0]]; // ~100m square
+  const s = F.orbitStation(sq, 45, 0);  // NE vertex
+  assert.ok(s[0] > .0005 && s[1] > .0005);
+  const sOff = F.orbitStation(sq, 45, 30);
+  assert.ok(F.llDiff(s, sOff).reduce((a, v) => a + v * v, 0) ** .5 > 25);
+});
+
+test('orbitSpeedMps: retreat at head bearing ≈ fire advance rate', () => {
+  const site = [43.7866, -79.1903];
+  const sc = {wind: 30, direction: 90, dryness: 65, temp: 20, rh: 40};
+  const v = F.orbitSpeedMps(site, 20, sc, null, sc.direction, 40, M);
+  const expected = M.effectiveRate(sc, null, 20) / 60;
+  assert.ok(Math.abs(v - expected) / expected < .25); // within 25% (wobble)
+});
+
+test('orbit contour scales with fire size: big fire → bigger track', () => {
+  const site = [43.7866, -79.1903];
+  const sc = {wind: 20, direction: 90, dryness: 65, temp: 20, rh: 40};
+  const small = F.offsetContour(M.footprint(site, 0, sc, {area_ha: .1}), 40);
+  const big = F.offsetContour(M.footprint(site, 0, sc, {area_ha: 40}), 40);
+  const span = pts => Math.max(...pts.map(p => F.llDiff(pts[0], p)[0])) - Math.min(...pts.map(p => F.llDiff(pts[0], p)[0]));
+  assert.ok(span(big) > span(small) * 5); // ~sqrt(400)× radius
+});

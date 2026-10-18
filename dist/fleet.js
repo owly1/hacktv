@@ -63,8 +63,12 @@
       -> {vector:{north,east}, speed_kmh, toward_deg, sigma_dir_deg,
           sigma_mag_mps, samples, rejected, computed_at} */
   function windConsensus(samples, now = Date.now()) {
+    /* FC wind is measured at flight altitude; higher drones feel more wind.
+       Normalise every sample to the 10 m reference (Hellmann 1/7 power law)
+       before fusing, so altitude never masquerades as disagreement. */
+    const altScale = s => (root.EmberModel?.altitudeWindScale ? root.EmberModel.altitudeWindScale(s.alt_m ?? 10) : 1);
     const weighted = (samples || []).filter(s => Number.isFinite(s.north) && Number.isFinite(s.east))
-      .map(s => ({...s, weight: Math.exp(-Math.max(0, now - s.captured_at)/TAU_MS)*stateConfidence(s.flight_state)}))
+      .map(s => { const k = altScale(s); return {...s, north: s.north/k, east: s.east/k, weight: Math.exp(-Math.max(0, now - s.captured_at)/TAU_MS)*stateConfidence(s.flight_state)}; })
       .filter(s => s.weight > 0);
     if (!weighted.length) return null;
     let mean = {north: weighted.reduce((a, s) => a + s.weight*s.north, 0)/weighted.reduce((a, s) => a + s.weight, 0),
@@ -259,9 +263,54 @@
     return hull.map(q => q.p);
   }
 
+  // --------------------------------------------------- drone orbit contour
+
+  /* Push every vertex of a polygon outward along its radial from the centroid
+     by marginM — the drone's standoff orbit track. Shape-free: works on the
+     projected ellipse or a measured perimeter contour. */
+  function offsetContour(pts, marginM = 0) {
+    if (!pts || pts.length < 3) return (pts || []).map(p => p.slice());
+    if (!marginM) return pts.map(p => p.slice());
+    const c = polygonCentroidEN(pts), o = pts[0];
+    return pts.map(p => {
+      const [e, n] = llDiff(o, p);
+      const dx = e - c[0], dy = n - c[1], d = Math.hypot(dx, dy) || 1e-9;
+      return llMove(p[0], p[1], dx/d*marginM, dy/d*marginM);
+    });
+  }
+
+  /* The drone's hover station: the contour vertex nearest bearing brgDeg from
+     the centroid (compass 'toward' degrees), pushed outward by marginM. */
+  function orbitStation(pts, brgDeg, marginM = 0) {
+    if (!pts || pts.length < 3) return null;
+    const c = polygonCentroidEN(pts), o = pts[0];
+    let best = null, bestErr = 1e9;
+    for (const p of pts) {
+      const [e, n] = llDiff(o, p);
+      const b = (Math.atan2(e - c[0], n - c[1])*180/Math.PI + 360)%360;
+      const err = Math.min(Math.abs(b - brgDeg), 360 - Math.abs(b - brgDeg));
+      if (err < bestErr) { bestErr = err; best = {p, e: e - c[0], n: n - c[1]}; }
+    }
+    if (!marginM) return best.p;
+    const d = Math.hypot(best.e, best.n) || 1e-9;
+    return llMove(best.p[0], best.p[1], best.e/d*marginM, best.n/d*marginM);
+  }
+
+  /* Radial advance of the orbit station at brgDeg in m/s — the speed the
+     drone must retreat (or advance) to hold standoff as the fire grows:
+     if the fire reaches the drone at 5 m/s the station slides at 5 m/s.
+     Finite difference on the station's position over dtMin of growth. */
+  function orbitSpeedMps(origin, minutes, sc, details, brgDeg, marginM, M, dtMin = 1) {
+    const s1 = orbitStation(M.footprint(origin, minutes, sc, details), brgDeg, marginM);
+    const s2 = orbitStation(M.footprint(origin, minutes + dtMin, sc, details), brgDeg, marginM);
+    if (!s1 || !s2) return null;
+    return Math.hypot(...llDiff(s1, s2))/(dtMin*60);
+  }
+
   const api = {llMove, llDiff, stateConfidence, towardDeg, windConsensus,
     ellipseStations, contourStations, hungarian, assignStations,
-    cameraFootprint, sectorRadii, sectorROS, fuseExtents, polygonCentroidEN};
+    cameraFootprint, sectorRadii, sectorROS, fuseExtents, polygonCentroidEN,
+    offsetContour, orbitStation, orbitSpeedMps};
   root.BoscoFleet = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

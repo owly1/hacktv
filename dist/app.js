@@ -150,7 +150,7 @@ function initMap() {
     tiles.on('tileerror', () => { state.tileErrors++; if (!state.tilesOk && state.tileErrors >= 4) { $('map-viewport').classList.add('tiles-offline'); renderMapChip(); } });
   }
   state.tiles.osm.addTo(map);
-  for (const name of ['fuel', 'spread', 'wind', 'fire', 'drone', 'demo', 'ask']) state.layers[name] = L.layerGroup().addTo(map);
+  for (const name of ['fuel', 'spread', 'wind', 'fire', 'drone', 'demo', 'ask', 'orbit']) state.layers[name] = L.layerGroup().addTo(map);
   renderFuels();
   state.layers.path = L.polyline([], {color: '#3A372E', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
   state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
@@ -261,7 +261,7 @@ function renderSpread() {
   const consensus = globalThis.BoscoFleet?.windConsensus(Object.values(state.windSamples));
   const fleetTag = consensus && consensus.samples > 1 ? ` · fleet ×${consensus.samples} ±${consensus.sigma_dir_deg}°` : '';
   $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '') + fleetTag;
-  state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
+  state.layers.spread.clearLayers(); state.layers.wind.clearLayers(); state.layers.orbit?.clearLayers();
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
   /** Supply scaled fire-outline bands for the active spread-rendering branch. */
@@ -280,6 +280,18 @@ function renderSpread() {
   for (const [scale, color, opacity] of SPREAD_BANDS) {
     const poly = L.polygon(ring(scale), {stroke: scale === 1, color: '#ec9d33', weight: 1.2, dashArray: '5 4', fillColor: color, fillOpacity: opacity}).addTo(state.layers.spread);
     if (scale === 1 && modelledFire()) poly.bindTooltip(`Projected head ≈${M.spreadRate(sc, fireDetails()).toFixed(0)} m/min toward ${M.compass(sc.direction)} — illustrative`);
+  }
+  /* Standoff orbit track: the drone's contour follows the fire's perimeter,
+     sliding outward at the fire's own advance speed. Circumference scales
+     with fire size — a soccer-ball fire means tight orbits, a block-wide
+     fire means a long spaced-out track. */
+  const fleet = globalThis.BoscoFleet;
+  if (fleet && modelledFire()) {
+    const margin = 40;
+    const retreat = fleet.orbitSpeedMps(o, t, sc, fireDetails(), sc.direction, margin, M);
+    L.polyline(fleet.offsetContour(outline, margin), {color: '#2f7fd1', weight: 1.5, dashArray: '6 5', opacity: .85})
+      .addTo(state.layers.orbit)
+      .bindTooltip(`Drone orbit — ${margin} m standoff · retreats ≈${retreat ? retreat.toFixed(1) : '—'} m/s as the fire advances`);
   }
   const area = M.areaHa(outline);
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
@@ -322,7 +334,7 @@ function updateWindSamples() {
   if (!t || !Number.isFinite(mps)) return;
   const id = t.drone_id || 'ANAFI-01', d = (Number.isFinite(deg) ? deg : 0)*Math.PI/180;
   state.windSamples[id] = {drone_id: id, north: mps*Math.cos(d), east: mps*Math.sin(d),
-    captured_at: Date.parse(t.observed_at) || Date.now(), flight_state: t.state};
+    alt_m: Number(t.altitude_m) || 10, captured_at: Date.parse(t.observed_at) || Date.now(), flight_state: t.state};
 }
 
 function renderTelemetry() {
@@ -526,7 +538,10 @@ function applyWindEstimate(a) {
   if (activeFire()?.latest.source === 'qr-test') return;
   if (a.episode_id && a.episode_id !== activeFire()?.episode_id) return;
   if (a.created_at === state.windAuto || a.created_at === state.windManual) return;
-  const kmh = w.speed_mps != null ? Math.round(w.speed_mps * 3.6) : null;
+  // The flight-controller estimate is measured at flight altitude; wind grows
+  // with height, so scale it down to the 10 m reference the scenario uses.
+  const altScale = /flight.controller/i.test(w.method ?? '') ? M.altitudeWindScale(state.telemetry?.altitude_m ?? 10) : 1;
+  const kmh = w.speed_mps != null ? Math.round(w.speed_mps / altScale * 3.6) : null;
   const deg = w.direction_deg != null ? ((Math.round(w.direction_deg) % 360) + 360) % 360 : null;
   if (kmh === null && deg === null) return;
   const changed = (kmh !== null && kmh !== state.scenario.wind) || (deg !== null && deg !== state.scenario.direction);

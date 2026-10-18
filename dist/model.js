@@ -43,6 +43,11 @@
     const base = spreadRate(sc, details);
     return base*intensify(base*Math.max(0, minutes));
   }
+  /* Wind increases with altitude — the Hellmann 1/7 power-law profile over
+     open terrain: a drone at 60 m measures ~29% more wind than the 10 m
+     reference the scenario uses. Fleet samples are normalised by this factor
+     so altitude never masquerades as disagreement. */
+  function altitudeWindScale(altM, refM = 10) { return Math.pow(Math.max(1, altM)/refM, 1/7); }
   /* Infrastructure/fuel brake (dist/site-fuels.js): point inside a cover zone
      returns its burn factor (<1 brake, ~0 barrier, >1 faster fuel); outside
      all zones or module absent → 1 (normal fuel). */
@@ -135,7 +140,7 @@
     while (hi - lo > .5) { const mid = (lo + hi)/2; if (insidePolygon(point, footprint(origin, mid, sc, details))) hi = mid; else lo = mid; }
     return Math.round(hi);
   }
-  const api = {BASE, compass, destPoint, envFactor, windRateFactor, spreadRate, intensify, effectiveRate, fuelFactorAt, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter, insidePolygon, arrivalMinutes};
+  const api = {BASE, compass, destPoint, envFactor, windRateFactor, spreadRate, intensify, effectiveRate, altitudeWindScale, fuelFactorAt, startRadius, scenarioFrom, footprint, areaHa, headDistance, recordedPerimeter, insidePolygon, arrivalMinutes};
   root.EmberModel = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
