@@ -237,7 +237,7 @@ test('confirmed live QR populates conditions and an interactive projection using
   const nowArea = run('projection().area_ha');
   run('state.minute = 60; renderSpread()');
   assert.ok(run('projection().area_ha') > nowArea);
-  assert.match(element('detection-conditions').textContent, /120 ha.*35 m\/min.*30 km\/h/);
+  assert.match(element('detection-conditions').textContent, /120 ha.*35 m\/min.*30\.0 km\/h/);
   assert.match(element('detection-location').textContent, /not measured/);
   run('state.scenario.wind = 60; renderSpread()');
   assert.ok(run('projection().spread_rate_m_per_min') > 35);

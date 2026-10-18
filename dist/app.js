@@ -229,7 +229,7 @@ function renderDetectionDetails() {
   $('detection-conditions').textContent = [
     det.area_ha != null ? `${det.area_ha} ha${det.area_source ? ' (estimated)' : ''}` : 'Area estimated by model',
     det.intensity, det.fuel, det.spread_m_per_min != null ? `${det.spread_m_per_min} m/min` : null,
-    `${Math.round(state.scenario.wind)} km/h toward ${M.compass(state.scenario.direction)}`,
+    `${state.scenario.wind.toFixed(1)} km/h toward ${M.compass(state.scenario.direction)}`,
     `${state.scenario.temp} °C`, `${state.scenario.rh}% RH`,
   ].filter(Boolean).join(' · ');
   $('detection-location').textContent = loc?.simulated
@@ -463,7 +463,7 @@ function renderSpread() {
   document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - state.minute) < .5));
   const consensus = globalThis.BoscoFleet?.windConsensus(Object.values(state.windSamples));
   const fleetTag = consensus && consensus.samples > 1 ? ` · fleet ×${consensus.samples} ±${consensus.sigma_dir_deg}°` : '';
-  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '') + fleetTag;
+  $('wind-value').textContent = sc.wind.toFixed(1); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '') + fleetTag;
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers(); state.layers.orbit?.clearLayers();
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = forestWaiting() ? 'no fire detected' : state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
@@ -523,7 +523,7 @@ function renderSpread() {
   $('area-context').textContent = state.minute < .5 ? (age > .1 ? `now · burning ~${Math.round(age)} min` : 'now') : `projected at +${Math.round(state.minute)} min`;
   const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
   const windHead = M.destPoint(o[0], o[1], sc.direction, reach);
-  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
+  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${sc.wind.toFixed(1)} km/h toward ${M.compass(sc.direction)}`);
   L.marker(windHead, {icon: L.divIcon({className: 'wind-arrow', html: `<div style="transform:rotate(${Math.round(sc.direction)}deg)">▲</div>`, iconSize: [14, 14], iconAnchor: [7, 7]}), interactive: false}).addTo(state.layers.wind);
 }
 
@@ -1343,7 +1343,7 @@ async function renderHistory() {
 function setPlayButton() { $('play').innerHTML = `<svg aria-hidden="true"><use href="#${state.playing ? 'i-pause' : 'i-play'}"/></svg>`; $('play').setAttribute('aria-label', state.playing ? 'Pause spread projection' : 'Play spread projection'); }
 /** Populate the condition dialog from the supplied spread inputs. */
 function scenarioControls(sc) {
-  for (const [id, key, out] of [['wind-input', 'wind', 'wind-output'], ['dry-input', 'dryness', 'dry-output'], ['temp-input', 'temp', 'temp-output'], ['rh-input', 'rh', 'rh-output']]) { $(id).value = sc[key]; $(out).textContent = Math.round(sc[key]); }
+  for (const [id, key, out] of [['wind-input', 'wind', 'wind-output'], ['dry-input', 'dryness', 'dry-output'], ['temp-input', 'temp', 'temp-output'], ['rh-input', 'rh', 'rh-output']]) { $(id).value = sc[key]; $(out).textContent = key === 'wind' ? sc[key].toFixed(1) : Math.round(sc[key]); }
   $('direction-input').value = sc.direction; $('direction-output').textContent = `${Math.round(sc.direction)}° · ${M.compass(sc.direction)}`;
 }
 let pending = {...M.BASE};
@@ -1472,7 +1472,7 @@ function animate(now) {
     state.windShown += (state.scenario.wind - state.windShown) * .2;
     const el = $('wind-value');
     if (Math.abs(state.windShown - state.scenario.wind) < .05) state.windShown = state.scenario.wind;
-    if (el && el.textContent !== String(Math.round(state.windShown))) el.textContent = Math.round(state.windShown);
+    if (el && el.textContent !== state.windShown.toFixed(1)) el.textContent = state.windShown.toFixed(1);
   }
   /* Scenario wind easing: new evidence sets a target; the wind and bearing
      glide toward it over ~3 s (shortest arc for direction), re-rendering the
