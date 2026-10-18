@@ -67,6 +67,14 @@
   --feed-ink: #D8D7D2;
   --feed-ink-soft: rgba(236, 235, 231, 0.9);
   --feed-chip: rgba(8, 8, 10, 0.6);
+  --feed-tone-1: #25262A;        /* per-drone placeholder feed backgrounds */
+  --feed-tone-2: #2A2A2D;
+  --feed-tone-3: #222327;
+  --feed-tone-4: #1F2023;
+  --feed-shade: #000000;         /* terrain shading and HUD text shadow */
+  --feed-sheen: rgba(236, 235, 231, 0.05);
+  --feed-reticle: rgba(236, 235, 231, 0.75);
+  --shadow-lift: rgba(0, 0, 0, 0.5);
   --cover-bg: #08080A;
   --cover-ring: #D8D7D2;
   --cover-accent: #E2574C;

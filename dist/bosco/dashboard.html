@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#08080A">
+<meta name="description" content="BOSCO incident workspace: fire-spread explorer, fleet camera view and human-reviewed rescue leads.">
 <title>BOSCO · Incident workspace</title>
 <link rel="icon" href="assets/bosco-mark.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -12,13 +13,267 @@
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="mark.css">
 <link rel="stylesheet" href="transition.css">
+<link rel="stylesheet" href="dashboard.css">
 <script defer src="mark.js"></script>
 <script defer src="transition.js"></script>
+<script defer src="fixtures.js"></script>
 <script defer src="dashboard.js"></script>
 </head>
 <body>
-<div class="dash" id="dash-content">
-  <main style="padding:28px"><h1>Incident workspace</h1></main>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c2 4-1 5 2 8 1-1 2-3 2-4 7 7 4 14-4 14S2 14 7 8c0 3 1 4 2 4 3-3-1-5 3-9Z"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="M12 8v7m0 0-3 6m3-6 3 6M7 11h10"/></symbol>
+  <symbol id="i-drone" viewBox="0 0 24 24"><rect x="9" y="9" width="6" height="6" rx="2"/><path d="m9 9-3-3m9 3 3-3M9 15l-3 3m9-3 3 3"/><circle cx="5" cy="5" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+</svg>
+
+<div class="dash-shell">
+  <nav class="rail" aria-label="Workspace">
+    <a class="rail-link rail-home" id="rail-home" href="index.html" aria-label="BOSCO home">
+      <span data-bosco-mark data-size="30" data-bg-color="var(--surface)"></span>
+    </a>
+    <a class="rail-link" href="#map" data-section="map" aria-label="Fire spread explorer"><svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><use href="#i-flame"/></svg></a>
+    <a class="rail-link" href="#leads" data-section="leads" id="rail-leads" aria-label="Rescue leads"><svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><use href="#i-person"/></svg><span class="rail-badge" id="rail-badge" aria-hidden="true"></span></a>
+    <a class="rail-link" href="#fleet" data-section="fleet" aria-label="Fleet"><svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><use href="#i-drone"/></svg></a>
+  </nav>
+
+  <div class="dash-content" id="dash-content">
+    <header class="topbar">
+      <div class="topbar-title">
+        <span class="brand t-wide">BOSCO</span>
+        <span class="label">/ Incident workspace</span>
+      </div>
+      <span class="mode-pill" id="mode-pill" role="status"><span class="dot" aria-hidden="true"></span><span id="mode-label">Replay</span></span>
+      <button type="button" class="pill-btn" id="live-toggle" aria-pressed="false">Live demo<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4"/></svg></button>
+      <a class="pill-btn" href="index.html">Exit replay<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+      <div class="conn-chip" id="conn-chip" aria-label="Connections"></div>
+    </header>
+
+    <main class="dash-main">
+      <section class="incident" aria-labelledby="incident-title">
+        <div class="incident-text">
+          <span class="incident-kicker" id="incident-kicker"></span>
+          <h1 id="incident-title"><span id="incident-name"></span> <span class="fire-tag" id="fire-tag">FIRE DETECTED</span></h1>
+          <span class="incident-sub" id="incident-sub"></span>
+        </div>
+        <button type="button" class="pill-btn" id="export-brief"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/></svg>Export brief</button>
+      </section>
+
+      <div class="banner" role="status">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><use href="#i-flame"/></svg>
+        <strong id="banner-label"></strong>
+        <span id="banner-text"></span>
+      </div>
+
+      <section class="kpis" aria-label="Key figures">
+        <div class="kpi">
+          <span class="label">Fire area</span>
+          <span class="kpi-row"><span class="kpi-value"><span id="kpi-area"></span> <small>ha</small></span><span class="kpi-note" id="kpi-area-when"></span></span>
+        </div>
+        <div class="kpi">
+          <span class="label">Wind</span>
+          <span class="kpi-row"><span class="kpi-value"><span id="kpi-wind"></span> <small>km/h</small></span><span class="kpi-note" id="kpi-wind-dir"></span></span>
+        </div>
+        <div class="kpi">
+          <span class="label">Detection</span>
+          <span class="kpi-row"><span class="kpi-value"><span id="kpi-detect"></span> <small>%</small></span><span class="kpi-note">fire model confidence</span></span>
+        </div>
+        <a class="kpi is-alert" href="#leads">
+          <span class="label">People found</span>
+          <span class="kpi-value"><span id="kpi-open"></span> <small>leads</small></span>
+          <span class="kpi-note" id="kpi-open-note"></span>
+        </a>
+        <div class="kpi">
+          <span class="label kpi-head">Drone power <b>FLEET</b></span>
+          <span class="kpi-row"><span class="kpi-value"><span id="kpi-bat"></span> <small>%</small></span><span class="kpi-note" id="kpi-bat-note"></span></span>
+        </div>
+      </section>
+
+      <div class="primary-row">
+        <section class="panel map-panel" id="map" aria-labelledby="map-title">
+          <div class="panel-head">
+            <div class="panel-title">
+              <h2 id="map-title">Fire spread explorer <span class="mode-tag" id="mode-tag">REPLAY</span></h2>
+              <span class="panel-sub" id="map-sub"></span>
+            </div>
+            <button type="button" class="pill-btn cond-btn" id="cond-toggle" aria-pressed="false"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 8h11a3 3 0 1 0-3-3M3 16h15a3 3 0 1 1-3 3M3 12h7"/></svg>Conditions</button>
+            <button type="button" class="icon-btn expand-btn" data-expand="map" aria-pressed="false" aria-label="Expand map"><svg class="i-expand" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-expand"/></svg><svg class="i-shrink" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-shrink"/></svg></button>
+          </div>
+
+          <div class="map-frame">
+            <div class="map-box">
+              <svg class="map-svg" id="map-svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Illustrative terrain map of the Horse River fire area with the fire outline, four fleet drones and seven rescue leads. Not for navigation.">
+                <defs>
+                  <filter id="m-glow"><feGaussianBlur stdDeviation="9"/></filter>
+                  <pattern id="m-forest" width="26" height="26" patternUnits="userSpaceOnUse"><circle class="m-f1" cx="6" cy="7" r="3.2"/><circle class="m-f2" cx="19" cy="17" r="3.6"/><circle class="m-f3" cx="11" cy="22" r="2.4"/></pattern>
+                  <linearGradient id="m-fov" x1="0" y1="0" x2="1" y2="0"><stop class="m-fov-stop" offset="0" stop-opacity="0.22"/><stop class="m-fov-stop" offset="1" stop-opacity="0"/></linearGradient>
+                </defs>
+                <rect class="m-bg" x="-1000" y="-600" width="3000" height="1800"/>
+                <rect x="-1000" y="-600" width="3000" height="1800" fill="url(#m-forest)"/>
+                <path class="m-t1" d="M0 0H420L380 120 250 170 120 140 0 210Z" opacity="0.8"/>
+                <path class="m-t2" d="M640 600 700 470 860 420 1000 300V600Z" opacity="0.8"/>
+                <path class="m-grid" stroke-width="1" d="M0 150H1000M0 320H1000M0 470H1000M300 0V600M600 0V600M820 0V600"/>
+                <path class="m-bank" stroke-width="16" d="M-20 470 C80 440 140 500 220 470 S360 520 430 500 520 560 600 540"/>
+                <path class="m-river" stroke-width="7" d="M-20 470 C80 440 140 500 220 470 S360 520 430 500 520 560 600 540"/>
+                <path class="m-river" stroke-width="6" d="M760 60 C800 110 870 90 920 130 S990 140 1020 120"/>
+                <path class="m-road" stroke-width="5" d="M470 -10 C480 100 500 200 520 300 S560 520 580 610"/>
+                <path class="m-roadline" stroke-width="1.6" stroke-dasharray="6 6" d="M470 -10 C480 100 500 200 520 300 S560 520 580 610"/>
+                <path class="m-wind-line" stroke-width="1.4" stroke-dasharray="3 7" d="M520 300 C640 260 760 180 1010 60"/>
+                <path class="m-t3" d="M630 590 C650 560 700 545 730 560 C755 575 735 600 720 610Z" opacity="0.8"/>
+                <g class="m-label"><text x="60" y="436">HORSE RIVER</text><text x="532" y="140">HWY 63</text><text x="780" y="560">FORT MCMURRAY →</text></g>
+
+                <g id="m-fire">
+                  <path class="m-fire" opacity="0.3" filter="url(#m-glow)" d="M-70 0 C-70 -50 30 -70 140 -50 C230 -30 235 25 140 52 C40 78 -70 50 -70 0Z"/>
+                  <path class="m-fire" opacity="0.35" d="M-60 0 C-60 -42 25 -60 125 -42 C205 -26 210 22 128 44 C38 66 -60 42 -60 0Z"/>
+                  <path class="m-fire" opacity="0.7" d="M-40 0 C-40 -28 18 -40 90 -28 C145 -18 148 14 92 30 C26 44 -40 28 -40 0Z"/>
+                  <path class="m-fire-edge" stroke-width="1.4" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" d="M-60 0 C-60 -42 25 -60 125 -42 C205 -26 210 22 128 44 C38 66 -60 42 -60 0Z"/>
+                </g>
+                <g id="m-ignition">
+                  <circle class="m-ignition" r="13" stroke-width="1.6"/>
+                  <path class="m-ignition-flame" d="M0 -8 c1.5 3.5 6 5.5 6 10 0 3.3-2.6 5.6-6 5.6s-6-2.3-6-5.6c0-2.6 1.5-4.4 3.2-5.6 0 2 .8 3.3 1.8 3.8-.3-3.1 0-5.6 1-8.2Z"/>
+                </g>
+                <g id="m-cond" class="m-cond" stroke-width="2" stroke-linecap="round" opacity="0.7" transform="translate(700 300) rotate(-35)" hidden>
+                  <path d="M-40 -26h52m-10-9 10 9-10 9"/><path d="M-20 0h52m-10-9 10 9-10 9"/><path d="M-40 26h52m-10-9 10 9-10 9"/>
+                </g>
+                <path class="m-patrol" stroke-width="1.2" stroke-dasharray="4 6" opacity="0.35" d="M300 380 C260 300 330 210 450 205 C570 200 640 250 610 330 C585 400 470 420 380 400 Z"/>
+                <g id="m-leads"></g>
+                <g id="m-drones"></g>
+              </svg>
+
+              <span class="corner tl" aria-hidden="true"></span><span class="corner tr" aria-hidden="true"></span>
+              <span class="corner bl" aria-hidden="true"></span><span class="corner br" aria-hidden="true"></span>
+
+              <div class="map-top">
+                <span class="map-pill" id="map-pill"></span>
+                <div class="map-tools">
+                  <label class="select-wrap">
+                    <span class="sr-only">Incident</span>
+                    <select id="incident-select"></select>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-chevron"/></svg>
+                  </label>
+                  <button type="button" class="icon-btn" id="map-recentre" aria-label="Recentre on incident"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 11 12 4l8 7v9h-5v-6H9v6H4Z"/></svg></button>
+                </div>
+              </div>
+
+              <div class="map-zoom" role="group" aria-label="Map controls">
+                <button type="button" id="map-zoom-in" aria-label="Zoom in">+</button>
+                <button type="button" id="map-zoom-out" aria-label="Zoom out">−</button>
+                <button type="button" id="map-locate" aria-label="Locate fleet"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg></button>
+                <button type="button" id="map-fit" aria-label="Fit fire area"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><use href="#i-expand"/></svg></button>
+              </div>
+
+              <div class="map-legend">
+                <span class="label">Relative spread intensity</span>
+                <span class="ramp" aria-hidden="true"></span>
+                <span class="ends">Low<span>High</span></span>
+              </div>
+              <div class="map-scale">Illustrative terrain · not for navigation<br>├────┤ 500 m</div>
+            </div>
+          </div>
+
+          <div class="timeline">
+            <div class="timeline-head">
+              <span class="t-now" aria-live="off">T + <span id="t-minute">0</span> min</span>
+              <span class="label">Projected from now</span>
+              <div class="presets" id="presets" role="group" aria-label="Jump to"></div>
+            </div>
+            <div class="timeline-row">
+              <button type="button" class="play-btn" id="play" aria-pressed="false" aria-label="Play projection">
+                <svg class="i-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M7 4v16l13-8Z"/></svg>
+                <svg class="i-pause" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+              </button>
+              <div class="scrubber">
+                <svg viewBox="0 0 600 40" preserveAspectRatio="none" aria-hidden="true">
+                  <path class="curve-fill" d="M0 38 C120 36 200 32 300 24 C400 15 500 8 600 2 L600 40 L0 40Z"/>
+                  <path class="curve-line" vector-effect="non-scaling-stroke" d="M0 38 C120 36 200 32 300 24 C400 15 500 8 600 2"/>
+                </svg>
+                <input type="range" id="minute" min="0" max="60" step="0.5" value="0" aria-label="Minutes from now">
+                <div class="ticks" aria-hidden="true"><span>Now</span><span>+15</span><span>+30</span><span>+45</span><span>+60 min</span></div>
+              </div>
+              <button type="button" class="icon-btn speed-btn" id="speed" aria-label="Playback speed 1×">1×</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel fleet-panel" id="fleet" aria-labelledby="fleet-title">
+          <div class="panel-head">
+            <h2 id="fleet-title"><span id="fleet-drone-id"></span> · Fleet POV</h2>
+            <span class="tag-dashed" id="fleet-size"></span>
+            <button type="button" class="icon-btn expand-btn" data-expand="fleet" aria-pressed="false" aria-label="Expand fleet view"><svg class="i-expand" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-expand"/></svg><svg class="i-shrink" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-shrink"/></svg></button>
+          </div>
+          <div class="fleet-controls">
+            <button type="button" class="chip-btn" id="follow" aria-pressed="true">Follow searcher</button>
+            <label>Replay speed
+              <span class="select-wrap">
+                <select id="replay-speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8" selected>8×</option></select>
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-chevron"/></svg>
+              </span>
+            </label>
+          </div>
+          <div class="carousel" id="drone-cards" role="group" aria-label="Fleet drones"></div>
+          <span class="fleet-caption" id="fleet-caption"></span>
+
+          <div class="feed" id="feed" role="img" aria-label="Camera feed">
+            <svg viewBox="0 0 400 220" preserveAspectRatio="none" aria-hidden="true">
+              <path class="feed-ground is-soft" d="M0 120 L70 96 L150 112 L230 82 L320 104 L400 90 L400 220 L0 220Z"/>
+              <path class="feed-burn" id="feed-burn" d=""/>
+            </svg>
+            <div class="sheen" aria-hidden="true"></div>
+            <span class="fb tl" aria-hidden="true"></span><span class="fb tr" aria-hidden="true"></span>
+            <span class="fb bl" aria-hidden="true"></span><span class="fb br" aria-hidden="true"></span>
+            <div class="reticle" aria-hidden="true"></div>
+            <div class="hud-row top" aria-hidden="true"><span><i class="rec-dot"></i>REC · <span id="hud-id"></span></span><span id="hud-hdg"></span></div>
+            <div class="hud-side left" id="hud-left" aria-hidden="true"></div>
+            <div class="hud-side right" id="hud-right" aria-hidden="true"></div>
+            <div class="hud-row bottom" aria-hidden="true"><span>30 fps</span><span id="hud-state"></span></div>
+          </div>
+
+          <div class="fleet-stats">
+            <div><span class="label">Altitude above takeoff</span><strong id="st-alt"></strong></div>
+            <div><span class="label">Ground speed</span><strong id="st-spd"></strong></div>
+            <div><span class="label">Drone power</span><strong id="st-bat"></strong></div>
+            <div><span class="label">Flight state</span><strong class="state" id="st-state"></strong></div>
+          </div>
+          <div class="fleet-foot"><span class="dot" aria-hidden="true"></span><span id="fleet-foot"></span></div>
+        </section>
+      </div>
+
+      <section class="panel" id="leads" aria-labelledby="leads-title">
+        <div class="panel-head leads-head">
+          <svg width="20" height="20" fill="none" stroke="currentColor" class="leads-icon" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><use href="#i-person"/></svg>
+          <h2 id="leads-title">People · rescue leads</h2>
+          <span class="tag-dashed" id="leads-open-tag"></span>
+          <span class="spacer"></span>
+          <label>Responder
+            <input type="text" id="responder" placeholder="Your name or call sign" autocomplete="nickname">
+          </label>
+          <button type="button" class="icon-btn expand-btn" data-expand="leads" aria-pressed="false" aria-label="Expand leads"><svg class="i-expand" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-expand"/></svg><svg class="i-shrink" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-shrink"/></svg></button>
+        </div>
+        <div class="lead-counts">
+          <div><span class="label">Open leads</span><strong id="c-open"></strong></div>
+          <div><span class="label">Seen from 2+ angles</span><strong id="c-multi"></strong></div>
+          <div><span class="label">Not acknowledged</span><strong class="is-alert" id="c-unack"></strong></div>
+          <div><span class="label">Ground observed</span><strong id="c-ground"></strong></div>
+        </div>
+        <div class="leads-body">
+          <div class="lead-grid" id="lead-grid"></div>
+          <aside class="log" aria-labelledby="log-title">
+            <h3 class="log-title" id="log-title">SEARCH LOG</h3>
+            <div class="log-filters" id="log-filters" role="group" aria-label="Filter log"></div>
+            <ol id="log-list" aria-live="polite"></ol>
+          </aside>
+        </div>
+      </section>
+
+      <footer class="dash-footer">
+        <span class="brand t-wide">BOSCO</span>
+        <a href="#map">Data sources →</a>
+      </footer>
+    </main>
+  </div>
 </div>
 </body>
 </html>
