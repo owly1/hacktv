@@ -249,8 +249,10 @@ squares on your actual sheet: the default is 10 across and 7 down (54 inner
 corners); a 12 × 7 sheet needs 11 × 6 inner corners. Board dimensions
 can be selected before the first accepted photo. Dimensions are saved with the
 session and automatically used by `fit --directory anafi_out/calibration-browser`.
-Rejected photos are displayed but never included in calibration. The terminal
-capture mode also saves `last-attempt.jpg` and prints its path on rejection.
+Browser capture saves every fresh, matching-resolution photo, even when the
+checkerboard is not detected. Saved count and detected count are shown separately;
+the fitter searches the saved images again and uses views with detected corners.
+The terminal capture mode saves `last-attempt.jpg` and prints its path on rejection.
 The detector uses CPU processing, lighting normalization and a classic-corner
 fallback. Calibration quality and physical verification requirements remain.
 
@@ -261,6 +263,9 @@ photos do not guarantee a valid fit: coverage and reprojection error are checked
 separately. Preserve a failed set for diagnosis and choose a new `--directory`
 for replacement photos. Restarting the browser command with the same directory
 restores its saved board dimensions and photo count without overwriting views.
+The browser defaults to 50 photos. To append 50 to an existing 20-photo set, run
+the same command with `--photos 70` (the target is the total, including existing
+photos). The larger target is saved and restored on future restarts.
 The page shows horizontal and vertical board-position coverage after each photo.
 Use **Start new photo set** to create a separate retake folder without deleting
 previous photos or needing another terminal. Its path is shown on the page; use

@@ -14,12 +14,12 @@ PAGE = r'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="w
 <title>Drone camera calibration</title>
 <style>[hidden]{display:none}body{font:17px system-ui;margin:30px auto;max-width:1080px;padding:0 20px;background:#f3f4f0;color:#18312b}h1{margin-bottom:6px}p{line-height:1.5}button,input{font:inherit;padding:10px;border:1px solid #9baaa2;border-radius:8px}button{background:#155746;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:wait}input{width:60px}section{background:white;padding:20px;border-radius:14px;margin:18px 0}img{width:100%;display:block;background:#14221e;min-height:100px;border-radius:8px}.controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}#result{white-space:pre-line}#progress{font-weight:700}small{color:#52665d}</style>
 <h1>Calibrate the drone camera</h1><p>Keep the drone grounded. Move the checkerboard, hold it still, then capture. No flight commands are enabled.</p>
-<section><div class="controls"><label>Squares across <input id="columns" type="number" min="4" max="20"></label><label>Squares down <input id="rows" type="number" min="4" max="20"></label><button id="capture">Capture photo</button><span id="progress">0 / 20 saved</span><button id="new-session" disabled>Start new photo set</button></div><p id="result" role="status">Loading camera…</p><p id="coverage"></p><small id="folder"></small></section>
+<section><div class="controls"><label>Squares across <input id="columns" type="number" min="4" max="20"></label><label>Squares down <input id="rows" type="number" min="4" max="20"></label><button id="capture">Capture photo</button><span id="progress">Loading saved photos…</span><button id="new-session" disabled>Start new photo set</button></div><p>Every captured photo is saved, even if corners aren’t found. Calibration will use the usable views.</p><p id="result" role="status">Loading camera…</p><p id="coverage"></p><small id="folder"></small></section>
 <section><h2>Live drone view</h2><p>Attach the sheet flat to a rigid board. Keep all squares visible; vary the board’s tilt, distance and position across the image.</p><p id="video-status" role="status">Connecting to continuous video…</p><img id="live" alt="Live view from the drone camera"></section>
-<section><h2>Last capture result</h2><p>Accepted photos show coloured corner markers. Rejected photos are also shown so you can see the problem.</p><img id="attempt" alt="Last processed capture" hidden></section>
+<section><h2>Last saved photo</h2><p>Coloured markers show detected corners. Photos without markers are saved too, for later review.</p><img id="attempt" alt="Last saved capture" hidden></section>
 <script>
 const $=id=>document.getElementById(id); let busy=false;
-function status(s){$('columns').value=s.columns;$('rows').value=s.rows;$('columns').disabled=$('rows').disabled=s.count>0;$('progress').textContent=`${s.count} / 20 saved`;$('folder').textContent=`Saved locally: ${s.directory}`;$('capture').disabled=busy||s.count>=20;$('new-session').disabled=busy||s.count===0;$('coverage').textContent=s.coverage;if(s.message)$('result').textContent=s.message;}
+function status(s){$('columns').value=s.columns;$('rows').value=s.rows;$('columns').disabled=$('rows').disabled=s.count>0;$('progress').textContent=`${s.count} / ${s.target} saved · corners found in ${s.detected}`;$('folder').textContent=`Saved locally: ${s.directory}`;$('capture').disabled=busy||s.count>=s.target;$('new-session').disabled=busy||s.count===0;$('coverage').textContent=s.coverage;if(s.message)$('result').textContent=s.message;}
 fetch('/status').then(r=>r.json()).then(status);
 let retry=null, wasFresh=null;
 function live(){clearTimeout(retry);$('live').src='/video?t='+Date.now();}
@@ -31,8 +31,11 @@ $('capture').onclick=()=>submit('/capture');$('new-session').onclick=()=>submit(
 
 
 class CaptureSession:
-    def __init__(self, root, columns, rows, camera, resume=False):
+    def __init__(self, root, columns, rows, camera, resume=False, target=50):
         board_pattern(columns, rows)
+        if not isinstance(target,int) or not 15 <= target <= 200:
+            raise ValueError('Photo target must be 15-200')
+        self.target = target
         self.root, self.columns, self.rows, self.camera = root, columns, rows, camera
         self.base_root = root
         self.centers = []
@@ -47,7 +50,8 @@ class CaptureSession:
         if files:
             saved = json.loads((root/'session.json').read_text())
             board_pattern(saved['columns'], saved['rows'])
-            if len(files)>20 or [p.name for p in files] != [f'view-{i:02}.png' for i in range(1,len(files)+1)]:
+            self.target = max(target,saved.get('target',target),len(files))
+            if self.target>200 or sorted(p.name for p in files) != sorted(f'view-{i:02}.png' for i in range(1,len(files)+1)):
                 raise ValueError('Saved views are not a complete numbered sequence; use a new folder')
             self.columns, self.rows = saved['columns'], saved['rows']
             for path in files:
@@ -64,7 +68,13 @@ class CaptureSession:
             if saved.get('image_size') and list(self.size) != saved['image_size']:
                 raise ValueError('Saved view resolution does not match this session')
             self.count = len(files)
-            self.message = f'Restored {self.count}/20 photos. Existing photos are preserved.'
+            self.message = f'Restored {self.count}/{self.target} photos. New captures will be added to this dataset; every photo is saved.'
+        self.save_metadata()
+
+    def save_metadata(self):
+        value = {'columns':self.columns,'rows':self.rows,'target':self.target}
+        if self.size: value['image_size'] = self.size
+        (self.root/'session.json').write_text(json.dumps(value)+'\n')
 
     def status(self):
         if self.centers:
@@ -78,7 +88,7 @@ class CaptureSession:
                          else 'Position coverage reached. Also vary gentle tilts and distance; the final fit still checks accuracy.')
         else:
             coverage = 'Start with the flat board filling about half the view. Use gentle tilts and move across the image; corners must stay visible.'
-        return dict(count=self.count, columns=self.columns, rows=self.rows,
+        return dict(count=self.count, target=self.target, detected=len(self.centers), columns=self.columns, rows=self.rows,
                     directory=str(self.root.resolve()), message=self.message, coverage=coverage)
 
     def new_session(self):
@@ -89,6 +99,7 @@ class CaptureSession:
             self.count = 0
             self.size = self.last_stamp = None
             self.centers = []
+            self.save_metadata()
             self.message = 'New photo set ready. Previous photos are preserved. Attach the sheet flat to a rigid board before capturing.'
             return self.status()
         finally:
@@ -99,8 +110,8 @@ class CaptureSession:
             raise ValueError('A photo is already being processed')
         try:
             pattern = board_pattern(columns, rows)
-            if self.count >= 20:
-                raise ValueError('All 20 photos are saved')
+            if self.count >= self.target:
+                raise ValueError(f'All {self.target} photos are saved')
             if self.count and (columns, rows) != (self.columns, self.rows):
                 raise ValueError('Board size is locked for this session; start a new folder to change it')
             self.columns, self.rows = columns, rows
@@ -110,26 +121,29 @@ class CaptureSession:
                 raise ValueError('Camera resolution changed; restore the original mode or start a new session')
             if stamp == self.last_stamp:
                 raise ValueError('Same camera frame; wait for the live view to update')
-            self.last_stamp = stamp
-            if not cv2.imwrite(str(self.root/'last-attempt.jpg'), image):
-                raise ValueError('Could not save the capture preview')
-            corners = board_corners(image, pattern)
+            # Persist the original before detection, including frames whose
+            # checkerboard cannot be found. Never overwrite an earlier capture.
+            index = self.count+1
+            if not cv2.imwrite(str(self.root/f'view-{index:02}.png'), image):
+                raise ValueError('Could not save the calibration photo')
+            self.count, self.size, self.last_stamp = index, size, stamp
+            self.save_metadata()
+            cv2.imwrite(str(self.root/'last-attempt.jpg'), image)
+            try:
+                corners = board_corners(image, pattern)
+            except cv2.error:
+                corners = None  # A detection failure must not discard the photo.
             if corners is None:
-                self.message = rejection_reason(image, columns, rows) + '\nNo calibration view saved. See the last capture below.'
+                self.message = f'Saved photo {index}/{self.target} for later review. '+rejection_reason(image, columns, rows)
             else:
-                index = self.count+1
-                if not cv2.imwrite(str(self.root/f'view-{index:02}.png'), image):
-                    raise ValueError('Could not save the calibration photo')
                 preview = image.copy()
                 cv2.drawChessboardCorners(preview, pattern, corners, True)
                 cv2.imwrite(str(self.root/f'corners-{index:02}.jpg'), preview)
                 cv2.imwrite(str(self.root/'last-attempt.jpg'), preview)
-                (self.root/'session.json').write_text(json.dumps({'columns':columns,'rows':rows,'image_size':size})+'\n')
-                self.count, self.size = index, size
                 self.centers.append(corners.reshape(-1,2).mean(axis=0)/size)
-                self.message = f'Saved photo {index}/20 — {len(corners)} corners detected at {size[0]} × {size[1]}. Move or gently tilt the board for the next photo.'
-                if index == 20:
-                    self.message = 'Twenty photos saved. Tell Codex “done” and the measured width of one square in millimetres.'
+                self.message = f'Saved photo {index}/{self.target} — {len(corners)} corners detected at {size[0]} × {size[1]}. Move or gently tilt the board for the next photo.'
+            if index == self.target:
+                self.message += '\nAll photos saved. Tell Codex “done” to fit and check the combined dataset.'
             return self.status()
         except ValueError as error:
             self.message = str(error)
@@ -218,7 +232,7 @@ def serve(args):
     base=args.backend.rstrip('/')
     with urlopen(base+'/api/session',timeout=5) as response:
         token=json.load(response)['token']
-    session=CaptureSession(args.directory,args.columns,args.rows,lambda:fetch_camera(base,token),resume=True)
+    session=CaptureSession(args.directory,args.columns,args.rows,lambda:fetch_camera(base,token),resume=True,target=args.photos)
     def request(path):
         return urlopen(Request(base+path,headers={'Authorization':'Bearer '+token}),timeout=5)
     def video_status():

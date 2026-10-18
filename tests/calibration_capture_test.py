@@ -63,14 +63,39 @@ class CaptureTests(unittest.TestCase):
         with patch('calibrate_camera.cv2.findChessboardCornersSB',return_value=(False,None)):
             self.assertEqual(len(board_corners(board())),54)
 
-    def test_rejected_frame_is_visible_and_never_counted_as_calibration(self):
+    def test_undetected_frame_is_saved_but_not_counted_as_detected(self):
         with tempfile.TemporaryDirectory() as d:
             s=CaptureSession(Path(d),10,7,lambda:(np.zeros((600,800,3),np.uint8),'1'))
             result=s.capture(10,7)
-            self.assertEqual(result['count'],0)
+            self.assertEqual(result['count'],1)
+            self.assertEqual(result['detected'],0)
             self.assertIn('mostly dark',result['message'])
             self.assertTrue((Path(d)/'last-attempt.jpg').exists())
-            self.assertEqual(list(Path(d).glob('view-*.png')),[])
+            self.assertTrue((Path(d)/'view-01.png').exists())
+
+    def test_append_fifty_to_twenty_preserves_every_original_and_resume_target(self):
+        with tempfile.TemporaryDirectory() as d, patch('calibration_web.board_corners',return_value=None):
+            root=Path(d);stamps=iter(range(100))
+            camera=lambda:(np.zeros((20,30,3),np.uint8),str(next(stamps)))
+            s=CaptureSession(root,12,7,camera)
+            for _ in range(20):s.capture(12,7)
+            originals={p.name:p.read_bytes() for p in root.glob('view-*.png')}
+            s=CaptureSession(root,10,7,camera,resume=True,target=70)
+            for _ in range(50):s.capture(12,7)
+            self.assertEqual(s.status()['count'],70)
+            self.assertEqual(s.status()['detected'],0)
+            self.assertEqual(len(list(root.glob('view-*.png'))),70)
+            for name,data in originals.items():self.assertEqual((root/name).read_bytes(),data)
+            with self.assertRaisesRegex(ValueError,'All 70'):s.capture(12,7)
+            self.assertEqual(CaptureSession(root,10,7,camera,resume=True).status()['target'],70)
+
+    def test_detector_error_still_keeps_saved_photo(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);s=CaptureSession(root,10,7,lambda:(board(),'1'))
+            with patch('calibration_web.board_corners',side_effect=cv2.error('detector failed')):
+                result=s.capture(10,7)
+            self.assertEqual((result['count'],result['detected']),(1,0))
+            self.assertTrue((root/'view-01.png').exists())
 
     def test_acceptance_saves_corners_locks_shape_and_preserves_fit_dimensions(self):
         with tempfile.TemporaryDirectory() as d:

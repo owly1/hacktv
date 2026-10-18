@@ -190,6 +190,7 @@ def main():
     parser.add_argument("--columns", type=int, default=10, help="number of squares across, NOT inner corners")
     parser.add_argument("--rows", type=int, default=7, help="number of squares down, NOT inner corners")
     parser.add_argument("--web", action="store_true", help="capture with a browser button and photo preview")
+    parser.add_argument("--photos", type=int, default=50, help="browser capture target, including existing photos (15-200; default 50)")
     parser.add_argument("--port", type=int, default=8791, help="local capture page port")
     parser.add_argument("--square-mm", type=float, default=20)
     parser.add_argument("--qr-side-cm", type=float, default=18)
