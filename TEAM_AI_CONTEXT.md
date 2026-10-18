@@ -5,13 +5,38 @@ put procedures in the linked guides and explain local behavior at its function.
 
 ## Project
 
-- Name: BOSCO / Emberwatch, a Parrot ANAFI wildfire-monitoring prototype.
+- Name: BOSCO / Emberwatch, a wildfire-monitoring prototype moving from one
+  Parrot ANAFI to a coordinated fleet.
 - Stack: Node 22+ HTTP backend, plain browser JavaScript, Python/Olympe on Linux.
-- Normal path: aircraft → receiver → authenticated API → dashboard/Gemini/storage.
+- Target path: fleet → receivers → authenticated ingest → combined fire model
+  → fleet dashboard/Gemini/storage. Preserve source drone and capture time.
 - `main` is the shared integration baseline for every teammate. It includes
   live fire/QR overlays, real-camera person observations and rescue leads,
   historical rescue-scout replay, incident Q&A, wind-driven spread, QR flight
   experiments, calibration capture and local flight recording.
+
+## Current product direction
+
+- The fleet surrounds the fire along its evolving perimeter, collecting views
+  from multiple sectors. Encircling provides observation coverage, not suppression.
+- Combine camera observations, telemetry and available environmental estimates
+  into one predictive model of the fire's boundary, spread direction/rate and
+  future extent. Show observation age, uncertainty and assumptions.
+- Extend the existing main drone/camera area into a scrollable fleet view.
+  Each drone has its own camera feed, synchronized telemetry, identity, role and
+  freshness state; selecting a drone highlights it on the shared incident map.
+- Individual drones intermittently perform controlled person-search descents
+  ("dives") along the **perimeter**, then ascend and resume their sector.
+  Timing may appear sporadic; coordinate it so the rest of the fleet maintains
+  coverage. A dive is an observation maneuver, not an impact or entry into fire.
+- Person sightings from all drones feed shared rescue leads with source evidence
+  and uncertainty. The dashboard/Gemini remain observation and planning tools;
+  real maneuvers require the separately enabled flight runtime.
+- [spec.md](spec.md) defines the target and acceptance criteria. Fleet stream
+  isolation, the scrollable UI, combined observations and coordinated perimeter
+  dives are planned work, not verified capabilities of current `main`. The older
+  replay scout can enter the rendered fire footprint; that legacy behavior does
+  not define the new perimeter-search requirement.
 
 ## Branching for every teammate
 
@@ -44,7 +69,7 @@ for team work unless the user explicitly changes that decision.
 | Validation and marker identity | `backend/validation.mjs`, `bridge/fire_detection.py` |
 | Person leads / camera-only sightings | `backend/people.mjs`, `backend/person-sightings.mjs`, `dist/people.js`, [person search](docs/PERSON_SEARCH.md) |
 | Historical person simulation | `backend/people-sim.mjs`, `dist/demo-scout.js`, [scout handoff](docs/DEMO_SCOUT_HANDOFF.md) |
-| Dashboard / wind spread / incident Q&A | `dist/app.js`, `dist/model.js`, `backend/site-landmarks.json` |
+| Dashboard / wind spread / incident Q&A | `dist/app.js`, `dist/model.js`, `backend/site-landmarks.json`; [fleet target](spec.md) |
 | Camera replay | `dist/sim-camera.js`, `dist/demo-cases.js` |
 | Observation-only receiver | `bridge/anafi_observer.py`, [Pi runtime](docs/PI_RUNTIME_HANDOFF.md) |
 | Detection and common aircraft link | `bridge/anafi_bridge.py`, `bridge/fire_monitor.py` |
@@ -59,6 +84,10 @@ for team work unless the user explicitly changes that decision.
 - Ingest and dashboard tokens differ; cloud/database credentials stay server-side.
 - Contract: `emberwatch.v1`. Missing measurements remain null; simulated site
   coordinates are not measured GPS. Altitude is height above takeoff.
+- Fleet work must carry stable `drone_id` and capture timestamps through camera,
+  telemetry and detection paths, isolating freshness, track IDs and reconnects
+  per aircraft. Existing single-stream routes are not already fleet support;
+  coordinate compatible contract changes and update the bridge guide with code.
 - Angles are clockwise from north; wind/spread directions point **toward**.
 - Prefer an available flight-controller wind estimate over Gemini's tilt-derived
   estimate; retain source labels and disclose disagreement. Neither is an anemometer.
@@ -67,7 +96,8 @@ for team work unless the user explicitly changes that decision.
 - The only fire QR is `EW1:Alpha|120|X|35|M|30|60|31|18|18`.
   Change all pinned copies and tests together if its identity changes.
 - The dashboard/Gemini cannot pilot. Aircraft commands belong to an explicitly
-  enabled terminal flight runtime; observation is separate. One SDK owner only.
+  enabled terminal flight runtime; observation is separate. One SDK owner per
+  aircraft; do not run competing receivers for the same drone.
 - Automatic `qr-demo` and `qr-circle` can take off after recognition when
   `--execute` is enabled. Preserve their one-shot, freshness and landing gates.
 - Person leads carry uncertainty and require human review. Their state is JSON
