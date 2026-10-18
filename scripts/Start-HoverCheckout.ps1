@@ -1,9 +1,9 @@
-# Opens a Pi terminal. Flight requires -Execute AND a mode-specific typed start.
+# Opens a Pi terminal. Flight requires -Execute. QrAutoCircle starts automatically on a confirmed QR incident.
 [CmdletBinding()]
 param(
     [string]$PiAddress,
     [switch]$Execute,
-    [ValidateSet('Hover','QrCheckout','QrOrbit','QrPreset')][string]$Mode = 'Hover',
+    [ValidateSet('Hover','QrCheckout','QrOrbit','QrPreset','QrAutoCircle')][string]$Mode = 'Hover',
     [switch]$NativeVideo
 )
 $ErrorActionPreference = 'Stop'
@@ -54,20 +54,24 @@ switch (($tunnelState | Out-String).Trim()) {
 }
 $epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
 $liveOption = if ($Execute) { '--execute' } else { '' }
-$program = if ($Mode -eq 'Hover') { 'hover_checkout.py' } elseif ($Mode -eq 'QrPreset') { 'qr_preset_demo.py' } else { 'qr_takeoff_demo.py' }
-$extraOptions = if ($NativeVideo -or ($Mode -in @('QrCheckout','QrOrbit'))) { '--video-width 0' } else { '' }
-if ($Mode -in @('QrCheckout','QrOrbit')) {
+$program = if ($Mode -eq 'Hover') { 'hover_checkout.py' } elseif ($Mode -eq 'QrPreset') { 'qr_preset_demo.py' } elseif ($Mode -eq 'QrAutoCircle') { 'qr_auto_circle.py' } else { 'qr_takeoff_demo.py' }
+$extraOptions = if ($NativeVideo -or ($Mode -in @('QrCheckout','QrOrbit','QrAutoCircle'))) { '--video-width 0' } else { '' }
+if (($Mode -in @('QrCheckout','QrOrbit')) -or ($Mode -eq 'QrAutoCircle' -and $Execute)) {
     $extraOptions += ' --camera-calibration /home/pet/emberwatch/qr-demo/camera.local.json --preflight-file /home/pet/emberwatch/qr-demo/current-preflight.local.json'
     if ($Mode -eq 'QrOrbit') { $extraOptions += ' --full-orbit' }
 }
 $remote = @'
 test -f /home/pet/emberwatch/qr-demo/__PROGRAM__ || exit 1
-if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo)\.py'; then
+if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\.py'; then
   printf 'A flight checkout is already running. Use its terminal; do not open another.\n' >&2
   exit 1
 fi
 sudo -n /usr/local/sbin/emberwatch-maintenance set-clock __EPOCH__ >/dev/null || exit 1
 systemctl --user stop emberwatch-bridge.service || exit 1
+if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\.py'; then
+  printf 'Another laptop receiver is active. Stop it in its own terminal first.\n' >&2
+  exit 1
+fi
 case $(nmcli -g GENERAL.CONNECTION device show wlan0) in
   ANAFI-H084882) ;;
   *) sudo -n /usr/local/sbin/emberwatch-maintenance wifi-profile 64e43de0-e0ff-4ee0-a9cb-5d5cd824d732 || exit 25 ;;
@@ -86,6 +90,11 @@ elseif ($Execute -and $Mode -eq 'QrPreset') {
     Write-Host 'Starts DISARMED. ARM QR PRESET + Enter, then selected-QR recognition, requests takeoff.'
     Write-Host 'No calibration or object tracking: align the intended circle center 1 m ahead of the launch point.'
     Write-Host 'One circle, then nearby hover until X or the 30-second timeout. Flight cap: 90 seconds.'
+}
+elseif ($Execute -and $Mode -eq 'QrAutoCircle') {
+    Write-Host 'AUTONOMOUS: a stable selected QR and accepted fire incident start takeoff automatically.'
+    Write-Host 'One metre radius, camera tracking, one orbit, then land. No typed arming phrase.'
+    Write-Host 'Requires measured calibration and current physical preflight. Keep this terminal open.'
 }
 elseif ($Execute) {
     $startPhrase = if ($Mode -eq 'QrOrbit') { 'START QR ORBIT' } else { 'START QR CHECKOUT' }

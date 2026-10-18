@@ -220,7 +220,9 @@ class QROrbitBridge(AnafiBridge):
         if self.last_processed_frame == captured:
             return
         self.last_processed_frame = captured
-        hit = self.detector.detect(img)
+        self._process_hit(img, captured, self.detector.detect(img))
+
+    def _process_hit(self, img, captured, hit):
         marker = None
         if hit and hit.get("source") == "qr-test":
             self.overlay = [{k: hit[k] for k in ("source", "label", "confidence", "bbox")}]

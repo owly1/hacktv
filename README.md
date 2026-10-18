@@ -121,6 +121,14 @@ Print `http://127.0.0.1:8787/test-marker.html` at 100% (the code must measure
 18 cm). The QR code stands in for a large fire and carries its details; the
 drone reads it from up to ~2 m.
 
+## Automatic QR flight experiment
+
+The `codex/qr-code-circle-flight` branch adds an opt-in QR fire → automatic takeoff
+→ one-metre-radius orbit with camera tracking → landing runtime for both laptops.
+See [automatic QR-circle setup](docs/QR_AUTO_CIRCLE.md). It requires measured
+camera calibration and physical preflight; ordinary localhost observation and
+historical Replay do not enable flight.
+
 ## Demo
 
 For the new QR recognition rehearsal, run `python bridge/qr_orbit_rehearsal.py`

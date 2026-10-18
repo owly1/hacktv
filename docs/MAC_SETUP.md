@@ -224,3 +224,12 @@ SDK tests are skipped on macOS and need the Pi's SDK environment. The existing
 terminal-restoration test can differ on macOS's OS-managed `PENDIN` flag;
 investigate that separately from the Linux flight runtime. No flight test is
 performed by the setup or unit tests.
+
+## Autonomous one-metre QR circle
+
+The separate `qr-circle` flight mode is described in
+[Automatic QR fire circle](QR_AUTO_CIRCLE.md). It uses the measured marker
+position and the normal fire-incident pipeline. `--execute` enables automatic
+takeoff on recognition; stop the observation supervisor first. It requires
+measured calibration and a current physical preflight. The observer remains
+read-only and is the only mode that restarts automatically.

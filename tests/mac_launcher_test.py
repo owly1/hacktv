@@ -77,6 +77,22 @@ class MacLauncherTests(unittest.TestCase):
             self.assertNotIn('ARM QR PRESET', live)
             self.assertNotIn('TAKEOFF TEST', live)
 
+    def test_qr_circle_is_explicit_native_calibrated_and_not_supervised(self):
+        observe = mac.runtime_command(mac.DEFAULTS, 'observe', False)
+        live = mac.runtime_command(mac.DEFAULTS, 'qr-circle', True)
+        preview = mac.runtime_command(mac.DEFAULTS, 'qr-circle', False)
+        self.assertIn('python -u qr_auto_circle.py', live)
+        self.assertIn('--video-width 0', live)
+        self.assertIn('--camera-calibration camera.local.json', live)
+        self.assertIn('--preflight-file current-preflight.local.json', live)
+        self.assertIn('--execute', live)
+        self.assertNotIn('--execute', preview)
+        self.assertNotIn('--camera-calibration', preview)
+        self.assertNotIn('python -u qr_auto_circle.py', observe)
+        self.assertIn('qr_auto_circle', mac.prepare_command(mac.DEFAULTS))
+        with self.assertRaises(ValueError):
+            mac.runtime_command(mac.DEFAULTS, 'unknown', True)
+
     def test_connection_guards_precede_runtime_start(self):
         preparation = mac.prepare_command(mac.DEFAULTS)
         self.assertLess(preparation.index('A flight checkout is already running'), preparation.index('systemctl --user stop'))

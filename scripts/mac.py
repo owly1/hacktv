@@ -111,7 +111,7 @@ def sync_clock(config):
 def prepare_command(config):
     return '\n'.join([
         'set -eu',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         'systemctl --user stop emberwatch-bridge.service',
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
@@ -146,6 +146,8 @@ print(f'Requested stop for {count} observation receiver(s). Flight sessions were
 
 
 def runtime_command(config, mode, execute, native=False):
+    if mode not in ("observe", "qr-preset", "hover", "qr-circle"):
+        raise ValueError("Unknown receiver mode")
     directory = shlex.quote(config['directory'])
     common = ['--controller', 'direct', '--ip', config['drone_ip'], '--drone-id', config['drone_id'],
               '--backend', f"http://127.0.0.1:{config['pi_port']}"]
@@ -155,16 +157,20 @@ def runtime_command(config, mode, execute, native=False):
         program = ['anafi_observer.py', '--camera', '--camera-transport', 'frame',
                    '--camera-fps', '10', '--camera-width', '0' if native else '640']
     else:
-        program = ['qr_preset_demo.py' if mode == 'qr-preset' else 'hover_checkout.py',
+        program = [{'qr-preset': 'qr_preset_demo.py', 'hover': 'hover_checkout.py',
+                    'qr-circle': 'qr_auto_circle.py'}[mode],
                    '--no-window', '--out-dir', 'anafi_out']
-        if native:
+        if mode == 'qr-circle' and execute:
+            program += ['--camera-calibration', 'camera.local.json',
+                        '--preflight-file', 'current-preflight.local.json']
+        if native or mode == 'qr-circle':
             program += ['--video-width', '0']
         if execute:
             program += ['--execute']
     # Recheck for competing receivers immediately before opening the SDK link.
     return '\n'.join([
         'set -eu', f'cd "$HOME"/{directory}', 'test -r mac.env',
-        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo)\\.py'; then",
+        "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
         "  echo 'A flight checkout is already running; use its terminal.' >&2; exit 73; fi",
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(anafi_observer|anafi_bridge)\\.py'; then",
         "  echo 'Another observation receiver is running; stop it in its own terminal.' >&2; exit 73; fi",
@@ -275,15 +281,17 @@ def main():
     configure.add_argument('--host', required=True, help='Example: fe80::2ecf:67ff:fe80:173e%%en8')
     configure.add_argument('--user', default='pet')
     commands.add_parser('authorize-pi', help='Interactive first SSH login; install this Mac’s public key')
-    commands.add_parser('install-pi', help='Copy source and this Mac’s ingest token into its own Pi directory')
+    install = commands.add_parser('install-pi', help='Copy source and this Mac’s ingest token into its own Pi directory')
+    install.add_argument('--camera-calibration', help='Measured JSON to copy as camera.local.json')
+    install.add_argument('--preflight-file', help='Completed physical checks to copy as current-preflight.local.json')
     commands.add_parser('check-pi', help='Check remote SDK imports without connecting to the drone')
     commands.add_parser('stop-observer', help='Stop only this Mac’s read-only Pi observer')
     rehearsal = commands.add_parser('rehearsal', help='Local QR recognition; no aircraft commands')
     rehearsal.add_argument('--test-image', action='store_true')
     rehearsal.add_argument('--port', type=int, default=8789)
     pi = commands.add_parser('pi', help='Foreground Pi receiver plus reverse tunnel')
-    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover'], default='observe')
-    pi.add_argument('--execute', action='store_true', help='Enable flight mode; still requires typed arming')
+    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover', 'qr-circle'], default='observe')
+    pi.add_argument('--execute', action='store_true', help='Enable flight: qr-circle starts automatically after QR/incident confirmation; other modes require typed arming')
     pi.add_argument('--native-video', action='store_true')
     args = parser.parse_args()
     os.chdir(ROOT)
@@ -337,6 +345,12 @@ def main():
         directory = shlex.quote(config['directory'])
         remote(config, f'umask 077; mkdir -p "$HOME"/{directory} && '
                f'chmod 700 "$HOME"/{directory} && tar -xzf - -C "$HOME"/{directory}', bundle(config, env))
+        for source, target in ((args.camera_calibration, 'camera.local.json'),
+                               (args.preflight_file, 'current-preflight.local.json')):
+            if source:
+                data = Path(source).read_bytes()
+                json.loads(data)  # Reject malformed JSON before copying it.
+                remote(config, f'umask 077; cat > "$HOME"/{directory}/{target}', data)
         print('Installed source and this Mac’s ingest token in', config['directory'])
         return
     if args.command == 'check-pi':
@@ -353,7 +367,8 @@ def main():
             raise ValueError('Start the Pi receiver in an interactive operator terminal.')
         command = runtime_command(config, args.mode, args.execute, args.native_video)
         print('Keep the Skycontroller off and FreeFlight closed for this direct Pi connection.', flush=True)
-        print('Flight is ' + ('ENABLED AFTER TYPED ARMING' if args.execute else 'DISABLED'), flush=True)
+        print('Flight is ' + ('AUTOMATIC AFTER QR + INCIDENT' if args.execute and args.mode == 'qr-circle'
+              else 'ENABLED AFTER TYPED ARMING' if args.execute else 'DISABLED'), flush=True)
         if args.mode == 'observe':
             supervise_observer(config, env, command)
             return
