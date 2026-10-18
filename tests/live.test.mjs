@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp, MemoryStorage, makeGeminiTransport, buildAnalysisParts } from '../backend/server.mjs';
@@ -345,4 +346,81 @@ test('analysis prompt carries the detection context', () => {
   const text = parts.map((p) => p.text).join(' ');
   assert.match(text, /Fire detection from the drone camera \(qr-test/);
   assert.match(text, /Telemetry-only/);
+});
+
+// ---- QR marker demo: EW1 fire markers and EWP person markers decoded from
+// camera frames drive the incident pipeline without a bridge-side detector.
+const QR_FIRE = readFileSync(new URL('./fixtures/qr-alpha.jpg', import.meta.url));
+const QR_PERSON = readFileSync(new URL('./fixtures/qr-person.jpg', import.meta.url));
+
+const postFrame = (t, jpeg, atIso) => t.req('POST', '/api/ingest/frame', {
+  token: INGEST, body: jpeg,
+  headers: { 'content-type': 'image/jpeg', 'x-captured-at': atIso },
+});
+
+test('QR markers in camera frames open a fire episode and register persons', async () => {
+  const t = await startApp({ replies: [analysisReply, planReply] });
+  try {
+    const t0 = Date.now();
+    // One decode is not enough: the same payload must confirm on a second scan.
+    assert.equal((await postFrame(t, QR_FIRE, new Date(t0).toISOString())).status, 204);
+    let res = await t.req('GET', '/api/incident', { token: DASH });
+    assert.equal((await res.json()).incident, null);
+
+    // Second scan (>400ms of capture time later) confirms the marker.
+    const confirmed = await postFrame(t, QR_FIRE, new Date(t0 + 600).toISOString());
+    assert.equal(confirmed.status, 204);
+
+    const body = await waitFor(async () => {
+      const b = await (await t.req('GET', '/api/incident', { token: DASH })).json();
+      return b.incident?.active ? b : null;
+    });
+    assert.equal(body.incident.episode_id, 'qrfire-alpha');
+    assert.equal(body.incident.latest.source, 'qr-test');
+    assert.equal(body.incident.latest.kind, 'fire');
+    assert.equal(body.incident.latest.details.area_ha, 120);
+    assert.equal(body.incident.latest.details.wind_kmh, 30);
+    assert.match(body.incident.latest.fire.position_source, /estimate/);
+    assert.equal(body.incident.latest.fire.latitude, 43.7866); // site anchor, labelled estimate
+    assert.ok(body.incident.image_url);
+    assert.equal(body.persons.length, 0);
+
+    // Auto-analysis fired exactly once for the new episode.
+    const latest = await waitFor(async () => {
+      const b = await (await t.req('GET', '/api/analysis/latest', { token: DASH })).json();
+      return b.analysis && !b.pending ? b : null;
+    });
+    assert.equal(latest.analysis.episode_id, 'qrfire-alpha');
+    assert.equal(t.calls.length, 1);
+
+    // A person marker confirms the same way and joins the incident as a
+    // person in the area — it never takes over the fire incident.
+    assert.equal((await postFrame(t, QR_PERSON, new Date(t0 + 1400).toISOString())).status, 204);
+    assert.equal((await postFrame(t, QR_PERSON, new Date(t0 + 2100).toISOString())).status, 204);
+    const withPersons = await waitFor(async () => {
+      const b = await (await t.req('GET', '/api/incident', { token: DASH })).json();
+      return b.persons.length ? b : null;
+    });
+    assert.equal(withPersons.incident.episode_id, 'qrfire-alpha');
+    assert.equal(withPersons.persons[0].name, 'resident-1');
+    assert.equal(withPersons.persons[0].note, 'elderly, mobility-limited');
+    assert.equal(t.calls.length, 1, 'person sightings do not trigger analysis');
+
+    // Persons ride the plan context.
+    const plan = await (await t.req('POST', '/api/plan', { token: DASH, body: { objective: 'evacuation' } })).json();
+    const planPrompt = t.calls.at(-1).contents[0].parts.map((p) => p.text ?? '').join(' ');
+    assert.match(planPrompt, /resident-1/);
+    assert.equal(plan.objective, 'evacuation');
+  } finally { await t.close(); }
+});
+
+test('unrelated QR payloads are ignored', async () => {
+  const { decodeQr, parseMarkerPayload } = await import('../backend/qrscan.mjs');
+  const t = await startApp({ noGemini: true });
+  try {
+    const bad = parseMarkerPayload('https://example.com/badge/123');
+    assert.equal(bad, null);
+    const { incident } = await (await t.req('GET', '/api/incident', { token: DASH })).json();
+    assert.equal(incident, null);
+  } finally { await t.close(); }
 });

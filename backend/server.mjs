@@ -28,6 +28,7 @@ import {
   validateSnapshotEnvelope,
   validateTelemetry,
 } from './validation.mjs';
+import { decodeQr, parseMarkerPayload, markerEpisodeId } from './qrscan.mjs';
 
 const CONTRACT = 'emberwatch.v1';
 const DEFAULT_PORT = 8787;
@@ -38,6 +39,10 @@ const PLAN_MIN_INTERVAL_MS = 10_000;
 const GEMINI_UPSTREAM_TIMEOUT_MS = 20_000;
 const INCIDENT_ACTIVE_MS = 30 * 60_000;  // a fire stays on the map 30 min after its last sighting
 const VIDEO_BOUNDARY = 'emberframe';
+const QR_CONFIRM_SCANS = 2;             // identical payload must decode twice before it counts
+const QR_SIGHTING_MIN_MS = 5000;        // while a marker stays in view, log a sighting at most this often
+const QR_PERSON_FRESH_MS = 5 * 60_000;  // person markers count as "in the area" for 5 min after last seen
+const QR_OVERLAY_MS = 3000;             // marker bbox stays on the video overlay this long after last decode
 
 // Sam Ibrahim Building, University of Toronto Scarborough (north campus).
 export const DEFAULT_SITE = Object.freeze({
@@ -161,9 +166,12 @@ export class MemoryStorage {
     return this.detections.some((d) => d.episode_id === episodeId);
   }
   async latestIncident() {
-    if (this.detections.length === 0) return null;
-    const last = this.detections.reduce((a, b) => (a.detected_at >= b.detected_at ? a : b));
-    return summarizeEpisode(this.detections.filter((d) => d.episode_id === last.episode_id));
+    // Person sightings (EWP markers, CV detections) never start the fire
+    // incident — they only join it as persons in the affected area.
+    const fires = this.detections.filter((d) => d.kind !== 'person');
+    if (fires.length === 0) return null;
+    const last = fires.reduce((a, b) => (a.detected_at >= b.detected_at ? a : b));
+    return summarizeEpisode(fires.filter((d) => d.episode_id === last.episode_id));
   }
   async detectionHistory({ limit = 50 } = {}) {
     return this.detections.slice().sort((a, b) => b.detected_at.localeCompare(a.detected_at)).slice(0, limit);
@@ -280,7 +288,9 @@ export class PgStorage {
   async latestIncident() {
     const rows = await this.q(
       `SELECT payload, status FROM detections
-       WHERE episode_id = (SELECT episode_id FROM detections ORDER BY detected_at DESC LIMIT 1)
+       WHERE episode_id = (SELECT episode_id FROM detections
+                            WHERE COALESCE(payload->>'kind', 'fire') <> 'person'
+                            ORDER BY detected_at DESC LIMIT 1)
        ORDER BY detected_at`,
     );
     return summarizeEpisode(rows.map((r) => ({ ...r.payload, status: r.status })));
@@ -415,6 +425,12 @@ export function buildAnalysisParts(evidence) {
   const detectionText = describeDetection(evidence.detection);
   if (detectionText) parts.push({ text: detectionText });
   if (evidence.scenario) parts.push({ text: `Scenario conditions: ${JSON.stringify(evidence.scenario)}` });
+  if (evidence.persons?.length) {
+    parts.push({
+      text: 'Persons reported in the affected area (unverified marker sightings — prioritise their safety):'
+        + ` ${JSON.stringify(evidence.persons)}`,
+    });
+  }
   if (evidence.kind === 'rgb-snapshot') {
     parts.push({
       text: `Telemetry accompanying the image: ${JSON.stringify(evidence.telemetry ?? null)}`,
@@ -735,6 +751,7 @@ export function createApp({
     gemini: { lastError: null, lastErrorAt: null, lastOkAt: null, pending: false },
     flightEvents: [],
     autoTimer: null,
+    qr: { lastScanMs: -Infinity, pending: null, overlays: [] },
   };
 
   function requireAuth(req, kind) {
@@ -896,9 +913,10 @@ export function createApp({
       try {
         const telemetry = await storage.latestTelemetry();
         const image = jpeg ?? state.latestSnapshot?.jpeg ?? null;
+        const persons = await recentPersons();
         const evidence = image
-          ? { kind: 'rgb-snapshot', at: Date.parse(detection.detected_at), jpeg: image, telemetry, detection }
-          : { kind: 'telemetry-only', at: Date.parse(detection.detected_at), telemetry, detection };
+          ? { kind: 'rgb-snapshot', at: Date.parse(detection.detected_at), jpeg: image, telemetry, detection, persons }
+          : { kind: 'telemetry-only', at: Date.parse(detection.detected_at), telemetry, detection, persons };
         await runAnalysis(evidence, { trigger: 'auto-detection', episodeId: detection.episode_id });
         recordGeminiResult(null);
       } catch (err) {
@@ -929,11 +947,107 @@ export function createApp({
   }
 
   function acceptCameraFrame(jpeg, capturedAtMs, detections = '[]') {
-    const frame = { jpeg, capturedAtMs, detections };
+    // Confirmed QR markers ride the overlay so the video stream shows the
+    // box around the code, exactly like a bridge-side detector box.
+    const marks = state.qr.overlays
+      .filter((o) => capturedAtMs <= o.untilMs)
+      .map(({ label, confidence, bbox }) => ({ label, confidence, bbox }));
+    let overlay = detections;
+    if (marks.length) {
+      try {
+        overlay = JSON.stringify([...JSON.parse(detections || '[]'), ...marks].slice(0, 10));
+      } catch { /* keep the bridge-provided overlay if it is malformed */ }
+    }
+    const frame = { jpeg, capturedAtMs, detections: overlay };
     state.latestFrame = frame;
     state.latestSnapshot = { jpeg, capturedAtMs };
     state.frameTimes.push(now());
     broadcastFrame(frame);
+    scanFrameForMarkers(jpeg, capturedAtMs).catch(() => {}); // QR scan must never break ingest
+  }
+
+  // Decode Emberwatch QR markers out of incoming camera frames. Throttled to
+  // ~2.5 Hz of actual decodes; a marker must decode identically on
+  // QR_CONFIRM_SCANS consecutive scans before it creates a sighting, so a
+  // motion-blurred partial read can never open a fake episode.
+  async function scanFrameForMarkers(jpeg, capturedAtMs) {
+    const st = state.qr;
+    if (capturedAtMs - st.lastScanMs < 400) return;
+    st.lastScanMs = capturedAtMs;
+    const found = decodeQr(jpeg);
+    const marker = found && parseMarkerPayload(found.text);
+    if (!marker) {
+      st.pending = null;
+      st.overlays = st.overlays.filter((o) => capturedAtMs <= o.untilMs);
+      return;
+    }
+    const label = marker.kind === 'fire' ? `QR fire ${marker.name}` : `QR person ${marker.name}`;
+    st.overlays = [...st.overlays.filter((o) => o.text !== found.text),
+      { text: found.text, label, confidence: 0.99, bbox: found.bbox, untilMs: capturedAtMs + QR_OVERLAY_MS }];
+    if (st.pending && st.pending.text === found.text) st.pending.count += 1;
+    else st.pending = { text: found.text, count: 1 };
+    if (st.pending.count < QR_CONFIRM_SCANS) return;
+
+    const episodeId = markerEpisodeId(marker);
+    const last = st[`lastInsert_${episodeId}`] ?? -Infinity;
+    if (capturedAtMs - last < QR_SIGHTING_MIN_MS) return;
+    st[`lastInsert_${episodeId}`] = capturedAtMs;
+
+    const telemetry = await storage.latestTelemetry().catch(() => null);
+    const drone = telemetry ? {
+      latitude: telemetry.latitude ?? null,
+      longitude: telemetry.longitude ?? null,
+      altitude_m: telemetry.altitude_m ?? null,
+      state: telemetry.state ?? null,
+    } : null;
+    const isFire = marker.kind === 'fire';
+    const isNewEpisode = !(await storage.episodeExists(episodeId));
+    const id = crypto.randomUUID();
+    const record = {
+      id,
+      detected_at: new Date(capturedAtMs).toISOString(),
+      episode_id: episodeId,
+      source: isFire ? 'qr-test' : 'qr-person',
+      kind: isFire ? 'fire' : 'person',
+      label,
+      confidence: 0.99,
+      bbox: found.bbox,
+      // No camera-pose calibration exists yet (teammate C's lane), so the
+      // marker's world position is the site anchor — labelled as an estimate,
+      // never a measured location.
+      fire: {
+        latitude: site.latitude,
+        longitude: site.longitude,
+        distance_m: null,
+        bearing_deg: null,
+        position_source: 'site-anchor estimate (no camera-pose calibration)',
+      },
+      drone,
+      details: isFire
+        ? { marker: 'EW1', qr_text: found.text, ...marker.scenario }
+        : { marker: 'EWP', qr_text: found.text, name: marker.name, note: marker.note },
+      status: 'active',
+      image_path: await saveDetectionImage(id, jpeg),
+    };
+    await storage.insertDetection(record);
+    if (isFire && isNewEpisode) scheduleAutoAnalysis(record, jpeg);
+  }
+
+  // Person markers seen recently enough to count as still in the area.
+  async function recentPersons() {
+    const rows = await storage.detectionHistory({ limit: 50 });
+    const byEpisode = new Map();
+    for (const d of rows) {
+      if (d.kind !== 'person') continue;
+      if (now() - Date.parse(d.detected_at) > QR_PERSON_FRESH_MS) continue;
+      if (!byEpisode.has(d.episode_id)) byEpisode.set(d.episode_id, d);
+    }
+    return [...byEpisode.values()].map((d) => ({
+      episode_id: d.episode_id,
+      name: d.details?.name ?? d.label,
+      note: d.details?.note ?? null,
+      last_seen_at: d.detected_at,
+    }));
   }
 
   async function handleTile(res, layer, z, x, y) {
@@ -1144,13 +1258,16 @@ export function createApp({
       requireAuth(req, 'ingest');
       const { detection, jpeg } = validateDetection(await readJson(req), now());
       const isNewEpisode = !(await storage.episodeExists(detection.episode_id));
+      const isFire = detection.kind !== 'person';
       const id = crypto.randomUUID();
       const image = jpeg ?? state.latestFrame?.jpeg ?? null;
       const record = {
         id, ...detection, status: 'active', image_path: await saveDetectionImage(id, image),
       };
       await storage.insertDetection(record);
-      if (isNewEpisode) scheduleAutoAnalysis(record, image);
+      // Person sightings enrich the incident but never trigger a fire
+      // analysis of their own.
+      if (isNewEpisode && isFire) scheduleAutoAnalysis(record, image);
       sendJson(res, 200, { accepted: true, id, new_episode: isNewEpisode });
       return;
     }
@@ -1163,6 +1280,7 @@ export function createApp({
           ...incident,
           image_url: incident.latest.image_path ? `/api/detections/${incident.latest.id}/image` : null,
         },
+        persons: await recentPersons(),
       });
       return;
     }
@@ -1218,8 +1336,8 @@ export function createApp({
       const incident = await activeIncident().catch(() => null);
       const detection = incident?.active ? incident.latest : null;
       const evidence = snapFresh
-        ? { kind: 'rgb-snapshot', at: snap.capturedAtMs, jpeg: snap.jpeg, telemetry, detection }
-        : { kind: 'telemetry-only', at: Date.parse(telemetry.observed_at), telemetry, detection };
+        ? { kind: 'rgb-snapshot', at: snap.capturedAtMs, jpeg: snap.jpeg, telemetry, detection, persons: await recentPersons() }
+        : { kind: 'telemetry-only', at: Date.parse(telemetry.observed_at), telemetry, detection, persons: await recentPersons() };
       try {
         const record = await runAnalysis(evidence, { trigger: 'manual', episodeId: detection?.episode_id ?? null });
         recordGeminiResult(null);
@@ -1260,8 +1378,8 @@ export function createApp({
         throw new ApiError(429, 'plans are limited to one request per 10 seconds');
       }
       state.lastPlanStart = nowMs;
-      const [incident, telemetry, analyses] = await Promise.all([
-        activeIncident(), storage.latestTelemetry(), storage.latestAnalyses(1),
+      const [incident, telemetry, analyses, persons] = await Promise.all([
+        activeIncident(), storage.latestTelemetry(), storage.latestAnalyses(1), recentPersons(),
       ]);
       const detection = incident?.active ? incident.latest : null;
       const parts = [
@@ -1276,6 +1394,9 @@ export function createApp({
         { text: `Latest Gemini scene analysis: ${JSON.stringify(analyses[0] ? {
           summary: analyses[0].summary, severity: analyses[0].severity, spread_outlook: analyses[0].spread_outlook,
         } : null)}.` },
+        { text: persons.length
+          ? `Persons reported in the affected area (unverified marker sightings — factor them into objectives and actions): ${JSON.stringify(persons)}`
+          : 'No persons are reported inside the affected area.' },
       ];
       const image = detection ? await loadDetectionImage(detection) : state.latestSnapshot?.jpeg;
       if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image.toString('base64') } });

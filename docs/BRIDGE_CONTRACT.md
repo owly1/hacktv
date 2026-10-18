@@ -73,6 +73,32 @@ the box width at that range.
 brush. Kept short so the code has few, large modules (QR version 3).
 Generate with `python3 bridge/make_test_marker.py [--name … --area … --wind … --dir …]`.
 
+## QR markers decoded on the backend (no bridge code needed)
+
+`backend/qrscan.mjs` decodes every incoming frame (and Pi-observer snapshot)
+with pure-JS `jpeg-js` + `jsQR` — the deployed observer streams untouched.
+A payload must decode identically on **2 consecutive scans** before it
+counts; while the marker stays in view a sighting row is logged at most
+every 5 s.
+
+- `EW1:` fire marker → `qrfire-<name>` detection episode (`source:
+  'qr-test'`, `kind: 'fire'`). Scenario fields land in `details`; the marker
+  `bbox` and the frame itself are stored. Fire position is the site anchor
+  labelled `position_source: 'site-anchor estimate'` — real position needs
+  camera-pose calibration (still open). A new episode triggers the normal
+  auto-analysis.
+- `EWP:name|note` person marker → `qrperson-<name>` sighting
+  (`source: 'qr-person'`, `kind: 'person'`). Persons never start or hijack
+  the fire incident; recent ones (≤5 min) are returned as `persons` on
+  `GET /api/incident` and injected into the Gemini analysis/plan context.
+- Confirmed markers are merged into the video overlay (`X-Detections`) for
+  ~3 s so viewers see the box around the code.
+
+Real CV person detection is the stretch path: a bridge may also
+`POST /api/ingest/detection` with `source: 'cv-person'` (or `'yolo'`),
+`kind: 'person'`, same fields as a fire sighting — it lands as a person
+sighting, not a fire episode.
+
 ## Flight events — `POST /api/ingest/flight`
 
 `{ "at": ISO, "phase": "preflight|takeoff|climb|circle|return|landing|landed|aborted|error", "step": 3, "steps": 8, "message": "…" }`

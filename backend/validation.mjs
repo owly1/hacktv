@@ -213,7 +213,8 @@ export function validateSnapshotEnvelope(body, nowMs) {
 }
 
 export const MAX_FRAME_BYTES = 2 * 1024 * 1024;
-const DETECTION_SOURCES = new Set(['yolo', 'qr-test']);
+const DETECTION_SOURCES = new Set(['yolo', 'qr-test', 'qr-person', 'cv-person']);
+const DETECTION_KINDS = new Set(['fire', 'person']);
 const FLIGHT_PHASES = new Set([
   'preflight', 'takeoff', 'climb', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
 ]);
@@ -285,11 +286,15 @@ export function validateDetection(body, nowMs) {
     if (jpeg.length > MAX_SNAPSHOT_BYTES) throw new ApiError(413, 'detection frame too large');
     if (!isJpeg(jpeg)) throw new ApiError(400, 'detection frame is not a JPEG image');
   }
+  if (body.kind !== undefined && !DETECTION_KINDS.has(body.kind)) {
+    throw new ApiError(400, 'kind must be fire or person');
+  }
   return {
     detection: {
       detected_at: new Date(detectedAtMs).toISOString(),
       episode_id: body.episode_id,
       source: body.source,
+      kind: body.kind ?? 'fire',
       label: body.label,
       confidence: body.confidence,
       bbox,
