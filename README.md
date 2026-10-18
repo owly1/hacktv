@@ -62,6 +62,12 @@ npm run demo -- --port 9000     # run beside another backend
 
 The Windows wrapper ` .\demo.ps1 -Port 9000` is also supported.
 
+The launcher verifies the people-demo API and dashboard files before reusing
+a running backend. If another checkout already occupies port 8787, stop that
+backend or use `.\demo.ps1 -Port 9000` from this checkout. In Replay, choose
+**Person search · fire first** and use the sidebar's person icon to open
+**People · rescue leads**; the simulation includes a person inside the fire.
+
 Starts the backend and opens the dashboard in Demo mode (`/?demo`). The
 historical fires from `examples/` are hardcoded in `dist/demo-cases.js`, each
 with a simulated ANAFI-01 (telemetry + detection, labeled DEMO). **Analyze** and
