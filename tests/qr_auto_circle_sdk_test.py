@@ -1,5 +1,7 @@
 """Fake-aircraft adapter tests. Never create an Olympe Drone or open its radio."""
 import importlib.util
+import math
+from dataclasses import replace
 from pathlib import Path
 import sys
 import time
@@ -17,6 +19,8 @@ if HAS_SDK:
 
 @unittest.skipUnless(HAS_SDK, 'Run in the Pi Olympe SDK; aircraft is mocked')
 class AutoCircleTests(unittest.TestCase):
+    fire_size = False
+
     def setUp(self):
         """Prepare isolated SDK/test fixtures with real aircraft constructors guarded."""
         # An accidental real SDK construction fails even when running on the Pi.
@@ -28,7 +32,7 @@ class AutoCircleTests(unittest.TestCase):
         """Construct the tested runtime with mock aircraft and publisher dependencies."""
         args = SimpleNamespace(ip=None, controller='direct', home_lat=0, home_lon=0,
             execute=execute, terminal_control=True, hover_seconds=1,
-            preflight_file='test-only.json')
+            preflight_file='test-only.json', fire_size=self.fire_size)
         b = auto.QRAutoCircle(args, Mock(), Mock(), SimpleNamespace(offset=(0,0,0)), TEXT)
         b.connected = True
         b.drone = Mock(connected=True)
@@ -73,7 +77,8 @@ class AutoCircleTests(unittest.TestCase):
             b.sensor_ages.ages={key:now[0] for key in ('altitude','speed','attitude','camera')}
             b.last_frame_time=time.time()
             b.telemetry.update(state='hovering',altitude_m=1,attitude_deg={'roll':0,'pitch':0})
-            b.marker=Marker(now[0]-.001,TEXT,1,0,1,0,0)
+            b.marker = (replace(b.marker, at=now[0]-.001) if b.marker else
+                        Marker(now[0]-.001,TEXT,1,0,1,0,0))
         b.sensor_ages.ages={key:100. for key in ('altitude','speed','attitude','camera')}
         def receive(message):
             """Supply a controlled SDK state/frame update to the tested flight runtime."""
@@ -90,7 +95,12 @@ class AutoCircleTests(unittest.TestCase):
             def move(self,offset,speed,check):
                 """Record the requested relative move and simulate its result or injected failure."""
                 outer.assertIs(b.drone,aircraft)
-                moves.append(offset); advance(.5)
+                moves.append(offset)
+                x, y = b.marker.forward_m-offset[0], b.marker.right_m-offset[1]
+                b.marker = replace(b.marker,
+                    forward_m=x*math.cos(offset[3])+y*math.sin(offset[3]),
+                    right_m=-x*math.sin(offset[3])+y*math.cos(offset[3]))
+                advance(.5)
                 if fail=='lost-marker': b.marker=None
                 if fail=='cancel': b.abort_flight.set()
                 if fail=='move-error': raise RuntimeError('move rejected')
@@ -106,7 +116,7 @@ class AutoCircleTests(unittest.TestCase):
         """Verify takeoff 24 measured segments and confirmed land on same sdk object."""
         b,moves,lands,sends=self.flight()
         self.assertEqual(len(sends),1); self.assertIn('TakeOff',sends[0])
-        self.assertEqual(len(moves),24); self.assertEqual(lands,['confirmed'])
+        self.assertEqual(len(moves),26 if self.fire_size else 24); self.assertEqual(lands,['confirmed'])
         self.assertTrue(b.land_confirmed); self.assertFalse(b.running)
 
     def test_marker_loss_cancel_and_rejected_move_always_land(self):
@@ -155,7 +165,8 @@ class AutoCircleTests(unittest.TestCase):
             payload=b.incident_queue.get_nowait()
             self.assertEqual(payload['source'],'qr-test')
             self.assertEqual(payload['label'],'fire')
-            self.assertEqual(payload['details']['orbit_radius_m'],1.)
+            self.assertEqual(payload['details']['orbit_radius_m'],1.25 if self.fire_size else 1.)
+            self.assertEqual(payload['details']['flight_protocol'], 'qr-fire-size' if self.fire_size else 'qr-auto-circle')
             self.assertIsNone(payload['fire']['latitude'])
             b.incident_queue.put_nowait(payload)
             # The worker exits on its next queue check. The accepted response
@@ -187,10 +198,26 @@ class AutoCircleTests(unittest.TestCase):
 
     def test_unverified_live_configuration_stops_before_sdk_construction(self):
         """Verify unverified live configuration stops before sdk construction."""
-        with patch.object(sys,'argv',['qr_auto_circle.py','--execute','--backend','http://localhost:8787']), \
+        argv = ['qr_auto_circle.py','--execute','--backend','http://localhost:8787']
+        if self.fire_size:
+            argv.append('--fire-size')
+        with patch.object(sys,'argv',argv), \
              patch.object(sys.stdin,'isatty',return_value=True), patch.dict(auto.os.environ,{'INGEST_TOKEN':'test-only'}), \
              patch.object(auto,'QRAutoCircle') as constructor:
             with self.assertRaises(SystemExit): auto.main()
+            constructor.assert_not_called()
+
+
+class FireSizeAutoCircleTests(AutoCircleTests):
+    """Run the same one-shot, incident, landing and read-only gates for scaled flight."""
+    fire_size = True
+
+    def test_fire_size_cannot_use_uncalibrated_preset(self):
+        """Reject incompatible modes before constructing any aircraft adapter."""
+        with patch.object(sys, 'argv', ['qr_auto_circle.py', '--fire-size', '--preset']), \
+             patch.object(auto, 'QRAutoPreset') as constructor:
+            with self.assertRaises(SystemExit):
+                auto.main()
             constructor.assert_not_called()
 
 

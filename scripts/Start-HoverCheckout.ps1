@@ -3,7 +3,7 @@
 param(
     [string]$PiAddress,
     [switch]$Execute,
-    [ValidateSet('Hover','QrCheckout','QrOrbit','QrPreset','QrAutoCircle','QrAutoPreset')][string]$Mode = 'Hover',
+    [ValidateSet('Hover','QrCheckout','QrOrbit','QrPreset','QrAutoCircle','QrAutoPreset','QrFireSize')][string]$Mode = 'Hover',
     [switch]$NativeVideo
 )
 $ErrorActionPreference = 'Stop'
@@ -54,10 +54,11 @@ switch (($tunnelState | Out-String).Trim()) {
 }
 $epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
 $liveOption = if ($Execute) { '--execute' } else { '' }
-$program = if ($Mode -eq 'Hover') { 'hover_checkout.py' } elseif ($Mode -eq 'QrPreset') { 'qr_preset_demo.py' } elseif ($Mode -in @('QrAutoCircle','QrAutoPreset')) { 'qr_auto_circle.py' } else { 'qr_takeoff_demo.py' }
-$extraOptions = if ($NativeVideo -or ($Mode -in @('QrCheckout','QrOrbit','QrAutoCircle'))) { '--video-width 0' } else { '' }
+$program = if ($Mode -eq 'Hover') { 'hover_checkout.py' } elseif ($Mode -eq 'QrPreset') { 'qr_preset_demo.py' } elseif ($Mode -in @('QrAutoCircle','QrAutoPreset','QrFireSize')) { 'qr_auto_circle.py' } else { 'qr_takeoff_demo.py' }
+$extraOptions = if ($NativeVideo -or ($Mode -in @('QrCheckout','QrOrbit','QrAutoCircle','QrFireSize'))) { '--video-width 0' } else { '' }
 if ($Mode -eq 'QrAutoPreset') { $extraOptions += ' --preset --video-fps 30' }
-if (($Mode -in @('QrCheckout','QrOrbit')) -or ($Mode -eq 'QrAutoCircle' -and $Execute)) {
+if ($Mode -eq 'QrFireSize') { $extraOptions += ' --fire-size' }
+if (($Mode -in @('QrCheckout','QrOrbit')) -or ($Mode -in @('QrAutoCircle','QrFireSize') -and $Execute)) {
     $extraOptions += ' --camera-calibration /home/pet/emberwatch/qr-demo/camera.local.json --preflight-file /home/pet/emberwatch/qr-demo/current-preflight.local.json'
     if ($Mode -eq 'QrOrbit') { $extraOptions += ' --full-orbit' }
 }
@@ -97,9 +98,13 @@ elseif ($Execute -and $Mode -eq 'QrAutoPreset') {
     Write-Host 'One metre radius, centre 1 m ahead of launch heading. Camera aims at that planned centre.'
     Write-Host 'No QR-size measurement, camera calibration or typed arming phrase. Keep this terminal open.'
 }
-elseif ($Execute -and $Mode -eq 'QrAutoCircle') {
+elseif ($Execute -and $Mode -in @('QrAutoCircle','QrFireSize')) {
     Write-Host 'AUTONOMOUS: a stable selected QR and accepted fire incident start takeoff automatically.'
-    Write-Host 'One metre radius, camera tracking, one orbit, then land. No typed arming phrase.'
+    if ($Mode -eq 'QrFireSize') {
+        Write-Host 'QR fire hectares select a scaled 1-1.5 m radius; measured retreat, one orbit, then land.'
+    } else {
+        Write-Host 'One metre radius, camera tracking, one orbit, then land. No typed arming phrase.'
+    }
     Write-Host 'Requires measured calibration and current physical preflight. Keep this terminal open.'
 }
 elseif ($Execute) {

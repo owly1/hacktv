@@ -100,6 +100,7 @@ dashboard startup and observation do not start a flight.
 | Short hover and terminal landing | [Hover checkout](docs/TERMINAL_FLIGHT_TEST.md) |
 | Automatic QR-triggered preset | [Automatic demo](docs/QR_AUTO_DEMO.md) |
 | Automatic orbit around a measured QR | [Measured circle](docs/QR_AUTO_CIRCLE.md) |
+| Fire-area-scaled indoor QR retreat and orbit | [Fire size](docs/QR_FIRE_SIZE.md) |
 | Older typed-arm preset | [Preset](docs/QR_PRESET_DEMO.md) |
 | Calibration and staged orbit test | [Cold start](docs/QR_DEMO_FROM_OFF.md), [checkout](docs/QR_FLIGHT_CHECKOUT.md) |
 | Recognition-only browser preview | [Rehearsal](docs/QR_ORBIT_DEMO.md) |

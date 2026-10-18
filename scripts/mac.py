@@ -168,7 +168,7 @@ print(f'Requested stop for {count} observation receiver(s). Flight sessions were
 
 def runtime_command(config, mode, execute, native=False):
     """Build the chosen Pi receiver/flight command with its explicit execution and video options."""
-    if mode not in ("observe", "qr-preset", "hover", "qr-circle", "qr-demo"):
+    if mode not in ("observe", "qr-preset", "hover", "qr-circle", "qr-demo", "qr-fire-size"):
         raise ValueError("Unknown receiver mode")
     directory = shlex.quote(config['directory'])
     common = ['--controller', 'direct', '--ip', config['drone_ip'], '--drone-id', config['drone_id'],
@@ -180,14 +180,17 @@ def runtime_command(config, mode, execute, native=False):
                    '--camera-fps', '0', '--camera-width', '0' if native else '640']
     else:
         program = [{'qr-preset': 'qr_preset_demo.py', 'hover': 'hover_checkout.py',
-                    'qr-circle': 'qr_auto_circle.py', 'qr-demo': 'qr_auto_circle.py'}[mode],
+                    'qr-circle': 'qr_auto_circle.py', 'qr-demo': 'qr_auto_circle.py',
+                    'qr-fire-size': 'qr_auto_circle.py'}[mode],
                    '--no-window', '--out-dir', 'anafi_out']
         if mode == 'qr-demo':
             program += ['--preset', '--video-fps', '30']
-        if mode == 'qr-circle' and execute:
+        if mode == 'qr-fire-size':
+            program += ['--fire-size']
+        if mode in ('qr-circle', 'qr-fire-size') and execute:
             program += ['--camera-calibration', 'camera.local.json',
                         '--preflight-file', 'current-preflight.local.json']
-        if native or mode == 'qr-circle':
+        if native or mode in ('qr-circle', 'qr-fire-size'):
             program += ['--video-width', '0']
         if execute:
             program += ['--execute']
@@ -319,8 +322,8 @@ def main():
     rehearsal.add_argument('--test-image', action='store_true')
     rehearsal.add_argument('--port', type=int, default=8789)
     pi = commands.add_parser('pi', help='Foreground Pi receiver plus reverse tunnel')
-    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover', 'qr-circle', 'qr-demo'], default='observe')
-    pi.add_argument('--execute', action='store_true', help='Enable flight: qr-demo and qr-circle start after QR/incident confirmation; other modes require typed arming')
+    pi.add_argument('--mode', choices=['observe', 'qr-preset', 'hover', 'qr-circle', 'qr-demo', 'qr-fire-size'], default='observe')
+    pi.add_argument('--execute', action='store_true', help='Enable flight: qr-demo, qr-circle and qr-fire-size start after QR/incident confirmation; other modes require typed arming')
     pi.add_argument('--native-video', action='store_true')
     args = parser.parse_args()
     os.chdir(ROOT)
@@ -399,7 +402,7 @@ def main():
             raise ValueError('Start the Pi receiver in an interactive operator terminal.')
         command = runtime_command(config, args.mode, args.execute, args.native_video)
         print('Keep the Skycontroller off and FreeFlight closed for this direct Pi connection.', flush=True)
-        print('Flight is ' + ('AUTOMATIC AFTER QR + INCIDENT' if args.execute and args.mode in ('qr-circle','qr-demo')
+        print('Flight is ' + ('AUTOMATIC AFTER QR + INCIDENT' if args.execute and args.mode in ('qr-circle','qr-demo','qr-fire-size')
               else 'ENABLED AFTER TYPED ARMING' if args.execute else 'DISABLED'), flush=True)
         if args.mode == 'observe':
             supervise_observer(config, env, command)

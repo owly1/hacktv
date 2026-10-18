@@ -235,6 +235,7 @@ const FIRE_MARKER_ANNOTATIONS = new Set(['position_simulated', 'location_note', 
 const FIRE_FLIGHT_PATHS = new Map([
   ['qr-auto-circle', 'measured-marker'],
   ['qr-auto-preset', 'launch-heading'],
+  ['qr-fire-size', 'measured-marker'],
 ]);
 const FLIGHT_PHASES = new Set([
   'preflight', 'takeoff', 'climb', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
@@ -332,8 +333,9 @@ export function validateDetection(body, nowMs) {
     if (FIRE_FLIGHT_ANNOTATIONS.some((key) => Object.hasOwn(details, key))
         && (!FIRE_FLIGHT_PATHS.has(details.flight_protocol)
             || details.path_reference !== FIRE_FLIGHT_PATHS.get(details.flight_protocol)
-            || details.orbit_radius_m !== 1)) {
-      throw new ApiError(400, 'QR flight annotations require a supported protocol, matching path reference and one-metre radius');
+            || details.orbit_radius_m !== (details.flight_protocol === 'qr-fire-size'
+              ? Math.min(1.5, 1 + .25 * Math.sqrt(FIRE_MARKER_DETAILS.area_ha / 120)) : 1))) {
+      throw new ApiError(400, 'QR flight annotations require a supported protocol, matching path reference and protocol radius');
     }
   }
   let jpeg = null;
