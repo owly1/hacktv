@@ -202,6 +202,11 @@ body[data-mode=alert] .map-location .dot{color:var(--ember)}
 .drone-svg .led{fill:#F3EFE6}.drone-svg .led.rear{fill:#E8562A}
 .drone-alt{position:absolute;left:50%;top:88px;transform:translateX(-50%);background:#1D1B16dd;color:#F3EFE6;font:600 9px/1 Consolas,monospace;padding:2px 5px;border-radius:3px;white-space:nowrap}
 .drone-icon.landed .blade{animation:none}.drone-icon.landed .drone-cone{display:none}
+.drone-icon[style*="--fleet-color"] .halo{stroke:var(--fleet-color);stroke-width:3}
+.drone-icon[style*="--fleet-color"] .drone-cone{fill:var(--fleet-color)}
+.drone-icon[style*="--fleet-color"] .drone-alt{border:1px solid var(--fleet-color)}
+.drone-icon.fleet-selected .halo{stroke-width:5;fill:#fff}
+.drone-icon.fleet-selected .drone-alt{background:var(--fleet-color);color:#17232b;font-weight:700}
 @keyframes rotor{to{transform:rotate(360deg)}}
 .map-zoom #zoom-drone.active{background:var(--surface);color:var(--teal)}
 .fire-pin{width:34px;height:34px;border-radius:50%;background:var(--white);border:2px solid var(--ember);display:grid;place-items:center;font-size:17px;box-shadow:0 0 0 8px #E8562A33;animation:fire-pulse 1.6s ease-in-out infinite}
@@ -258,6 +263,24 @@ body[data-mode=alert] .map-location .dot{color:var(--ember)}
 .panel-foot{display:flex;gap:8px;align-items:center;border-top:1px solid var(--night-line);padding:10px 16px;font-size:12px;color:var(--cream-2)}
 .status-dot{width:8px;height:8px;background:var(--cyan);border-radius:50%;flex-shrink:0}
 .drone-panel .error-text{color:#FF8A60!important}
+/* Historical replay fleet: scroll between feeds without moving the forecast timeline. */
+.fleet-controls{padding:0 16px 12px;border-bottom:1px solid var(--night-line);color:var(--cream)}
+.fleet-controls[hidden]{display:none}
+.fleet-toolbar{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap}
+.fleet-toolbar button,.fleet-toolbar select{background:var(--night-3);color:var(--cream);border:1px solid #66675e;border-radius:5px;padding:6px 8px;font:12px var(--mono);cursor:pointer}
+.fleet-toolbar button[aria-pressed="true"]{border-color:#61d6cc;color:#61d6cc}
+.fleet-toolbar label{font-size:12px;color:#bebdaf}
+.fleet-summary{font-size:12px;line-height:1.5;margin:8px 0 0;color:#bebdaf}
+.fleet-roster{display:flex;gap:9px;overflow-x:auto;padding:3px 1px 10px;scroll-snap-type:x proximity;scrollbar-color:#69746d #242c29}
+.fleet-card{flex:0 0 195px;min-width:0;scroll-snap-align:start;text-align:left;cursor:pointer;color:var(--cream);background:#242c29;border:1px solid #4b524b;border-radius:7px;padding:8px;display:flex;flex-direction:column;gap:5px;font-family:var(--mono)}
+.fleet-card:hover,.fleet-card:focus-visible{border-color:var(--fleet-color);outline:2px solid var(--fleet-color);outline-offset:1px}
+.fleet-card.selected{border-color:var(--fleet-color);box-shadow:inset 0 0 0 1px var(--fleet-color)}
+.fleet-card-head{display:flex;justify-content:space-between;align-items:center;gap:5px;color:var(--fleet-color);font-size:12px}
+.fleet-card-head small{font-size:8px;color:#bebdaf}
+.fleet-card canvas{width:100%;height:auto;aspect-ratio:16/9;background:#25372f;border-radius:3px}
+.fleet-phase{font-size:12px;color:var(--fleet-color)}
+.fleet-readout{font-size:10px;color:#d0cebf;line-height:1.4}
+.drone-panel.is-fullscreen .fleet-controls{flex:none}
 
 /* gemini */
 .analysis-content{padding:0 16px 16px;display:flex;flex-direction:column;gap:12px}
@@ -542,6 +565,11 @@ body.panel-fullscreen{overflow:hidden}
 .draft-placeholder{min-height:180px;align-items:center}
 .draft-placeholder h3{font-size:17px;color:var(--muted);font-weight:600}
 @media(min-width:1550px){.map-viewport{height:540px}.video-frame{height:230px}}
+@media(min-width:1001px){
+ .primary-grid:has(#fleet-controls:not([hidden])){align-items:start}
+ .primary-grid:has(#fleet-controls:not([hidden]))>.map-panel:not(.is-fullscreen) .map-frame{flex:none}
+ .primary-grid:has(#fleet-controls:not([hidden]))>.map-panel:not(.is-fullscreen) .map-viewport{height:590px;min-height:590px;flex:none}
+}
 @media(max-width:1240px){
  main{padding:20px 22px 28px}.topbar{padding:12px 22px}
  .primary-grid{grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr)}

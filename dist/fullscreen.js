@@ -4,7 +4,7 @@
   const PANELS = {
     'map-panel': 'Fire spread explorer',
     'people-panel': 'People · rescue leads',
-    'drone-panel': 'ANAFI-01 drone feed',
+    'drone-panel': 'Drone cameras and telemetry',
     'analysis-panel': 'Gemini analysis',
     'response-panel': 'Response planning assistant',
   };

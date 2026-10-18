@@ -109,12 +109,13 @@ void main() {
   }
 
   /* Camera basis in east/north/up for a heading and downward pitch (degrees). */
-  function basis(heading, pitch) {
+  function basis(heading, pitch, roll = 0) {
     const h = heading * RAD, p = pitch * RAD, fh = [Math.sin(h), Math.cos(h), 0];
+    const r = [Math.cos(h), -Math.sin(h), 0], u = [fh[0] * Math.sin(p), fh[1] * Math.sin(p), Math.cos(p)], bank = roll * RAD;
     return {
       fwd: [fh[0] * Math.cos(p), fh[1] * Math.cos(p), -Math.sin(p)],
-      right: [Math.cos(h), -Math.sin(h), 0],
-      up: [fh[0] * Math.sin(p), fh[1] * Math.sin(p), Math.cos(p)],
+      right: r.map((v, i) => v * Math.cos(bank) + u[i] * Math.sin(bank)),
+      up: u.map((v, i) => v * Math.cos(bank) - r[i] * Math.sin(bank)),
     };
   }
   /** Return the three-component dot product used by camera projection. */
@@ -264,7 +265,7 @@ void main() {
     ctx.fillText(`${String(Math.round((pose.heading % 360 + 360) % 360)).padStart(3, '0')}°`, cx, ty + 16 + fs);
     // side readouts
     ctx.textAlign = 'left';
-    const left = [`ALT ${pose.alt.toFixed(1)} m`, `SPD ${info.speed.toFixed(1)} m/s`, `GIM ${(-pose.pitch).toFixed(1)}°`];
+    const left = [`ALT ${pose.alt.toFixed(1)} m`, `SPD ${info.speed.toFixed(1)} m/s`, `GIM ${(-pose.pitch).toFixed(1)}°`, ...(pose.drone_id ? [`V/S ${pose.climbRate.toFixed(1)} m/s`] : [])];
     left.forEach((s, i) => ctx.fillText(s, w * .04, h * .44 + i * fs * 1.35));
     ctx.textAlign = 'right';
     const right = [info.range != null ? `RNG ${Math.round(info.range)} m` : '', `BAT ${Math.round(info.battery)}%`, info.zoom ?? 'ZOOM 1.0×'].filter(Boolean);
@@ -279,7 +280,7 @@ void main() {
   function render(ctx, cam, pose, opts) {
     const scene = cam.scene, t = opts.t, shake = opts.shake ?? 1;
     pose = {...pose, heading: pose.heading + shake * (.35 * Math.sin(t * 1.3) + .15 * Math.sin(t * 3.7)), pitch: pose.pitch + shake * (.25 * Math.sin(t * 1.7 + 1) + .1 * Math.sin(t * 4.3))};
-    pose.basis = basis(pose.heading, pose.pitch);
+    pose.basis = basis(pose.heading, pose.pitch, pose.roll);
     let found = null;
     if (cam.video && cam.video.readyState >= 2) {
       const v = cam.video, s = Math.max(cam.w / v.videoWidth, cam.h / v.videoHeight);
@@ -315,8 +316,26 @@ void main() {
       ctx.fillStyle = '#2d3c3e'; ctx.fillRect(0, 0, cam.w, cam.h);
     }
     if (!cam.video && opts.t >= 8) drawPeople(ctx, cam, pose, opts.people || []);
+    if (!cam.video && opts.fleet) drawFleet(ctx, cam, pose, opts.fleet);
     hud(ctx, cam, pose, opts);
     return found;
+  }
+
+  /** Project other simulated aircraft at their actual heights to give the view depth. */
+  function drawFleet(ctx, cam, pose, fleet) {
+    ctx.save(); ctx.font = '600 18px Consolas, monospace'; ctx.lineWidth = 2;
+    for (const drone of fleet) {
+      if (drone.drone_id === pose.drone_id) continue;
+      const point = project(cam, pose, [drone.e, drone.n, drone.alt]);
+      if (!point || point[0] < 12 || point[0] > cam.w - 12 || point[1] < 12 || point[1] > cam.h - 12) continue;
+      const [x, y, z] = point, size = Math.max(5, Math.min(22, cam.f * 1.2 / z));
+      ctx.strokeStyle = ctx.fillStyle = drone.color;
+      ctx.beginPath(); ctx.moveTo(x - size, y - size / 2); ctx.lineTo(x + size, y + size / 2);
+      ctx.moveTo(x - size, y + size / 2); ctx.lineTo(x + size, y - size / 2); ctx.stroke();
+      for (const dx of [-1, 1]) for (const dy of [-1, 1]) { ctx.beginPath(); ctx.ellipse(x + dx * size, y + dy * size / 2, size * .4, size * .16, 0, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.fillText(drone.drone_id, x + size + 5, y);
+    }
+    ctx.restore();
   }
 
   /** Draw fictional people and their boxes through the replay camera's current pose. */

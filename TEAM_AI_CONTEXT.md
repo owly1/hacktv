@@ -38,6 +38,11 @@ put procedures in the linked guides and explain local behavior at its function.
   replay scout can enter the rendered fire footprint; that legacy behavior does
   not define the new perimeter-search requirement.
 
+`fleet-demo-hardcode` implements the historical Replay portion: four simulated
+aircraft, scrolling POV previews, coordinated exterior descents and shared
+fictional leads. See [the demo guide](docs/FLEET_DEMO.md). This browser replay
+does not implement per-drone live ingest or real fleet flight coordination.
+
 ## Branching for every teammate
 
 Start each new task from an up-to-date `origin/main`:

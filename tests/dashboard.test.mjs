@@ -20,7 +20,7 @@ async function dashboard() {
   /** Build a chainable fake Leaflet layer for dashboard-state assertions. */
   const layer = () => ({
     addTo() {return this;}, remove() {}, clearLayers() {}, bindTooltip() {return this;},
-    bindPopup() {return this;}, setLatLng() {return this;}, setOpacity() {return this;},
+    bindPopup() {return this;}, setLatLng() {return this;}, setOpacity() {return this;}, on() {return this;},
   });
   const context = vm.createContext({
     console, performance, URLSearchParams, AbortSignal,
@@ -62,6 +62,41 @@ test('person search and historical replay switch without reusing a historical dr
   run('selectDemo(state.demo.fires[0].id)');
   assert.equal(run('state.analysis.summary'), 'Historical analysis');
   assert.equal(run('peopleDemoActive()'), false);
+});
+
+test('fleet POV, replay speed and scenario switches preserve shared evidence and selected telemetry', async () => {
+  const {run, element} = await dashboard();
+  run('selectDemo(state.demo.fires[0].id); state.demo.started = performance.now() - 90000;');
+  const time = run('demoT()');
+  run("state.minute = 30; demoResults().analysis = {summary:'shared assessment'}; selectFleetDrone('ANAFI-03')");
+  assert.ok(Math.abs(run('demoT()') - time) < 1);
+  assert.equal(run('state.minute'), 30);
+  assert.equal(run('demoResults().analysis.summary'), 'shared assessment');
+  assert.equal(run('state.demo.autoPOV'), false);
+  assert.equal(run('simCase(demoCase()).drone.telemetry.drone_id'), 'ANAFI-03');
+  assert.equal(run('simCase(demoCase()).fleet.length'), 4);
+  assert.equal(element('drone-heading').textContent, 'ANAFI-03 · Fleet POV');
+  element('fleet-rate').value = '4'; element('fleet-rate').onchange();
+  assert.ok(Math.abs(run('demoT()') - time) < 1, 'rate changes rebase the clock');
+  run('selectDemo(state.demo.fires[1].id)');
+  assert.ok(run('demoT()') < 1);
+  run('selectDemo(state.demo.fires[0].id)');
+  assert.ok(Math.abs(run('demoT()') - time) < 1, 'returning to a case resumes its own time');
+  assert.equal(run('state.demo.scout.selectedId'), 'ANAFI-03');
+  run("selectDemo('people')");
+  assert.equal(element('fleet-controls').hidden, true);
+  assert.equal(run('state.demo.scout'), null);
+});
+
+test('fleet briefs contain the selected telemetry, all aircraft and source-attributed leads', async () => {
+  const {run} = await dashboard();
+  run(`selectDemo(state.demo.fires[0].id); state.demo.started = performance.now() - 105000;
+    selectFleetDrone('ANAFI-03'); peopleState.snap = BoscoScout.snapshot(state.demo.scout, demoT());
+    var savedBrief = ''; download = (name, body) => { savedBrief = body; }; exportBrief();`);
+  assert.match(run('savedBrief'), /## Simulated fleet/);
+  assert.match(run('savedBrief'), /Source drones: ANAFI-/);
+  for (const id of ['ANAFI-01', 'ANAFI-02', 'ANAFI-03', 'ANAFI-04']) assert.ok(run('savedBrief').includes(id));
+  assert.equal(run('simCase(demoCase()).drone.telemetry.drone_id'), 'ANAFI-03');
 });
 
 const liveIncident = (over = {}) => ({

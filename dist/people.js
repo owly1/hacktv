@@ -213,6 +213,7 @@ function leadCard(l) {
       <div><dt>Accuracy</dt><dd>±${l.uncertainty.major_95_m} m</dd></div>
       <div><dt>Last seen</dt><dd>${fmtTime(l.last_seen_at)} <small>${fmtAgo(l.last_seen_age_s)}</small></dd></div>
       <div><dt>Evidence</dt><dd>${l.observations} sighting${l.observations === 1 ? '' : 's'} · ${l.views} angle${l.views === 1 ? '' : 's'}${l.views > 1 ? ` (${l.angle_span_deg}° apart)` : ''} · ${sensors}</dd></div>
+      ${l.observed_by?.length ? `<div><dt>Source drones</dt><dd>${l.observed_by.map(escapeHTML).join(', ')} · simulated</dd></div>` : ''}
       <div><dt>Movement</dt><dd>${mv}</dd></div>
       ${l.fire_distance_m != null || l.arrival !== undefined ? `<div><dt>Fire</dt><dd>${l.arrival !== undefined ? `<b class="arrival${l.arrival != null && l.arrival <= 30 ? ' soon' : ''}">${arrivalText(l.arrival)}</b>${l.fire_distance_m != null ? ` · ` : ''}` : ''}${l.fire_distance_m != null ? `${l.fire_distance_m} m away` : ''}</dd></div>` : ''}
     </dl>
@@ -470,6 +471,7 @@ function peopleBrief() {
     `- Location: ${fmtCoord(l)} ±${l.uncertainty.major_95_m} m (95% area from the error model)`,
     `- Status: ${l.status_text}`,
     `- Last seen: ${l.last_seen_at} · ${l.observations} sightings from ${l.views} angle(s) · ${l.sensors.join(' + ')}`,
+    l.observed_by?.length ? `- Source drones: ${l.observed_by.join(', ')} (simulated)` : null,
     `- Movement: ${l.movement.detail}`,
     (() => { const a = fireArrivalAt(l.latitude, l.longitude); return a === undefined ? null : `- Fire: ${arrivalText(a)} (projection at current conditions)`; })(),
     l.delayed.any ? `- Includes observations delivered up to ${l.delayed.max_delay_s} s late (link outage)` : null,
