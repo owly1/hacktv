@@ -1,0 +1,89 @@
+/* Drone teardown dialog on Home (teardown.js). Values follow home.dc.html. */
+.teardown {
+  position: fixed; inset: 0; z-index: 10; background: var(--bg);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.teardown[hidden] { display: none; }
+.teardown-track { height: 520vh; position: relative; }
+.teardown-stage { position: sticky; top: 0; height: 100vh; overflow: hidden; }
+@supports (height: 1svh) { .teardown-stage { height: 100svh; } }
+
+.teardown-frame { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 72px 24px; }
+.teardown-box { position: relative; width: min(1100px, 100%, (100vh - 144px) * 16 / 9); aspect-ratio: 16 / 9; }
+.teardown-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.teardown-top {
+  position: absolute; left: 0; right: 0; top: 0; padding: 24px 32px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.teardown-progress { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--label); }
+.teardown-close {
+  all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 1px var(--ring-soft); color: var(--strong);
+}
+.teardown-close:hover { box-shadow: 0 0 0 1px var(--text); }
+.teardown-close:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
+
+.teardown-rail {
+  position: absolute; left: 32px; top: 50%; transform: translateY(-50%);
+  margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px;
+}
+.teardown-rail li {
+  display: flex; align-items: center; gap: 12px;
+  font-weight: 900; font-stretch: 125%; font-size: 28px; line-height: 1; color: var(--future);
+  transition: color .25s ease;
+}
+.teardown-rail li.is-past { color: var(--text); }
+.teardown-rail li.is-current { color: var(--accent); }
+.teardown-rail .word {
+  font-family: var(--font-mono); font-weight: 400; font-stretch: 100%; font-size: 11px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--label);
+  opacity: 0; transition: opacity .25s ease;
+}
+.teardown-rail li.is-current .word { opacity: 1; }
+
+.teardown-callouts { position: absolute; right: 32px; bottom: 48px; width: min(380px, calc(100% - 64px)); }
+.callout {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 24px;
+  border-radius: var(--radius-card); background: var(--callout-bg); box-shadow: 0 0 0 1px var(--rule);
+  opacity: 0; transform: translateY(16px); transition: opacity .35s ease, transform .35s ease;
+}
+.callout.is-current { opacity: 1; transform: none; }
+.callout-kicker {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text);
+}
+.callout-kicker::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.callout-kicker.is-blue { color: var(--muted); }
+.callout-kicker.is-blue::before { background: var(--drone-blue); }
+.callout h2 { margin: 12px 0 8px; font-size: 26px; font-weight: 800; font-stretch: 110%; line-height: 1.15; color: var(--strong); }
+.callout p { margin: 0; font-size: 16px; line-height: 1.55; color: var(--muted); }
+
+.teardown-end {
+  position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%);
+  display: flex; gap: 12px; opacity: 0; pointer-events: none; transition: opacity .3s ease;
+}
+.teardown-end.is-visible { opacity: 1; pointer-events: auto; }
+.teardown-hint {
+  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--label);
+  transition: opacity .3s ease; white-space: nowrap;
+}
+.teardown-hint.is-hidden { opacity: 0; }
+
+html.is-teardown-open, html.is-teardown-open body { overflow: hidden; }
+
+/* Narrow screens: the rail and callout move out of the drone's way. */
+@media (max-width: 760px) {
+  .teardown-top { padding: 16px 16px; }
+  .teardown-frame { padding: 64px 16px 260px; align-items: flex-start; padding-top: 96px; }
+  .teardown-rail { left: 16px; top: 72px; transform: none; flex-direction: row; gap: 10px; }
+  .teardown-rail li { font-size: 20px; gap: 6px; }
+  .teardown-rail .word { display: none; }
+  .teardown-callouts { left: 16px; right: 16px; width: auto; bottom: 88px; }
+  .callout { padding: 18px; }
+  .callout h2 { font-size: 22px; }
+  .callout p { font-size: 15px; }
+  .teardown-end { bottom: 24px; }
+}

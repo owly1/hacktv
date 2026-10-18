@@ -13,8 +13,10 @@
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="mark.css">
 <link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="teardown.css">
 <script defer src="mark.js"></script>
 <script defer src="home.js"></script>
+<script defer src="teardown.js"></script>
 </head>
 <body>
 <div class="home" id="home">
@@ -66,6 +68,35 @@
       <span>Observe · Simulate · Coordinate</span>
       <span>A person decides</span>
     </footer>
+  </div>
+</div>
+
+<div class="teardown" id="teardown" role="dialog" aria-modal="true" aria-label="BOSCO drone teardown" hidden>
+  <div class="teardown-track">
+    <div class="teardown-stage">
+      <div class="teardown-frame">
+        <div class="teardown-box">
+          <canvas id="teardown-canvas" role="img" aria-label="BSC-01 drone, exploding into its parts as you scroll"></canvas>
+        </div>
+      </div>
+
+      <div class="teardown-top">
+        <span class="teardown-progress" aria-live="polite">BSC-01 · Teardown · <span id="teardown-pct">0</span>%</span>
+        <button type="button" class="teardown-close" id="close-teardown" aria-label="Close teardown">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <ol class="teardown-rail" id="teardown-rail" aria-label="Stages"></ol>
+      <div class="teardown-callouts" id="teardown-callouts"></div>
+
+      <div class="teardown-end" id="teardown-end">
+        <a class="btn-start is-small" href="dashboard.html" data-transition="to-dashboard" tabindex="-1">Get started
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+      <div class="teardown-hint" id="teardown-hint" aria-hidden="true">Scroll to take it apart ↓</div>
+    </div>
   </div>
 </div>
 </body>
