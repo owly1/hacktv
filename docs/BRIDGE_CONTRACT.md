@@ -39,11 +39,21 @@ one measurement. Unknown fields such as GPS positions remain null.
 | `state`, `gps_fix`, `attitude_deg` | SDK state, fix flag, roll/pitch/yaw in degrees |
 | `extra` | Heading/gimbal degrees, position source, flight phase, RSSI and video rate |
 
-When supported by the aircraft/SDK, `extra.fc_wind_speed_mps`,
-`fc_wind_direction_deg`, `fc_wind_available` and `fc_wind_state` carry the
-flight controller's onboard estimate/capability. Missing values remain null.
-The backend prefers valid onboard wind over Gemini's tilt-derived estimate
-and discloses significant disagreement; both remain estimates, not a wind sensor.
+Numerical onboard wind uses `extra.fc_wind_speed_mps`, `fc_wind_direction_deg`,
+`fc_wind_available`, `fc_wind_supported`, `fc_wind_observed_at` (ISO event receipt),
+and `fc_wind_age_s` (monotonic event age). Numeric fields remain null unless the
+received vector is available and at most five seconds old. Cached polling does
+not refresh measurement time. Exact calm has null direction. `fc_wind_state`
+is the independent classic warning enum, not a numerical estimate. Live measurement UI
+never labels QR/default/Gemini values as measured wind. The flight plan may use
+a separate explicitly labeled assumption when no measurement has arrived. The legacy analysis
+API remains separate; its estimates never authorize outdoor flight.
+
+Response telemetry GPS adds `extra.gps_observed_at`, `gps_age_s`, and
+`gps_accuracy_m` (conservative upper bound from whole-metre axis accuracies).
+Position is null without a fresh fixed actual GPS event. `/api/flight` preserves
+`provenance`, `drone_id`, `gps_fix`, `position_source`, `gps_observed_at` and
+`gps_accuracy_m`, including null-position rows so trail rendering can show gaps.
 
 ## Fire sighting
 
@@ -183,8 +193,8 @@ backend acceptance does not itself execute an aircraft command.
 the new GPS contour mode. Omitted `mode` or `mode: "circle"` retains the existing
 circular flight. Mode is fixed for the session; heartbeat cannot change it.
 The receiver must advertise `contour_supported: true`, `contour_ready: true`,
-`airborne_search_supported: true`
-and an explanatory `contour_reason`. Legacy receivers cannot enable contour.
+`airborne_search_supported: true`,
+`contour_profile: "outdoor-50m-live-wind"` and an explanatory `contour_reason`. Legacy receivers cannot enable contour.
 The receiver's default `ready` and circular preflight are unchanged.
 
 After the dashboard acknowledges enable, the receiver first sends
@@ -201,28 +211,35 @@ The subsequent fire claim retains `{receiver_id, session_id, episode_id}`
 marker and its matching accepted incident. The receiver pauses horizontal
 search and independently acquires a stable metric location before claiming.
 Claims add `mission.mode`, `mission.qr_text`, and
-`mission.contour: {forecast_minutes: 5, started_at, details}`. `started_at` is
-server epoch milliseconds at claim; `details` is the complete pinned Tiny
-scenario. Alpha is too large for this bounded course and cannot authorize a
-contour claim. The original circular mode still accepts Alpha/RGB evidence.
+`mission.contour: {profile: "outdoor-50m-live-wind", forecast_minutes: 5,
+started_at, details, marker_details}`. `started_at` is epoch milliseconds;
+`marker_details` is the complete pinned Tiny payload. `details` differs only in
+`area_ha = pi × 25² / 10000`, an explicit 50 m nominal outdoor scenario. Alpha
+cannot authorize this profile; the circular mode still accepts Alpha/RGB.
 
-Receiver `contour` status adds a frozen
-`anchor: {latitude, longitude, position_source: "gps"}`, `forecast_minutes: 5`,
-the matching `started_at`, pinned `details`, and `speed_mps` in 0–0.2 m/s.
-This is reporting from the sole aircraft owner, not a dashboard waypoint API.
-The frontend renders this plan independently of replay speed, map forecast
-sliders, weather edits and general incident geolocation. Expired/LAND sessions
-drop stale reported plans. Missing anchor/GPS never produces a fabricated pin.
+Receiver `contour` status adds the frozen
+`anchor: {latitude, longitude, position_source: "gps"}`, matching profile/epoch,
+details, `speed_mps` (0–1), `effective_scenario: {wind,direction,dryness,temp,rh}`,
+and `wind: {source, speed_mps, direction_deg, observed_at, age_s}`,
+`wind_status` and `wind_reason`. Source `flight-controller` carries actual receipt
+time and increasing age; status is `measured` or `stale`. Source
+`qr-scenario-assumption` carries the exact encoded Tiny wind with null receipt
+time/age and status `assumed`; it is never claimed as measured. Scenario wind is km/h; raw wind is m/s. The backend checks that the
+scenario derives from the raw wind and fixed temperature/humidity assumptions.
+Calm direction is null in raw data and zero in geometry. Receiver `wind_reason`
+explains unavailable capability/measurements separately from GPS readiness.
 
-The exact uniform-fuel 72-vertex wind/wobble outline is computed at five minutes
-plus real elapsed mission time. Its outward growth follows the encoded model;
-bounded tangential patrol speed is separately derived from head spread rate.
-After anchoring, QR visibility is not a control requirement. GPS, sensor and
-control watchdogs remain mandatory. Normal contour sessions report
-`flight_seconds: null`: LAND ends normal operation, with protective landing on
-battery, control, sensor or motion faults. Explicit short tests retain 60 seconds.
-Circle retains its 300-second limit. See [physical gates](FIRE_CONTOUR_MODE.md).
-No fleet ingest, fleet command endpoint or second physical drone is added.
+This is reporting by the aircraft owner, not a waypoint API. The frontend uses
+these exact inputs, independent of replay, sliders and general incident pins.
+LAND/expired missions drop old plans. Missing GPS never produces a map pin.
+The outline uses five minutes plus real elapsed mission time and the best
+available wind: prefer fresh measured wind, retain the last valid reading across
+dropouts, or explicitly use QR assumptions before any measured reading; patrol speed is separately scaled from growth (300×, bounded 0.5–1 m/s).
+After anchoring, QR visibility is no longer required. Wind loss alone never
+blocks takeoff or ends flight. GPS, vehicle, sensor and control watchdogs remain
+mandatory. Normal contour `flight_seconds` is null;
+protective landing still applies. Short tests remain 60 seconds, circle 300.
+See [physical gates](FIRE_CONTOUR_MODE.md). One real aircraft is supported.
 
 ## Person observation
 

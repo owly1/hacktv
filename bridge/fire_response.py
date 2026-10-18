@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from anafi_bridge import (AnafiBridge, FireDetector, Publisher, argument_parser, gimbal,
                           AltitudeChanged, SpeedChanged, AttitudeChanged, FlyingStateChanged,
-                          GpsLocationChanged, GPSFixStateChanged, olympe)
+                          GpsLocationChanged, GPSFixStateChanged, olympe, utc_iso)
 from olympe.enums.gimbal import axis as GimbalAxis
 from olympe.messages.ardrone3.SpeedSettings import MaxVerticalSpeed
 from olympe.messages.ardrone3.SpeedSettingsState import MaxVerticalSpeedChanged
@@ -27,13 +27,17 @@ from camera_search import CameraSearch, AcquisitionAim, image_bearing_pitch, ima
 from continuous_orbit import Bearing
 from fire_detection import FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_PAYLOAD, parse_marker
 from fire_contour import (GPSFix, ContourPlan, gps_reason, geographic_offset,
-                          validate_scenario, run_contour, local_offset)
+                          validate_scenario, run_contour, local_offset, finite,
+                          gps_accuracy_from_components, OUTDOOR_DETAILS, OUTDOOR_MAX_GPS_ACCURACY_M,
+                          OutdoorContourLimits)
 from contour_search import run_airborne_search
 from fire_tracking import FirePose, GroundTargetLock, orbit_fire
 from hover_checkout import HoverCheckout
 from qr_auto_circle import QRAutoPreset
 from qr_orbit_bridge import OlympeOrbitDriver
 from qr_scale import AdaptiveQRScale
+
+OUTDOOR_PROFILE = 'outdoor-50m-live-wind'
 
 
 class ContourGPS(olympe.EventListener):
@@ -47,16 +51,16 @@ class ContourGPS(olympe.EventListener):
         # An aircraft already fixed on connection need not emit another edge.
         # This cached flag never supplies location or its freshness timestamp.
         try:self.fixed = drone.get_state(GPSFixStateChanged).get('fixed') == 1
-        except (KeyError, AttributeError, TypeError):self.fixed = False
+        except (KeyError, AttributeError, TypeError, ValueError):self.fixed = False
 
     @olympe.listen_event(GpsLocationChanged(_policy='wait'))
     def location_changed(self, event, scheduler):
         """Latch SDK latitude/longitude accuracy in metres with its receipt time."""
         values = event.args
         try:
-            north = float(values['latitude_accuracy'])
-            east = float(values['longitude_accuracy'])
-            accuracy = math.hypot(north, east) if north >= 0 and east >= 0 else float('nan')
+            # ARSDK i8 fields are whole metres. Zero is a quantized value,
+            # never proof of perfect/submetre positioning.
+            accuracy = gps_accuracy_from_components(values['latitude_accuracy'], values['longitude_accuracy'])
             self.location = (time.monotonic(), float(values['latitude']), float(values['longitude']), accuracy)
         except (KeyError, TypeError, ValueError):
             self.location = None
@@ -151,9 +155,33 @@ class FireResponse(QRAutoPreset):
         """Latch mode after claim so later control changes cannot switch an airborne path."""
         return (self.response_mode if self.takeoff_used else (self.control or {}).get('mode','circle'))=='contour'
 
+    def _poll_telemetry(self):
+        """Publish received GPS event position and age, never a freshly stamped SDK cache."""
+        super()._poll_telemetry()
+        listener=getattr(self,'contour_gps',None)
+        fix=listener.snapshot() if listener is not None else None
+        now=time.monotonic()
+        age=now-fix.at if fix is not None else None
+        valid=(fix is not None and fix.fixed and finite(age) and 0<=age<=1.5
+               and finite(fix.latitude) and -85<=fix.latitude<=85
+               and finite(fix.longitude) and -180<=fix.longitude<=180)
+        with self.lock:
+            self.telemetry['latitude']=fix.latitude if valid else None
+            self.telemetry['longitude']=fix.longitude if valid else None
+            self.telemetry['gps_fix']=bool(fix and fix.fixed)
+            self.telemetry['extra'].update(position_source='gps' if valid else 'unavailable',
+                gps_observed_at=utc_iso(time.time()-age) if finite(age) and age>=0 else None,
+                gps_age_s=age if finite(age) and age>=0 else None,
+                gps_accuracy_m=fix.accuracy_m if fix is not None and finite(fix.accuracy_m) else None)
+
+    def _contour_checkout_reason(self, *, starting=False):
+        """Retain hover health gates with the explicitly bounded outdoor translation speed."""
+        return HoverCheckout.checkout_reason(self,starting=starting,
+            max_ground_speed_mps=1.25 if self.takeoff_used and self._is_contour() and not starting else .3)
+
     def _contour_reason(self):
         """Report independent contour readiness without weakening circle preflight."""
-        reason=HoverCheckout.checkout_reason(self,starting=not self.takeoff_used)
+        reason=self._contour_checkout_reason(starting=not self.takeoff_used)
         if reason:return reason
         if self.contour_gps_error:return self.contour_gps_error
         if self.geometry is None or 'qr-test' not in self.geometry.models:
@@ -162,7 +190,7 @@ class FireResponse(QRAutoPreset):
         if bounds is None or min(-30.,bounds[1])-max(-80.,bounds[0])<20:
             return 'Contour requires a working downward camera sweep for airborne QR search'
         fix=self.contour_gps.snapshot() if self.contour_gps is not None else None
-        return gps_reason(fix,time.monotonic())
+        return gps_reason(fix,time.monotonic(),max_accuracy_m=OUTDOOR_MAX_GPS_ACCURACY_M)
 
     def _build_contour_plan(self,control):
         """Freeze an airborne measured GPS/QR fire anchor, preserving the original launch fix."""
@@ -172,8 +200,9 @@ class FireResponse(QRAutoPreset):
                 or mission.get('qr_text')!=TINY_FIRE_MARKER_PAYLOAD
                 or target.get('qr_text')!=TINY_FIRE_MARKER_PAYLOAD or details is None
                 or target.get('source')!='qr-test' or contour.get('forecast_minutes')!=5
-                or contour.get('details')!=details):
-            raise ValueError('Contour requires the exact Tiny scenario and a five-minute claimed forecast')
+                or contour.get('profile')!=OUTDOOR_PROFILE or contour.get('marker_details')!=details
+                or contour.get('details')!=OUTDOOR_DETAILS):
+            raise ValueError('Contour requires Marker 2 and the explicit 50 m outdoor five-minute forecast')
         started=contour.get('started_at')
         if (not isinstance(started,(int,float)) or isinstance(started,bool) or not math.isfinite(started)
                 or not -1<=time.time()-started/1000<=10):
@@ -197,11 +226,19 @@ class FireResponse(QRAutoPreset):
         north=measured.forward_m*math.cos(yaw)-measured.right_m*math.sin(yaw)
         east=measured.forward_m*math.sin(yaw)+measured.right_m*math.cos(yaw)
         anchor=geographic_offset(position,north,east)
-        if math.hypot(*local_offset(launch,anchor))>3:raise ValueError('Contour fire anchor exceeds the 3 m launch offset')
+        if math.hypot(*local_offset(launch,anchor))>20:raise ValueError('Contour fire anchor exceeds the 20 m search envelope')
         elapsed=max(0.,time.time()-started/1000)
-        validate_scenario(details,minutes=5+elapsed/60,flight_seconds=self.flight_seconds)
-        return ContourPlan(anchor,launch,dict(details),
-                           time.monotonic()-elapsed,started)
+        plan=ContourPlan(anchor,launch,dict(OUTDOOR_DETAILS),time.monotonic()-elapsed,started,
+                         outdoor=True).update_weather(self.measured_wind_snapshot(),time.monotonic(),
+                                                     reason=self.measured_wind_reason())
+        validate_scenario(plan.details,minutes=5+elapsed/60,flight_seconds=self.flight_seconds,
+                          scenario=plan.scenario,outdoor=True)
+        return plan
+
+    def _accept_contour_plan_update(self,plan):
+        """Publish the immutable wind-updated plan used by the single flight worker."""
+        with self.takeoff_lock:
+            self.contour_plan=plan
 
     def _owns_contour_search(self,control):
         """Require the same server-assigned search owner throughout takeoff and flight."""
@@ -227,7 +264,7 @@ class FireResponse(QRAutoPreset):
         tiny=(target.get('source')=='qr-test' and target.get('qr_text')==TINY_FIRE_MARKER_PAYLOAD
               and target.get('qr_tracking','decoded')=='decoded')
         if fresh and target.get('source')=='qr-test' and not tiny:
-            self.target_error='Contour search needs Marker 2 (Tiny); the large Alpha fire is not a safe demo contour'
+            self.target_error='Outdoor contour search needs Marker 2; Alpha retains circular response'
         return bool(fresh and tiny)
 
     def _report_contour_search(self,state,message):
@@ -661,11 +698,12 @@ class FireResponse(QRAutoPreset):
                     'until_stop':bool(getattr(self.args,'until_stop',False)),
                     'qr_scale_mode':'adaptive' if self.adaptive_qr and not self._is_contour() else 'measured',
                     'camera_search_supported':self._search_bounds() is not None,
-                    'contour_supported':True,'airborne_search_supported':True,
+                    'contour_supported':True,'airborne_search_supported':True,'contour_profile':OUTDOOR_PROFILE,
+                    'wind_reason':self.measured_wind_reason() or 'Fresh aircraft wind estimate received',
                     'contour_ready':not contour_reason and not self.takeoff_used,
                     'contour_reason':contour_reason or ('GPS contour tracking active' if self.contour_plan is not None
                                                        else 'One drone searching at 1 m' if self.takeoff_used and self._is_contour()
-                                                       else 'Ready for one-drone airborne Tiny marker search'),
+                                                       else 'Ready for one-drone outdoor Marker 2 search; wind quality is reported separately'),
                     'contour':self.contour_plan.status(time.monotonic()) if self.contour_plan is not None else None,
                     'lap_seconds':self.limits.lap_seconds,
                     'localization_sources':list(self.geometry.models) if self.geometry is not None else [],
@@ -761,7 +799,8 @@ class FireResponse(QRAutoPreset):
         return (30 if starting else 25) if getattr(self.args,'short_test',False) else 40
 
     def checkout_reason(self,starting=False):
-        reason=HoverCheckout.checkout_reason(self,starting)
+        reason=(self._contour_checkout_reason(starting=starting) if self._is_contour()
+                else HoverCheckout.checkout_reason(self,starting))
         if reason: return reason
         if self.geometry is None: return self.geometry_error
         profile_error=self._camera_profile_reason()
@@ -803,14 +842,18 @@ class FireResponse(QRAutoPreset):
     def _after_hover(self):
         """Dispatch the original circle or GPS search-to-contour flow on the same flight worker."""
         if self._is_contour():
+            # Outdoor translation has its own validated profile; the original
+            # circle's untimed speed limit remains unchanged.
             if self.contour_plan is None:
-                self.contour_plan=run_airborne_search(self.driver,replace(self.limits,speed_mps=.1,lap_seconds=None),
+                self.contour_plan=run_airborne_search(self.driver,OutdoorContourLimits(speed_mps=.5),
                     self.contour_launch,self._sample_contour_search,self.abort_flight,self._report_contour_search,
                     self._tiny_seen,self._acquire_contour_plan,started=self.started_at,
-                    min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds)
-            run_contour(self.driver,replace(self.limits,speed_mps=.2,lap_seconds=None),self.contour_plan,
+                    min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds,outdoor=True)
+            run_contour(self.driver,OutdoorContourLimits(),self.contour_plan,
                         self._sample_contour,self.abort_flight,self.report,started=self.started_at,
-                        min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds)
+                        min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds,
+                        wind_snapshot=self.measured_wind_snapshot,report_plan=self._accept_contour_plan_update,
+                        wind_reason=self.measured_wind_reason)
             return
         orbit_fire(self.driver,self.limits,self._sample_fire,self.abort_flight,self.report,self.episode,
                    started=self.started_at,min_battery_pct=self.minimum_battery_pct(),flight_seconds=self.flight_seconds,

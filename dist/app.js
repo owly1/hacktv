@@ -12,6 +12,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** Format an evidence timestamp for display, retaining an unknown placeholder. */
 const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString() : '—';
 const STALE_MS = 10_000;
+const WIND_STALE_MS = 5_000, OUTDOOR_CONTOUR_PROFILE = 'outdoor-50m-live-wind';
 const FLIGHT_STATES = {landed:'Landed', takingoff:'Taking off', hovering:'Hovering', flying:'Flying', landing:'Landing', emergency:'Emergency', usertakeoff:'Hand launch', motor_ramping:'Motors starting', emergency_landing:'Emergency landing'};
 const SPREAD_BANDS = [[1.08,'#ffc459',.22],[1,'#ffb345',.24],[.79,'#ff8e43',.33],[.55,'#f54b31',.45],[.27,'#c7332c',.6]];
 
@@ -57,16 +58,71 @@ let autonomyConnectionError = false;
 function aircraftEmergency() {
   return ['emergency','emergency_landing'].includes(state.telemetry?.state);
 }
+/** Validate actual FC wind event evidence; nulls, stale cache values and unknown direction are not measurements. */
+function freshWind(w, now=Date.now()) {
+  if(!w||w.available===false||!Number.isFinite(w.speed_mps)||w.speed_mps<0||w.speed_mps>60) return null;
+  const at=typeof w.observed_at==='string'?Date.parse(w.observed_at):NaN, age=now-at;
+  if(!Number.isFinite(at)||age< -1000||age>WIND_STALE_MS||
+    (w.age_s!=null&&(!Number.isFinite(w.age_s)||w.age_s<0||w.age_s*1000>WIND_STALE_MS))) return null;
+  const direction=Number.isFinite(w.direction_deg)&&w.direction_deg>=0&&w.direction_deg<360?w.direction_deg:null;
+  if(w.speed_mps>0&&direction===null) return null;
+  return {speedMps:w.speed_mps,speedKmh:w.speed_mps*3.6,direction,observedAt:at,ageSeconds:Math.max(0,age/1000,w.age_s??0)};
+}
+/** Read real onboard wind independently of the editable fire-model and QR weather. */
+function liveWindReading(now=Date.now()) {
+  const t=state.telemetry, e=t?.extra;
+  if(t?.provenance!=='live'||!e||e.fc_wind_available!==true) return null;
+  return freshWind({speed_mps:e.fc_wind_speed_mps,direction_deg:e.fc_wind_direction_deg,
+    observed_at:e.fc_wind_observed_at,age_s:e.fc_wind_age_s,available:e.fc_wind_available},now);
+}
+/** Describe the receiver's chosen model wind, retaining last measurements or an explicitly labeled assumption. */
+function contourWindEvidence(plan, now=Date.now()) {
+  const w=plan?.wind;
+  if(!w||!Number.isFinite(w.speed_mps)||w.speed_mps<0||w.speed_mps>60) return null;
+  const direction=Number.isFinite(w.direction_deg)&&w.direction_deg>=0&&w.direction_deg<360?w.direction_deg:null;
+  if(w.speed_mps>0&&direction===null) return null;
+  const speedKmh=w.speed_mps*3.6, toward=direction===null?'(calm)':`toward ${direction}°`;
+  if(w.source==='qr-scenario-assumption') {
+    if(Math.abs(speedKmh-.2)>1e-6||direction!==60||w.observed_at!=null) return null;
+    return {status:'assumed',label:'Wind unavailable · using 0.2 km/h scenario assumption',speedKmh,direction};
+  }
+  const at=typeof w.observed_at==='string'?Date.parse(w.observed_at):NaN;
+  if(w.source!=='flight-controller'||!Number.isFinite(at)) return null;
+  const ageSeconds=Math.max(0,(now-at)/1000,Number.isFinite(w.age_s)?w.age_s:0);
+  const current=plan.wind_status!=='stale'&&freshWind(w,now);
+  return {status:current?'measured':'stale',speedKmh,direction,ageSeconds,
+    label:current?`FC wind estimate ${speedKmh.toFixed(1)} km/h ${toward}`:
+      `Last measured wind · ${Math.round(ageSeconds)} s old · degraded · ${speedKmh.toFixed(1)} km/h ${toward}`};
+}
+/** Keep live wind provenance visible while preserving the replay's scenario readout. */
+function renderWindMetric(now=Date.now()) {
+  if(state.mode==='demo') {
+    $('wind-value').textContent=(state.windShown??state.scenario.wind).toFixed(1);
+    $('wind-context').textContent=`toward ${M.compass(state.scenario.direction)} · replay scenario`;
+    return;
+  }
+  const w=liveWindReading(now);
+  const modelWind=outdoorContourActive()?contourWindEvidence(state.autonomy?.receiver?.contour,now):null;
+  $('wind-value').textContent=w?w.speedKmh.toFixed(1):'—';
+  $('wind-context').textContent=w?`FC estimate · ${w.direction===null?'calm':`toward ${M.compass(w.direction)}`} · ${w.ageSeconds.toFixed(1)} s old`:
+    modelWind?`Live wind unavailable · flight model: ${modelWind.label}`:'Unavailable · awaiting fresh onboard wind';
+}
+/** Identify the separately authorized outdoor profile without changing the circular response. */
+function outdoorContourActive() {
+  const a=state.autonomy;
+  return state.mode==='live'&&a?.enabled&&a.mode==='contour'&&
+    (a.mission?.contour?.profile===OUTDOOR_CONTOUR_PROFILE||a.receiver?.contour_profile===OUTDOOR_CONTOUR_PROFILE);
+}
 /** Describe the one aircraft's reported airborne-search stage without inventing a fire or flight. */
 function contourFlightStatus(a) {
   const phase=a.receiver?.phase, search=a.receiver?.search_state;
   if(phase==='landing') return {state:'LANDING',summary:'1 drone landing',detail:a.receiver.reason||'Landing requested.'};
   if(phase==='takeoff'||phase==='climb') return {state:'TAKING OFF',summary:'1 drone taking off to search for fires',detail:'Climbing to 1 m above takeoff before moving through the QR search pattern.'};
-  if(search==='acquiring') return {state:'READING MARKER',summary:'1 drone reading the QR fire scenario',detail:'Holding position to read the encoded wind and fire conditions, then anchoring the +5-minute contour with measured GPS.'};
+  if(search==='acquiring') return {state:'READING MARKER',summary:'1 drone reading the QR fire scenario',detail:'Holding at 1 m to read Marker 2 and anchor the 50 m outdoor fire scenario with measured GPS. Onboard wind is used when available.'};
   if(search==='holding'||phase==='holding') return {state:'HOLDING',summary:'1 drone holding position',detail:a.receiver.reason||'Search is paused; use LAND to end the flight.'};
   if(a.mission&&(phase==='contour'||search==='tracking')) return {state:'GPS CONTOUR',summary:'1 drone following the fire contour',detail:`GPS contour response · ${a.receiver.reason||phase} · fixed initial fire area; continuing QR tracking is not required.`};
-  if(a.mission) return {state:'READING MARKER',summary:'1 drone reading the QR fire scenario',detail:'Reading the encoded wind and fire conditions, then anchoring the +5-minute contour with measured GPS.'};
-  if(phase==='search'||search==='airborne-search') return {state:'SEARCHING',summary:'1 drone scanning for fires',detail:'Moving through the QR search pattern at 1 m above takeoff. Marker 2 (Tiny) supplies the fire scenario for the GPS contour.'};
+  if(a.mission) return {state:'READING MARKER',summary:'1 drone reading the QR fire scenario',detail:'Anchoring the 50 m outdoor scenario from the measured GPS fire location; wind gaps use the labeled model fallback.'};
+  if(phase==='search'||search==='airborne-search') return {state:'SEARCHING',summary:'1 drone scanning for fires',detail:'Moving through the QR search pattern at 1 m above takeoff. Marker 2 identifies the outdoor fire area; onboard wind updates the forecast when available.'};
   return {state:'STARTING',summary:'1 drone preparing to search for fires',detail:a.search?'Airborne search claimed; checking takeoff readiness.':'Waiting for the receiver to claim the airborne search and take off to 1 m.'};
 }
 /** Show live receiver readiness, measured position and this page's available flight controls. */
@@ -83,20 +139,25 @@ function renderAutonomy() {
   $('autonomy-state').className='pill '+(enabled?'soft-orange':'muted');
   $('autonomy-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported;
   $('autonomy-enable').textContent=enabled&&!contour?'BOSCO active':'Start BOSCO';
-  $('autonomy-contour-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported||!a?.receiver?.airborne_search_supported||!a?.receiver?.contour_supported||!a?.receiver?.contour_ready;
+  $('autonomy-contour-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported||!a?.receiver?.airborne_search_supported||!a?.receiver?.contour_supported||!a?.receiver?.contour_ready||a.receiver.contour_profile!==OUTDOOR_CONTOUR_PROFILE;
   $('autonomy-contour-enable').textContent=enabled&&contour?'Contour flight active':'Take off & search · 1 m';
   $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.lap_seconds===15?'15 s target per lap · ':''}${a?.flight_seconds===null?'until X / LAND or a flight guard':a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
-  if(contour&&enabled) $('autonomy-limits').textContent=`1 m above takeoff · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'flies until LAND; safety stops still apply'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open; loss of control or required sensors ends the flight.`;
+  if(contour&&enabled) $('autonomy-limits').textContent=`1 m above takeoff · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'flies until LAND; safety stops still apply'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open; control, GPS and flight protections remain active. Wind gaps use the labeled fallback and do not end the flight.`;
   $('contour-readiness').textContent=state.mode!=='live'?'Contour flight is available in Live. The tiny-fire preview works in either mode.':
-    enabled&&contour?'Airborne search → read QR scenario → follow the growing +5-minute GPS contour. Flight uses real elapsed time.':
-    a?.receiver&&!a.receiver.airborne_search_supported?'Airborne contour search requires an updated Pi receiver.':
-    a?.receiver?.contour_ready?'Ready to take off and search at 1 m · Tiny marker only · measured GPS accuracy ≤0.5 m.':
-    a?.receiver?.contour_reason||'Contour awaits a compatible receiver and fresh GPS with accuracy ≤0.5 m. Preview the tiny fire below.';
+    enabled&&contour?'1 m QR search → +5-minute GPS contour around a 50 m initial fire. Received wind updates the forecast; wind gaps retain the last measured value or the labeled scenario assumption.':
+    a?.receiver&&(!a.receiver.airborne_search_supported||a.receiver.contour_profile!==OUTDOOR_CONTOUR_PROFILE)?'Outdoor contour search requires an updated Pi receiver.':
+    a?.receiver?.contour_ready?'Ready for outdoor takeoff and QR search at 1 m · Marker 2 · 50 m initial fire diameter · wind availability does not block flight.':
+    a?.receiver?.contour_reason||'Outdoor contour awaits a compatible receiver and fresh measured GPS.';
   $('contour-progress').hidden=!progress;
   $('contour-mission-status').textContent=emergency?'1 drone · emergency reported':autonomyConnectionError?'1 drone · control connection interrupted':progress?.summary||'';
   $('pi-drone-status').textContent=progress?$('contour-mission-status').textContent:'One demo aircraft';
-  const conditions=a?.mission?.contour?.details;
-  $('contour-conditions').textContent=progress&&conditions?`Encoded QR scenario · ${conditions.wind_kmh} km/h wind toward ${conditions.wind_dir_deg}° · ${conditions.temp_c}°C · ${conditions.rh_pct}% humidity · ${conditions.spread_m_per_min} m/min spread. These are marker inputs, not measured weather.`:'QR scenario conditions appear after Marker 2 is decoded; onboard wind estimates remain separate in telemetry.';
+  const config=a?.mission?.contour, plan=a?.receiver?.contour, conditions=config?.details;
+  const modelWind=contourWindEvidence(plan);
+  $('contour-wind-status').hidden=!outdoorContourActive();
+  $('contour-wind-status').textContent=modelWind?.label??'Wind provenance appears when the receiver creates the flight plan';
+  $('contour-wind-status').className='pill '+(modelWind?.status==='measured'?'muted':'soft-orange');
+  $('contour-conditions').textContent=outdoorContourActive()?`Outdoor scenario · 50 m initial diameter. ${conditions?`${conditions.temp_c}°C and ${conditions.rh_pct}% humidity are model assumptions; spread ${conditions.spread_m_per_min} m/min. `:''}Marker 2 identifies the fire area. ${modelWind?.status==='assumed'?'The encoded low-wind scenario is an assumption until an onboard estimate arrives.':modelWind?.status==='stale'?'The forecast continues with the last measured wind while the receiver waits for a new estimate.':'Onboard wind updates the forecast when available.'}`:
+    progress&&conditions?`Encoded QR scenario · ${conditions.wind_kmh} km/h wind toward ${conditions.wind_dir_deg}° · ${conditions.temp_c}°C · ${conditions.rh_pct}% humidity · ${conditions.spread_m_per_min} m/min spread. These are marker inputs, not measured weather.`:'Marker 2 identification and forecast conditions appear after decoding; onboard wind is collected separately.';
   if (a?.receiver?.localization_sources) {
     const sources=a.receiver.localization_sources;
     if (adaptiveScale&&!currentMetricScale&&sources.includes('qr-test')) {
@@ -175,7 +236,7 @@ async function setAutonomy(action,extra={}) {
     state.autonomy=response;
     autonomyConnectionError=false;
     autonomousSession=action==='enable'?state.autonomy.session_id:null;
-    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?(extra.mode==='contour'?'Takeoff and search requested: fly at 1 m, find Marker 2, then follow its GPS contour until LAND or a safety stop.':'BOSCO active: camera search and automatic fire response enabled.'):'Landing requested; BOSCO stopped.');
+    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?(extra.mode==='contour'?'Outdoor search requested: scan Marker 2 at 1 m and follow the 50 m fire forecast. Wind gaps use the labeled fallback.':'BOSCO active: camera search and automatic fire response enabled.'):'Landing requested; BOSCO stopped.');
   } catch(error) {toast(error.message);}
   finally {if(revision===autonomyRevision){autonomyActionPending=false;renderAutonomy();}}
 }
@@ -230,7 +291,7 @@ function renderDetectionDetails() {
   $('detection-conditions').textContent = [
     det.area_ha != null ? `${det.area_ha} ha${det.area_source ? ' (estimated)' : ''}` : 'Area estimated by model',
     det.intensity, det.fuel, det.spread_m_per_min != null ? `${det.spread_m_per_min} m/min` : null,
-    `${Math.round(state.scenario.wind)} km/h toward ${M.compass(state.scenario.direction)}`,
+    `${state.scenario.wind.toFixed(1)} km/h toward ${M.compass(state.scenario.direction)} (${d.source==='qr-test'?'QR scenario':'model input'})`,
     `${state.scenario.temp} °C`, `${state.scenario.rh}% RH`,
   ].filter(Boolean).join(' · ');
   $('detection-location').textContent = loc?.simulated
@@ -240,6 +301,7 @@ function renderDetectionDetails() {
   $('detection-model-note').textContent = d.source === 'qr-test'
     ? 'Spread starts from the QR payload. Timeline and conditions use this incident.'
     : 'Spread uses the camera area estimate when available and adjustable environmental assumptions.';
+  if(outdoorContourActive()) $('detection-model-note').textContent='Marker 2 identifies the fire area. The flight map uses a 50 m initial fire and the receiver’s fresh FC wind estimate; QR weather and the explorer controls do not drive the aircraft.';
 }
 
 function renderHeading() {
@@ -341,10 +403,23 @@ function setDronePose(marker, heading, alt, landed = false, id = 'ANAFI-01', col
   el.classList.toggle('landed', landed);
 }
 
-/** Return the current live or simulated drone's geographic position when known. */
+/** Read only measured GPS coordinates, retaining the sensor event time instead of a refreshed cache time. */
+function measuredGps(sample, now=Date.now(), requireFresh=true) {
+  const source=sample?.extra?.position_source??sample?.position_source;
+  const fixed=sample?.gps_fix;
+  if(sample?.provenance!=='live'||source!=='gps'||fixed===false||fixed==='no fix'||
+    !Number.isFinite(sample.latitude)||Math.abs(sample.latitude)>90||!Number.isFinite(sample.longitude)||Math.abs(sample.longitude)>180) return null;
+  const eventAt=sample.extra?.gps_observed_at??sample.gps_observed_at;
+  if(outdoorContourActive()&&!eventAt) return null;
+  const at=Date.parse(eventAt??sample.observed_at??sample.t), age=now-at;
+  if(!Number.isFinite(at)||age< -1000) return null;
+  if(requireFresh&&(age>(eventAt?1500:STALE_MS)||(sample.extra?.gps_age_s??0)>1.5)) return null;
+  return {point:[sample.latitude,sample.longitude],at,ageSeconds:Math.max(0,age/1000),droneId:sample.drone_id??'ANAFI-01'};
+}
+/** Return the current live GPS or explicitly simulated replay position when known. */
 function dronePosition() {
   if (state.mode === 'demo') return state.demo.pos ?? null;
-  const t = state.telemetry; return t?.latitude != null ? [t.latitude, t.longitude] : null;
+  return measuredGps(state.telemetry)?.point??null;
 }
 /** Toggle map following and centre on the selected drone position. */
 function setFollow(on) {
@@ -357,17 +432,42 @@ function renderMapChip() {
   let title = '', text = '';
   if ($('map-viewport').classList.contains('tiles-offline')) { title = 'Map tiles offline'; text = ''; }
   else if (state.mode === 'live' && !state.telemetry) { title = 'No drone position yet'; text = ''; }
+  else if(state.mode==='live'&&!measuredGps(state.telemetry)) {title='Fresh GPS position unavailable';text='The drone marker waits for measured GPS.';}
   $('map-empty').hidden = !title; $('map-empty-title').textContent = title; $('map-empty-text').textContent = text;
 }
 
-/** Update the live aircraft marker, activity-colored trail and optional follow view. */
+/** Build chronological received-GPS trail segments, breaking at gaps or unverified positions. */
+function measuredGpsTrail(path=state.flight.path, now=Date.now()) {
+  const rows=[...(path??[])], latest=state.telemetry;
+  if(latest&&(!rows.length||Date.parse(latest.observed_at)>Date.parse(rows.at(-1).t??rows.at(-1).observed_at))) rows.push(latest);
+  const segments=[];let current=[],previous=null;
+  const started=outdoorContourActive()?(state.autonomy.search?.claimed_at??state.autonomy.enabled_at??0):0;
+  /** Retain completed line segments without bridging missing evidence. */
+  const flush=()=>{if(current.length>1) segments.push(current);current=[];previous=null;};
+  for(const row of rows) {
+    const fix=measuredGps(row,now,false);
+    if(!fix||fix.droneId!==(latest?.drone_id??'ANAFI-01')) {flush();continue;}
+    if(fix.at<started) continue;
+    if(previous&&(fix.at<previous.at||fix.at-previous.at>5000)) flush();
+    if(previous&&fix.at===previous.at) continue;
+    current.push(fix.point);previous=fix;
+  }
+  flush();return segments;
+}
+/** Update the live aircraft directly from received GPS; forecast animation never advances this marker. */
 function renderDrone() {
+  if(state.mode==='demo') {$('live-position-status').hidden=true;return;}
   const t = state.telemetry;
-  if (!t || t.latitude == null || state.mode === 'demo') { state.droneMarker.setOpacity(0); return; }
-  const ll = [t.latitude, t.longitude];
+  const fix=measuredGps(t), last=measuredGps(t,Date.now(),false), layer=state.layers.trail;
+  $('live-position-status').hidden=false;
+  $('live-position-status').textContent=fix?`ANAFI-01 · received GPS ${fix.point[0].toFixed(6)}, ${fix.point[1].toFixed(6)} · ${fix.ageSeconds.toFixed(1)} s old · blue trail is recorded GPS; forecast is a model.`:
+    last?`GPS stale · last fix ${last.ageSeconds.toFixed(1)} s ago. Current drone marker hidden; recorded GPS trail remains.`:'Waiting for actual GPS · current drone marker unavailable; configured site coordinates are not flight evidence.';
+  if(layer) {layer.clearLayers();for(const points of measuredGpsTrail()) L.polyline(points,{color:'#4a80df',weight:3,opacity:.9}).addTo(layer).bindTooltip('Recorded aircraft GPS · received positions only');}
+  $('trail-legend').hidden=true;
+  if(!fix) {state.droneMarker?.setOpacity(0);return;}
+  const ll = fix.point;
   state.droneMarker.setLatLng(ll).setOpacity(1);
   setDronePose(state.droneMarker, t.extra?.heading_deg, t.altitude_m, t.state === 'landed');
-  drawTrail(state.layers.trail, liveTrail(state.flight.path));
   if (state.follow) state.map.panTo(ll);
   if (!state.centredOnDrone) { state.centredOnDrone = true; if (!activeFire()) state.map.setView(ll, 19); }
 }
@@ -409,7 +509,12 @@ function contourMissionGeometry(now=Date.now()) {
      anchor?.position_source!=='gps'||!Number.isFinite(anchor.latitude)||!Number.isFinite(anchor.longitude)) return null;
   const config=a.mission?.contour, started=c.started_at??config?.started_at, details=c.details??config?.details;
   if(!Number.isFinite(started)||!details) return null;
-  return {...BoscoContour.forecast([anchor.latitude,anchor.longitude], details, Math.max(0,now-started)/60000), anchor};
+  const outdoor=(c.profile??config?.profile)===OUTDOOR_CONTOUR_PROFILE, sc=c.effective_scenario;
+  const wind=outdoor?contourWindEvidence(c,now):null;
+  if(outdoor&&(!sc||!['wind','direction','temp','rh','dryness'].every(k=>Number.isFinite(sc[k]))||!wind)) return null;
+  const geometry=BoscoContour.forecast([anchor.latitude,anchor.longitude], details, Math.max(0,now-started)/60000,outdoor?sc:null);
+  if(outdoor&&Number.isFinite(c.speed_mps)) geometry.speedMps=c.speed_mps;
+  return {...geometry,anchor,outdoor,wind};
 }
 
 /** Draw the exact flight forecast independently of mutable explorer conditions. */
@@ -419,11 +524,20 @@ function renderContourRoute() {
   layer.clearLayers();
   if(state.mode==='live'&&state.autonomy?.enabled&&state.autonomy.mode==='contour') state.layers.orbit?.clearLayers();
   const geometry=contourMissionGeometry();
+  if(outdoorContourActive()) {
+    state.layers.spread?.clearLayers();state.layers.wind?.clearLayers();state.layers.fire?.clearLayers();
+    $('area-value').textContent=geometry?M.areaHa(geometry.current).toFixed(3):'—';
+    $('area-context').textContent=geometry?`50 m initial fire · ${geometry.wind?.status==='measured'?'measured wind':geometry.wind?.status==='stale'?'last measured wind · degraded':'assumed wind'}`:'waiting for Marker 2 and receiver flight plan';
+    $('time-label').textContent='Flight forecast · +5 min';
+  }
   if(!geometry) return;
+  if(geometry.outdoor&&state.layers.fire) L.marker([geometry.anchor.latitude,geometry.anchor.longitude],
+    {icon:L.divIcon({className:'fire-pin-wrap',html:'<div class="fire-pin">🔥</div>',iconSize:[34,34],iconAnchor:[17,17]})})
+    .addTo(state.layers.fire).bindTooltip('Outdoor fire area · measured GPS anchor from Marker 2 · 50 m initial scenario');
   L.polygon(geometry.current,{color:'#d9480f',weight:1.5,fillColor:'#d9480f',fillOpacity:.28})
-    .addTo(layer).bindTooltip('Contour mission · fire now · fixed initial QR area');
+    .addTo(layer).bindTooltip(geometry.outdoor?'Outdoor scenario · fire now · 50 m initial diameter · measured GPS anchor':'Contour mission · fire now · fixed initial QR area');
   L.polygon(geometry.route,{color:'#249bc5',weight:3,fill:false})
-    .addTo(layer).bindTooltip(`GPS flight route · +5-minute contour · patrol ${geometry.speedMps.toFixed(3)} m/s · real-time growth`);
+    .addTo(layer).bindTooltip(`GPS flight route · +5-minute contour · ${geometry.outdoor?`50 m initial fire · ${geometry.wind.label} · `:''}patrol ${geometry.speedMps.toFixed(3)} m/s · real-time growth`);
   const mission=state.autonomy.mission?.id;
   if(mission&&state.contourFittedMission!==mission) {state.contourFittedMission=mission;fitToFire();}
 }
@@ -462,10 +576,15 @@ function renderSpread() {
   renderDetectionDetails();
   $('time-label').textContent = `T + ${Math.round(state.minute)} min`; $('timeline').value = state.minute;
   document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - state.minute) < .5));
-  const consensus = globalThis.BoscoFleet?.windConsensus(Object.values(state.windSamples));
-  const fleetTag = consensus && consensus.samples > 1 ? ` · fleet ×${consensus.samples} ±${consensus.sigma_dir_deg}°` : '';
-  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '') + fleetTag;
+  renderWindMetric();
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers(); state.layers.orbit?.clearLayers();
+  if(outdoorContourActive()) {
+    const geometry=contourMissionGeometry();
+    $('time-label').textContent='Flight forecast · +5 min';
+    $('area-value').textContent=geometry?M.areaHa(geometry.current).toFixed(3):'—';
+    $('area-context').textContent=geometry?`50 m initial fire · ${geometry.wind?.status==='measured'?'measured wind':geometry.wind?.status==='stale'?'last measured wind · degraded':'assumed wind'}`:'waiting for Marker 2 and receiver flight plan';
+    renderContourRoute();return;
+  }
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = forestWaiting() ? 'no fire detected' : state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
   /** Supply scaled fire-outline bands for the active spread-rendering branch. */
@@ -524,13 +643,14 @@ function renderSpread() {
   $('area-context').textContent = state.minute < .5 ? (age > .1 ? `now · burning ~${Math.round(age)} min` : 'now') : `projected at +${Math.round(state.minute)} min`;
   const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
   const windHead = M.destPoint(o[0], o[1], sc.direction, reach);
-  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
+  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`${state.mode==='live'?'Model input':'Replay scenario'} wind ${sc.wind.toFixed(1)} km/h toward ${M.compass(sc.direction)}`);
   L.marker(windHead, {icon: L.divIcon({className: 'wind-arrow', html: `<div style="transform:rotate(${Math.round(sc.direction)}deg)">▲</div>`, iconSize: [14, 14], iconAnchor: [7, 7]}), interactive: false}).addTo(state.layers.wind);
 }
 
 /** Draw only the positioned live fire, with its detection context. */
 function renderFirePin() {
   state.layers.fire.clearLayers();
+  if(outdoorContourActive()) {renderContourRoute();return;}
   const inc = activeFire(); if (!inc || !origin()) return;
   const d = inc.latest, det = d.details || {}, loc = fireLocation();
   L.marker([loc.latitude, loc.longitude], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})})
@@ -559,7 +679,7 @@ function fitToFire() {
   }
   const o = origin();
   if (!o && demoCase()) { const f = demoCase(); state.map.fitBounds(L.latLng(f.lat, f.lon).toBounds(1100)); return; } // drone and fire, before geolocation
-  if (!o) { const t = state.telemetry; if (t?.latitude != null) state.map.setView([t.latitude, t.longitude], 19); else state.map.setView([state.site.latitude, state.site.longitude], 17); return; }
+  if (!o) { const gps=dronePosition(); if(gps) state.map.setView(gps,19); else state.map.setView([state.site.latitude,state.site.longitude],17); return; }
   state.map.invalidateSize();
   const pts = state.mode === 'demo' && !peopleDemoActive() ? [...demoOutline(demoCase(), state.minute), state.demo.pos] : M.footprint(o, 30, state.scenario, fireDetails());
   state.map.fitBounds(L.latLngBounds(pts).pad(.15), {maxZoom: 20});
@@ -570,12 +690,11 @@ function fitToFire() {
 /** Display measured drone values and mark missing or stale live telemetry clearly. */
 /* Collect each drone's FC wind vector (NED m/s) into the fleet sample set. */
 function updateWindSamples() {
-  const t = state.telemetry, extra = t?.extra || {};
-  const mps = Number(extra.fc_wind_speed_mps), deg = Number(extra.fc_wind_direction_deg);
-  if (!t || !Number.isFinite(mps)) return;
-  const id = t.drone_id || 'ANAFI-01', d = (Number.isFinite(deg) ? deg : 0)*Math.PI/180;
-  state.windSamples[id] = {drone_id: id, north: mps*Math.cos(d), east: mps*Math.sin(d),
-    alt_m: Number(t.altitude_m) || 10, captured_at: Date.parse(t.observed_at) || Date.now(), flight_state: t.state};
+  const t=state.telemetry, w=liveWindReading(), id=t?.drone_id||'ANAFI-01';
+  if(!w) {delete state.windSamples[id];return;}
+  const d=(w.direction??0)*Math.PI/180;
+  state.windSamples[id]={drone_id:id,north:w.speedMps*Math.cos(d),east:w.speedMps*Math.sin(d),
+    alt_m:Number.isFinite(t.altitude_m)?t.altitude_m:null,captured_at:w.observedAt,flight_state:t.state};
 }
 
 /* Air readings riding the same telemetry stream: humidity and temperature
@@ -583,7 +702,7 @@ function updateWindSamples() {
    hot dry gust reshapes the contour on the very next render. */
 function applyEnvSamples() {
   const extra = state.telemetry?.extra || {};
-  const rh = Number(extra.rh_pct), temp = Number(extra.temp_c);
+  const rh = extra.rh_pct, temp = extra.temp_c;
   let changed = false;
   if (Number.isFinite(rh)) { const v = Math.round(Math.min(100, Math.max(0, rh))); if (v !== state.scenario.rh) { state.scenario.rh = v; changed = true; } }
   if (Number.isFinite(temp)) { const v = Math.round(temp * 10) / 10; if (v !== state.scenario.temp) { state.scenario.temp = v; changed = true; } }
@@ -594,14 +713,15 @@ function renderTelemetry() {
   if (state.mode === 'demo') return;
   updateWindSamples();
   applyEnvSamples();
+  renderWindMetric();
   const t = state.telemetry;
   if (!t) { for (const id of ['altitude', 'ground-speed', 'power']) $(id).innerHTML = `— <small>${id === 'power' ? '%' : id === 'altitude' ? 'm' : 'm/s'}</small>`; $('flight-state').textContent = '—'; return; }
   // FC wind arrives on every telemetry packet — feed it straight into the
   // scenario (eased, altitude-normalized) instead of waiting on an analysis.
-  const ex = t.extra || {};
-  if (ex.fc_wind_speed_mps != null || ex.fc_wind_direction_deg != null) {
-    applyWindEstimate({created_at: t.observed_at, episode_id: null,
-      wind_estimate: {speed_mps: ex.fc_wind_speed_mps, direction_deg: ex.fc_wind_direction_deg, method: 'flight-controller'}});
+  const w=liveWindReading();
+  if(w) {
+    applyWindEstimate({created_at:new Date(w.observedAt).toISOString(),episode_id:null,
+      wind_estimate:{speed_mps:w.speedMps,direction_deg:w.direction,method:'flight-controller'}});
   }
   const age = Math.max(0, (Date.now() - Date.parse(t.observed_at)) / 1000), stale = age * 1000 > STALE_MS;
   $('altitude').innerHTML = `${escapeHTML(t.altitude_m ?? '—')} <small>m</small>`;
@@ -612,7 +732,7 @@ function renderTelemetry() {
   $('battery-context').textContent = stale ? `last seen ${Math.round(age)} s ago` : 'ANAFI-01 battery';
   $('telemetry-tag').textContent = stale ? 'STALE' : 'LIVE';
   $('drone-source').textContent = stale ? 'Telemetry stale' : 'Live telemetry';
-  const where = t.extra?.position_source === 'gps' ? 'GPS' : 'indoor position (home + flight moves)';
+  const where = measuredGps(t)?'measured GPS':t.extra?.position_source==='gps'?'GPS stale or unavailable':'GPS unavailable';
   $('telemetry-note').textContent = `${stale ? 'STALE · ' : ''}${t.drone_id || 'ANAFI-01'} · ${where} · heading ${t.extra?.heading_deg ?? '—'}° · camera ${t.extra?.gimbal_pitch_deg != null ? Math.round(t.extra.gimbal_pitch_deg) + '°' : '—'} · ${Math.round(age)} s ago`;
   $('telemetry-note').classList.toggle('error-text', stale);
 }
@@ -1345,7 +1465,7 @@ async function renderHistory() {
 function setPlayButton() { $('play').innerHTML = `<svg aria-hidden="true"><use href="#${state.playing ? 'i-pause' : 'i-play'}"/></svg>`; $('play').setAttribute('aria-label', state.playing ? 'Pause spread projection' : 'Play spread projection'); }
 /** Populate the condition dialog from the supplied spread inputs. */
 function scenarioControls(sc) {
-  for (const [id, key, out] of [['wind-input', 'wind', 'wind-output'], ['dry-input', 'dryness', 'dry-output'], ['temp-input', 'temp', 'temp-output'], ['rh-input', 'rh', 'rh-output']]) { $(id).value = sc[key]; $(out).textContent = Math.round(sc[key]); }
+  for (const [id, key, out] of [['wind-input', 'wind', 'wind-output'], ['dry-input', 'dryness', 'dry-output'], ['temp-input', 'temp', 'temp-output'], ['rh-input', 'rh', 'rh-output']]) { $(id).value = sc[key]; $(out).textContent = key === 'wind' ? sc[key].toFixed(1) : Math.round(sc[key]); }
   $('direction-input').value = sc.direction; $('direction-output').textContent = `${Math.round(sc.direction)}° · ${M.compass(sc.direction)}`;
 }
 let pending = {...M.BASE};
@@ -1354,7 +1474,7 @@ let pending = {...M.BASE};
 function bindUi() {
   for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => b.closest('dialog').close());
   for (const d of document.querySelectorAll('dialog')) d.addEventListener('click', e => { const r = d.getBoundingClientRect(); if (e.target === d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) d.close(); });
-  $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'From the detected fire.' : ''; openDialog('scenario-dialog'); };
+  $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = outdoorContourActive()?'Outdoor flight uses onboard wind when available, the last measurement during gaps, or its labeled initial assumption. These explorer values do not change the aircraft route.':state.detectedScenario?'Scenario model inputs from the detected fire; these are not measured weather.':'Editable model assumptions. Missing live wind is shown as unavailable.'; openDialog('scenario-dialog'); };
   $('contour-preview-open').onclick=()=>{resetContourPreview();openDialog('contour-preview-dialog');};
   $('contour-preview-reset').onclick=()=>resetContourPreview();
   $('contour-preview-time').oninput=()=>resetContourPreview(Number($('contour-preview-time').value));
@@ -1424,7 +1544,7 @@ async function connect() {
   streamVideo();
 }
 
-let lastFrame = 0, lastSpread = 0, lastWind = 0, lastEaseSpread = 0;
+let lastFrame = 0, lastSpread = 0, lastWind = 0, lastEaseSpread = 0, lastPositionEvidence = 0;
 /** Animate the band rings/orbit from their last rendered positions to `targets`.
    Vertex counts are fixed (72), so index-wise lat/lon lerp glides the shape. */
 const raf = globalThis.requestAnimationFrame ?? (cb => setTimeout(() => cb(performance.now()), 16));
@@ -1468,15 +1588,21 @@ function morphSpread(targets) {
 function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
   if($('contour-preview-dialog').open&&now-contourPreviewLast>100) {contourPreviewLast=now;renderTinyContourPreview();}
-  // 100 ms wind ticker: the readout counts smoothly toward the scenario wind
-  // (FC landings, conditions, sweeps) instead of stepping to each new value.
+  // Only Replay interpolates fictional wind. Live always shows received event
+  // evidence and expires it even if telemetry stops arriving.
   if (now - lastWind >= 100) {
     lastWind = now;
-    if (state.windShown == null) state.windShown = state.scenario.wind;
-    state.windShown += (state.scenario.wind - state.windShown) * .2;
-    const el = $('wind-value');
-    if (Math.abs(state.windShown - state.scenario.wind) < .05) state.windShown = state.scenario.wind;
-    if (el && el.textContent !== String(Math.round(state.windShown))) el.textContent = Math.round(state.windShown);
+    if(state.mode==='demo') {
+      if(state.windShown==null) state.windShown=state.scenario.wind;
+      state.windShown+=(state.scenario.wind-state.windShown)*.2;
+      if(Math.abs(state.windShown-state.scenario.wind)<.05) state.windShown=state.scenario.wind;
+    }
+    renderWindMetric();
+  }
+  if(now-lastPositionEvidence>=1000) {
+    lastPositionEvidence=now;
+    if(state.mode==='live') {renderDrone();renderMapChip();}
+    else $('live-position-status').hidden=true;
   }
   /* Scenario wind easing: new evidence sets a target; the wind and bearing
      glide toward it over ~3 s (shortest arc for direction), re-rendering the

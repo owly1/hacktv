@@ -1,117 +1,111 @@
-# Tiny fire forecast contour
+# Outdoor fire forecast contour
 
-The Live dashboard has two distinct actions. **Start BOSCO** retains the
-existing measured one-metre circular response. **Take off & search · 1 m**
-launches one drone to find Marker 2, then follow its five-minute forecast course.
-LAND stops either mode.
-Switching modes requires ending the current session and deliberately starting
-a new one. Observation startup and Replay never authorize flight.
+The Live dashboard has separate actions. **Start BOSCO** retains the existing
+circular response. **Take off & search · 1 m** selects the explicit
+`outdoor-50m-live-wind` profile. LAND stops either flight. Startup and Replay
+never authorize flight; one dashboard lease and one SDK owner control one drone.
 
-## Marker and preview
+## Marker and scenario
 
-Open [Marker 2 PDF](../dist/tiny-marker.pdf) (served at `/tiny-marker.pdf`) or
-`/tiny-marker.html` to print the second marker at 100% scale. Its black
-square is 18 cm across; its printed size must match the independently verified
-camera calibration. The original `/test-marker.html` and Alpha PNG are retained.
+Print [Marker 2 PDF](../dist/tiny-marker.pdf), served at `/tiny-marker.pdf`, at
+actual size: its black QR square is 18 cm across and must match the verified
+camera calibration. Its exact payload remains:
 
 ```text
 EW1:Tiny|0.0001|L|0.01|G|0.2|60|22|45|18
 ```
 
-Tiny starts at 0.0001 ha (1 m²). Wind is only **0.2 km/h**, with **0.01 m/min
-head spread** (1 cm per minute). Lowering both keeps the outline almost fixed
-during the demo: its modeled head advances approximately 5 cm over five minutes.
-It retains the existing model's irregular boundary, with little wind elongation.
-Only the exact Alpha and Tiny payloads are accepted; arbitrary EW1 codes are not.
+The outdoor profile uses that identity to select a **50 m nominal initial fire
+diameter** (`area_ha = pi × 25² / 10000`). It does not enlarge the physical QR.
+The printed Tiny scenario and no-flight preview still describe a 1 m² fire,
+0.2 km/h wind and 0.01 m/min head spread. Alpha and circular flight are unchanged.
+Only the two exact allowlisted markers are accepted.
 
-**Preview tiny contour · no flight** opens a local animation of one aircraft,
-the current fire, the +5-minute route, the initial marker area and a metre scale.
-The elapsed-time slider affects only the preview. It sends no aircraft requests
-and works without GPS, a Pi or a connected drone. This is the appropriate way
-to demonstrate the contour when the real GPS does not meet the small course's
-precision requirement.
+## Actual flight and model
 
-## Flight behavior
+1. The receiver requires fresh actual GPS and the inherited aircraft protections.
+   Wind capability/availability is reported separately and never blocks takeoff.
+   SDK imports or a generic wind warning are not evidence of numerical wind.
+2. After enable is acknowledged by the owning dashboard, one drone takes off and
+   establishes 1 m measured height **above launch**, not terrain clearance. It
+   searches GPS waypoints at ±10 m, inside a 20 m launch envelope, at 0.5 m/s.
+3. Seeing Marker 2 pauses movement for five stable, fresh measured QR positions.
+   Capture-time heading, actual GPS and calibrated QR geometry locate the fire
+   area. It claims the contour using the best available wind input. The original
+   launch point remains the envelope origin.
+4. The fire claim fixes the marker identity, simulated area, model epoch and
+   GPS anchor. Fresh received FC vector events are preferred; the last usable
+   measured value is retained across wind dropouts. If none has ever arrived, the
+   original 0.2 km/h toward 60° QR wind is explicitly an unmeasured assumption.
+   Temperature (22°C), RH (45%), fuel and baseline spread (0.01 m/min at encoded
+   conditions) remain explicitly simulated assumptions.
+5. Each movement watchdog updates the immutable plan from the best available
+   wind. Missing, stale or invalid new wind retains the prior plan input and marks
+   degraded quality; fresh valid estimates automatically restore measured mode.
+   Python and browser use the same 72-vertex uniform-fuel model, at five minutes
+   plus real elapsed mission time. Wind changes scale spread relative to the
+   original baseline and change outline orientation/shape. No timeline control
+   or replay animation can alter the flight. QR visibility is no longer needed.
 
-1. A fresh receiver must advertise airborne search support and contour readiness.
-   The action enables the session, and its owning dashboard heartbeat acknowledges
-   it. The receiver claims a search flight before any QR is visible.
-2. The aircraft takes off, corrects measured height to 1 m above launch, then
-   actively searches a bounded GPS pattern with its camera. One real aircraft
-   owns this search; the dashboard reports its actual search/acquisition stage.
-3. When the Tiny marker appears, the aircraft holds horizontal position to gather
-   stable metric observations. Five fresh decoded Tiny observations over at
-   least 0.8 seconds must match an accepted Tiny incident and independently
-   verified camera calibration. The QR supplies 0.2 km/h wind, temperature,
-   humidity and spread; these are **encoded scenario values**, not a wind sensor
-   measurement. Any aircraft wind estimate keeps its separate source label.
-4. The receiver combines the camera location with synchronized aircraft GPS and
-   heading to freeze the general fire-area anchor. It retains the original
-   launch GPS for its flight envelope, without site/home/assumed coordinates.
-5. It transitions directly into GPS waypoints on the evolving forecast. Once
-   anchored, the QR is no longer tracked for navigation. The same sole SDK owner
-   controls takeoff, search, contour and landing.
+The existing spread formula is illustrative, not a calibrated wildfire forecast.
+The onboard wind value is an aircraft estimate, not an anemometer measurement;
+no altitude correction or uncalibrated tilt formula is substituted. Directions
+point **toward**, clockwise from north. Exact calm has no measured direction;
+zero is used only as the mathematical orientation of a calm model.
 
-`bridge/fire_contour.py` matches the 72-vertex wind/ellipse/wobble geometry in
-`dist/model.js` with uniform fuel. The horizon is five minutes plus real elapsed
-time since claim. The live map renders the receiver's frozen anchor and scenario
-on a separate overlay; weather edits, timeline sliders and replay speed cannot
-change the physical course.
+Tangential patrol speed is 300× modeled head-growth speed, bounded to 0.5–1 m/s
+for this outdoor demonstration. That multiplier affects traversal only, not fire
+expansion or the forecast clock. Moves are capped at 2 m, use received GPS/heading
+and acknowledged aircraft motion, and replan with an accuracy-scaled lookahead.
+This is GPS-feedback aircraft movement, not frontend animation.
 
-Boundary growth follows the model's spread in metres per minute. Tangential
-patrol speed is a distinct quantity: 30 times head growth speed, bounded to
-0.05–0.20 m/s. Tiny therefore patrols at **0.05 m/s** while its boundary expands
-very slowly. The drone can visibly traverse the line without accelerating the
-fire model. Short movement commands are capped at 0.2 m and checked against
-received GPS, heading, movement results and the launch envelope.
+## Position, wind and protection gates
 
-## Physical gates and current limits
+- GPS events must be ≤1.5 s old, fixed and valid. ARSDK reports integer metre
+  accuracy per axis; conservative uncertainty is `hypot(lat_accuracy+1,
+  lon_accuracy+1)`, and must be ≤5 m. Unknown/-1 accuracy is rejected. Zero
+  components do not imply perfect accuracy. The old ≤0.5 m rule could never be
+  satisfied by these integer fields and is no longer the outdoor requirement.
+- The fire anchor must be within 20 m of launch. The modeled contour stays within
+  100 m of that anchor and actual aircraft position within 125 m of launch.
+  These bounds require a correspondingly clear outdoor test area; the model
+  supplies no obstacle avoidance. Altitude remains 1 m above launch.
+- Numerical wind is accepted only with a device availability report and an
+  actual vector event received within five seconds. Polling a cached value never
+  refreshes its age. Missing/stale wind, unsupported capability, or model inputs
+  outside 0–60 km/h leave the last valid model wind unchanged. Before any valid
+  measured wind, use the clearly labeled QR assumption, never a made-up reading.
+  Actual wind telemetry remains null when unavailable; no default 18 km/h is used.
+- Wind loss alone never blocks the flight attempt or lands the drone. GPS loss,
+  lease expiry, unhealthy
+  sensors, motion failures, battery protection or LAND interrupts movement and
+  requests landing. Normal contour has no duration timer. The explicit short
+  test remains 60 seconds including search, with its original battery gates.
+  Normal start/in-flight battery minimum remains 40%; circle retains 300 seconds.
 
-- Actual SDK location events must be no more than 1.5 seconds old. Reported
-  horizontal accuracy, computed from latitude/longitude accuracy components,
-  must be positive and at most **0.5 m**. Unknown accuracy is not sufficient.
-- Search follows a repeating local pattern with waypoints at ±0.8 m north/east
-  of launch, at up to 0.1 m/s, inside a 2 m launch envelope. Initial measured
-  height correction reaches 1 m within 5 cm before horizontal search. A marker
-  that cannot be localized gets a bounded acquisition hold, then search resumes.
-- The initial fire anchor must be within 3 m of the original launch position. The entire
-  modeled course must stay within 4 m of that anchor, and received position
-  must stay within 6 m of launch. GPS jumps and failed movement progress abort.
-- Normal contour search/patrol has no automatic duration stop: it continues
-  until LAND or a protection fault, with a 40% start/in-flight battery minimum.
-  The explicit short test uses
-  30% to start, 25% in flight and 60 seconds including search. Circle retains its
-  existing 300-second limit. Height is above launch, not ground.
-- LAND, expired dashboard/receiver contact, stale sensors, poor GPS, aircraft
-  disconnection and command failures request landing. QR disappearance after
-  anchoring does not independently stop the GPS course.
+## Screenshare and provenance
 
-Ordinary onboard GPS, especially indoors, may not meet the 0.5 m requirement.
-This implementation does not add RTK hardware or claim that the existing ANAFI
-can physically trace a metre-scale line. The mode remains unavailable until
-the receiver reports suitable measured data. Software tests are not flight proof.
-Alpha's large forecast is rejected for this bounded contour mode; Alpha's
-existing circular flight remains available through its original action.
+The Live map draws the current aircraft marker from fresh actual GPS only. A
+stale fix hides the current marker and leaves a clear stale status. The blue
+trail contains received GPS records and breaks at missing/unverified positions,
+source changes or time gaps; it is never drawn from commanded or predicted motion.
+The fire marker and cyan five-minute outline use the receiver's frozen GPS
+anchor and exact current model inputs. The outline redraws when measured wind
+changes and keeps growing from the retained input during dropouts. Live wind
+displays the fresh numerical FC estimate or unavailable; the plan separately
+shows last measured wind with age/degraded status, or the explicit QR assumption.
+Replay retains its separate scenario display.
 
-## Launch and architecture
+The frontend describes the Raspberry Pi as a possible fleet hub but reports
+**one real aircraft**. No second aircraft, fleet ingest or fleet controller is
+implemented by this change.
 
-Follow [Mac setup](MAC_SETUP.md) or the existing Pi/Windows procedures. The same
-disarmed `fire_response.py` receiver advertises both modes; do not start another
-receiver for contour. Mac source bundles include the new Python module, and
-the Windows installer manifest includes it explicitly. Do not deploy new code
-over a running flight receiver.
+## Deployment and verification
 
-The frontend presents the Raspberry Pi as the aircraft/data hub and shows how
-the workspace could expand to a fleet. This demo still operates **one real
-drone**. No fleet backend, second live aircraft, distributed flight control or
-new fleet ingestion contract is implemented. Existing four-drone Replay is
-independent of physical flight.
-
-## Validation and handoff
-
+Follow the existing [Mac](MAC_SETUP.md) or Pi/Windows workflow. Do not replace
+files under a running flight receiver. The Mac bundle picks up Python modules;
+the Windows manifest includes `wind_measurement.py`. Keep one connection owner.
 Run `npm test` and `.venv/bin/python -m unittest discover -s tests -p '*_test.py'`.
-The new pure geometry tests compare every Python vertex against the browser
-model, exercise growth/pacing and verify GPS/motion aborts with fake drivers.
-SDK tests mock aircraft and skip when Olympe is absent. See the current
-[airborne search handoff](AIRBORNE_CONTOUR_HANDOFF.md) and the original
-[contour implementation handoff](FIRE_CONTOUR_HANDOFF.md) for completed checks.
+SDK checks mock aircraft; local SDK skips must be reported separately. See the
+[outdoor handoff](OUTDOOR_CONTOUR_HANDOFF.md) for evidence and remaining hardware
+checks. Software tests do not establish actual GPS lock, wind support or flight.

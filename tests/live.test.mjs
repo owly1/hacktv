@@ -495,6 +495,29 @@ test('flight events and the flight path are served together', async () => {
   } finally { await t.close(); }
 });
 
+test('flight GPS trail retains provenance, receipt times and missing-position gaps', async () => {
+  const t=await startApp({noGemini:true});
+  try {
+    const at=Date.now()-4000;
+    for(let i=0;i<3;i++) {
+      const observed_at=new Date(at+i*1000).toISOString(), located=i!==1;
+      const r=await t.req('POST','/api/ingest/telemetry',{token:INGEST,body:{
+        observed_at,provenance:'live',drone_id:'ANAFI-01',gps_fix:located,battery_pct:80,
+        latitude:located?43.78:null,longitude:located?-79.19:null,
+        extra:{position_source:located?'gps':'unavailable',gps_observed_at:located?observed_at:null,gps_accuracy_m:2.8}}});
+      assert.equal(r.status,200);
+    }
+    const flight=await (await t.req('GET','/api/flight',{token:DASH})).json();
+    assert.equal(flight.path.length,3);
+    assert.equal(flight.path[1].latitude,null,'missing fixes must break the recorded trail');
+    assert.equal(flight.path[0].position_source,'gps');
+    assert.equal(flight.path[0].provenance,'live');
+    assert.equal(flight.path[0].drone_id,'ANAFI-01');
+    assert.equal(flight.path[0].gps_observed_at,new Date(at).toISOString());
+    assert.equal(flight.path[0].gps_accuracy_m,2.8);
+  } finally {await t.close();}
+});
+
 test('GPS contour flight phases reach the reporting API without changing circular flight phases', async () => {
   const t = await startApp({ noGemini: true });
   try {

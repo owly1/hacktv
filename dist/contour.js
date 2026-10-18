@@ -6,9 +6,9 @@
   const TINY = Object.freeze({name:'Tiny', area_ha:.0001, intensity:'low', spread_m_per_min:.01,
     fuel:'cured grass', wind_kmh:.2, wind_dir_deg:60, temp_c:22, rh_pct:45, marker_size_m:.18, test_marker:true});
 
-  /** Build the uniform-fuel route at real elapsed minutes plus five minutes. */
-  function forecast(origin, details, ageMinutes) {
-    const sc = M.scenarioFrom(details), age = Math.max(0, ageMinutes);
+  /** Build the uniform-fuel +5-minute route; a receiver's effective weather overrides encoded scenario weather. */
+  function forecast(origin, details, ageMinutes, effectiveScenario = null) {
+    const sc = effectiveScenario ?? M.scenarioFrom(details), age = Math.max(0, ageMinutes);
     return {current:M.footprint(origin, age, sc, details, 1, {uniformFuel:true}),
       route:M.footprint(origin, age+FORECAST_MINUTES, sc, details, 1, {uniformFuel:true}),
       ageMinutes:age, speedMps:patrolSpeed(sc, details, age+FORECAST_MINUTES)};

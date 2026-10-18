@@ -56,7 +56,8 @@ class HoverCheckout(QROrbitBridge):
     def minimum_battery_pct(self,starting=False):
         return 40
 
-    def checkout_reason(self, starting=False, *, camera_only=False):
+    def checkout_reason(self, starting=False, *, camera_only=False, max_ground_speed_mps=.3):
+        """Check aircraft health; an explicit outdoor runtime may set its bounded airspeed gate."""
         # Grounded gimbal positioning does not need the takeoff battery reserve.
         # Camera-only checks always require a stationary landed aircraft.
         if camera_only:
@@ -85,8 +86,8 @@ class HoverCheckout(QROrbitBridge):
             return f"battery is below {minimum}%"
         if height < -.2 or height > 1.5:
             return f"measured altitude {height:.2f} m is outside the checkout limit"
-        if speed > .3:
-            return f"measured ground speed {speed:.2f} m/s exceeds 0.3 m/s"
+        if speed > max_ground_speed_mps:
+            return f"measured ground speed {speed:.2f} m/s exceeds {max_ground_speed_mps:g} m/s"
         if starting and (t.get("state") != "landed" or abs(height) > .25 or speed > .1):
             return "a stationary, grounded aircraft is required"
         if not starting and t.get("state") not in ("landed", "motor_ramping", "takingoff", "hovering", "flying"):

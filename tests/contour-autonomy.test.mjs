@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {AutonomousResponse} from '../backend/autonomy.mjs';
+import {OUTDOOR_CONTOUR_PROFILE,OUTDOOR_CONTOUR_DETAILS} from '../backend/contour-profile.mjs';
 import {FIRE_MARKER_PAYLOAD,FIRE_MARKER_DETAILS,TINY_FIRE_MARKER_PAYLOAD,
   TINY_FIRE_MARKER_DETAILS} from '../backend/validation.mjs';
 
@@ -9,7 +10,8 @@ function harness() {
   let now=1_000_000;
   const a=new AutonomousResponse(()=>now);
   const status={receiver_id:'contour-receiver',ready:true,reason:'Ready',phase:'waiting',
-    contour_supported:true,contour_ready:true,airborne_search_supported:true,contour_reason:'GPS ready'};
+    contour_supported:true,contour_ready:true,airborne_search_supported:true,contour_reason:'GPS ready',
+    contour_profile:OUTDOOR_CONTOUR_PROFILE};
   const receiver=(extra={})=>a.status({...status,...extra});
   receiver();
   const advance=ms=>{now+=ms;receiver();};
@@ -51,7 +53,10 @@ test('contour claims use exact Tiny model, matching accepted incident, and retai
   const mission=claim().mission;
   assert.equal(mission.mode,'contour');
   assert.equal(mission.qr_text,TINY_FIRE_MARKER_PAYLOAD);
-  assert.deepEqual(mission.contour.details,TINY_FIRE_MARKER_DETAILS);
+  assert.deepEqual(mission.contour.details,OUTDOOR_CONTOUR_DETAILS);
+  assert.deepEqual(mission.contour.marker_details,TINY_FIRE_MARKER_DETAILS);
+  assert.equal(mission.contour.profile,OUTDOOR_CONTOUR_PROFILE);
+  assert.ok(Math.abs(Math.sqrt(mission.contour.details.area_ha*10000/Math.PI)*2-50)<1e-10);
   assert.equal(mission.contour.forecast_minutes,5);
   assert.equal(mission.contour.started_at,mission.claimed_at);
   assert.equal(claim().mission.id,mission.id);
@@ -62,7 +67,7 @@ test('large Alpha scenario stays circular and cannot claim a contour flight',()=
   a.control({action:'enable',mode:'contour'});
   confirm(FIRE_MARKER_PAYLOAD,FIRE_MARKER_DETAILS);
   assert.equal(a.snapshot().target,null);
-  assert.match(a.snapshot().waiting_reason,/Tiny 1 m²/);
+  assert.match(a.snapshot().waiting_reason,/Marker 2/);
   assert.throws(claim,/authorized/);
   a.control({action:'land'});
   a.control({action:'enable'});
@@ -150,7 +155,9 @@ test('receiver contour telemetry is mission-bound, immutable and discarded after
   const {a,confirm,claim,receiver}=harness();
   a.control({action:'enable',mode:'contour'});confirm();const mission=claim().mission;
   const contour={...mission.contour,details:{...mission.contour.details},
-    anchor:{latitude:43.78,longitude:-79.18,position_source:'gps'},speed_mps:.06};
+    anchor:{latitude:43.78,longitude:-79.18,position_source:'gps'},speed_mps:.5,
+    wind_status:'measured',wind:{source:'flight-controller',speed_mps:2,direction_deg:90,observed_at:new Date(mission.claimed_at).toISOString(),age_s:0},
+    effective_scenario:{wind:7.2,direction:90,dryness:55,temp:22,rh:45}};
   assert.equal(receiver({contour}).receiver.contour.anchor.latitude,43.78);
   contour.anchor.latitude=44;
   assert.equal(a.snapshot().receiver.contour.anchor.latitude,43.78);
@@ -162,4 +169,30 @@ test('receiver contour telemetry is mission-bound, immutable and discarded after
   ]) assert.throws(()=>receiver({contour:invalid}),/GPS contour status/);
   a.control({action:'land'});
   assert.equal(receiver({contour}).receiver.contour,null);
+});
+
+
+test('outdoor mode rejects old receivers and forecast weather that is not the actual FC input',()=>{
+  const {a,confirm,claim,receiver}=harness();
+  receiver({contour_profile:null});
+  assert.throws(()=>a.control({action:'enable',mode:'contour'}),/outdoor 50 m/);
+  receiver();a.control({action:'enable',mode:'contour'});confirm();const mission=claim().mission;
+  const contour={...mission.contour,anchor:{latitude:43.78,longitude:-79.18,position_source:'gps'},speed_mps:.5,
+    wind_status:'measured',wind:{source:'flight-controller',speed_mps:0,direction_deg:null,observed_at:new Date(mission.claimed_at).toISOString(),age_s:0},
+    effective_scenario:{wind:0,direction:0,dryness:55,temp:22,rh:45}};
+  assert.equal(receiver({contour}).receiver.contour.wind.direction_deg,null);
+  assert.equal(receiver({contour:{...contour,wind:{...contour.wind,speed_mps:60/3.6,direction_deg:90},
+    effective_scenario:{...contour.effective_scenario,wind:60,direction:90}}}).receiver.contour.effective_scenario.wind,60);
+  const stale={...contour,wind_status:'stale',wind:{...contour.wind,age_s:120}};
+  assert.equal(receiver({contour:stale}).receiver.contour.wind.age_s,120);
+  const assumed={...contour,wind_status:'assumed',wind:{source:'qr-scenario-assumption',speed_mps:.2/3.6,direction_deg:60,observed_at:null,age_s:null},
+    effective_scenario:{wind:.2,direction:60,dryness:55,temp:22,rh:45}};
+  assert.equal(receiver({contour:assumed}).receiver.contour.wind.source,'qr-scenario-assumption');
+  for(const invalid of [
+    {...contour,wind:{...contour.wind,source:'qr-scenario'}},
+    {...contour,wind:{...contour.wind,speed_mps:null}},
+    {...contour,wind:{...contour.wind,speed_mps:2}},
+    {...contour,effective_scenario:{...contour.effective_scenario,wind:18}},
+    {...contour,effective_scenario:{...contour.effective_scenario,temp:30}},
+  ]) assert.throws(()=>receiver({contour:invalid}),/GPS contour status/);
 });

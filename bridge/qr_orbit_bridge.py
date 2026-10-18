@@ -285,6 +285,12 @@ class OlympeOrbitDriver:
                 cross = abs(actual[0]*dy - actual[1]*dx)/distance
                 horizontal_bad = (along < -.01 or distance-along > .15
                                   or along-distance > .08 or cross > .08)
+                if getattr(self.bridge,'response_mode',None)=='contour':
+                    # Outdoor GPS steps are up to 2 m, then replan from a new
+                    # received fix. Keep bounded stop error without applying
+                    # centimetre-scale circle tolerances to this larger course.
+                    horizontal_bad=(along < -.01 or distance-along > .5
+                                    or along-distance > .3 or cross > .3)
             if horizontal_bad or abs(actual[2]-dz) > (.10 if corrected_preset else .08) or abs(actual[3]-yaw) > (.15 if corrected_preset else .1):
                 raise RuntimeError(f"movement outside tolerance: requested={offset}, actual={actual}, "
                                    f"horizontal_error={horizontal_error:.3f} m")

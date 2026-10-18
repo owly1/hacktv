@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import {ApiError, FIRE_MARKER_PAYLOAD, FIRE_MARKER_DETAILS, FIRE_MARKER_PAYLOADS,
   TINY_FIRE_MARKER_PAYLOAD, TINY_FIRE_MARKER_DETAILS} from './validation.mjs';
+import {OUTDOOR_CONTOUR_PROFILE,OUTDOOR_CONTOUR_DETAILS,matchesOutdoorDetails,
+  measuredContourWeather} from './contour-profile.mjs';
 
 /** Recover the allowlisted marker identity from an accepted incident's scenario. */
 function markerIdentity(details) {
@@ -14,15 +16,19 @@ function contourStatus(value, mission) {
   // dropping its old plan instead of obscuring the authoritative disable.
   if (value==null || !mission?.contour) return null;
   const anchor=value.anchor;
+  const weather=measuredContourWeather(value);
   if (!anchor || anchor.position_source!=='gps'
       || !Number.isFinite(anchor.latitude) || Math.abs(anchor.latitude)>90
       || !Number.isFinite(anchor.longitude) || Math.abs(anchor.longitude)>180
       || value.forecast_minutes!==5 || value.started_at!==mission.contour.started_at
-      || markerIdentity(value.details)!==TINY_FIRE_MARKER_PAYLOAD
-      || !Number.isFinite(value.speed_mps) || value.speed_mps<0 || value.speed_mps>.2)
+      || value.profile!==OUTDOOR_CONTOUR_PROFILE || mission.contour.profile!==OUTDOOR_CONTOUR_PROFILE
+      || !matchesOutdoorDetails(value.details) || !weather
+      || !Number.isFinite(value.speed_mps) || value.speed_mps<0 || value.speed_mps>1)
     throw new ApiError(400,'Invalid GPS contour status');
   return {anchor:{latitude:anchor.latitude,longitude:anchor.longitude,position_source:'gps'},
-    forecast_minutes:5,started_at:value.started_at,details:{...TINY_FIRE_MARKER_DETAILS},speed_mps:value.speed_mps};
+    profile:OUTDOOR_CONTOUR_PROFILE,forecast_minutes:5,started_at:value.started_at,
+    details:{...OUTDOOR_CONTOUR_DETAILS},marker_details:{...TINY_FIRE_MARKER_DETAILS},
+    speed_mps:value.speed_mps,...weather};
 }
 
 const fresh = (at, now, age) => Number.isFinite(at) && now >= at && now-at < age;
@@ -93,6 +99,8 @@ export class AutonomousResponse {
       calibration:c?{...c,offset_body_m:[...c.offset_body_m],image_size:[...c.image_size]}:null,
       camera_search_supported:body.camera_search_supported===true,
       contour_supported:body.contour_supported===true,contour_ready:body.contour_ready===true,
+      contour_profile:body.contour_profile===OUTDOOR_CONTOUR_PROFILE?OUTDOOR_CONTOUR_PROFILE:null,
+      wind_reason:typeof body.wind_reason==='string'?body.wind_reason.slice(0,300):'Aircraft wind estimate unavailable',
       airborne_search_supported:body.airborne_search_supported===true,
       contour_reason:body.contour_reason??'This receiver does not support GPS contour flight',
       contour,
@@ -122,6 +130,8 @@ export class AutonomousResponse {
         throw new ApiError(409,this.receiver.contour_reason || 'GPS contour flight is not ready');
       if (mode==='contour' && !this.receiver.airborne_search_supported)
         throw new ApiError(409,'Update the receiver to support airborne contour search');
+      if (mode==='contour' && this.receiver.contour_profile!==OUTDOOR_CONTOUR_PROFILE)
+        throw new ApiError(409,'Update the receiver for the outdoor 50 m live-wind course');
       if (body.camera_search && (!this.receiver.camera_ready || !this.receiver.camera_search_supported))
         throw new ApiError(409,'Automatic camera search is not ready on this receiver');
       this.session = {id: crypto.randomUUID(), enabled_at: this.now(), heartbeat: this.now(), mission: null, search: null,
@@ -240,8 +250,8 @@ export class AutonomousResponse {
     if (this.consumed.has(t.episode_id)) throw new ApiError(409,'No fresh unconsumed fire is authorized');
     s.mission={id:crypto.randomUUID(),episode_id:t.episode_id,source:t.source,incident_id:t.incident_id,
       mode:s.mode,qr_text:t.qr_text,
-      ...(s.mode==='contour'?{contour:{forecast_minutes:5,started_at:this.now(),
-        details:{...TINY_FIRE_MARKER_DETAILS}}}:{}),
+      ...(s.mode==='contour'?{contour:{profile:OUTDOOR_CONTOUR_PROFILE,forecast_minutes:5,started_at:this.now(),
+        details:{...OUTDOOR_CONTOUR_DETAILS},marker_details:{...TINY_FIRE_MARKER_DETAILS}}}:{}),
       receiver_id:body.receiver_id,claimed_at:this.now(),target_at:t.at,qr_seed_at:t.qr_decoded_at??t.at,last_visual_at:t.at}; this.consumed.add(t.episode_id);
     this.reason='Responding to confirmed fire'; return this.snapshot();
   }
@@ -250,7 +260,7 @@ export class AutonomousResponse {
     const s=this.session,r=this.receiver;
     if (!s || s.mode!=='contour' || !s.heartbeat_confirmed || body.session_id!==s.id
         || !this.receiverFresh() || body.receiver_id!==r.receiver_id
-        || !r.contour_supported || !r.airborne_search_supported)
+        || !r.contour_supported || !r.airborne_search_supported || r.contour_profile!==OUTDOOR_CONTOUR_PROFILE)
       throw new ApiError(409,'No airborne search is authorized');
     // Retrying a lost reply must retain the same flight, even after takeoff.
     if (s.search?.receiver_id===body.receiver_id) return this.snapshot();
@@ -267,7 +277,7 @@ export class AutonomousResponse {
     if (s.mode==='contour' && !s.search) return 'Checking GPS and takeoff readiness for one drone to search at 1 m';
     if (!t || !fresh(t.at,this.now(),1000)) return 'Searching for a fresh fire observation';
     if (s.mode==='contour' && (t.source!=='qr-test' || t.qr_text!==TINY_FIRE_MARKER_PAYLOAD))
-      return 'Contour mode requires the Tiny 1 m² fire marker; Alpha remains available with circular response';
+      return 'Contour mode requires Marker 2 (Tiny), selecting the 50 m outdoor fire; Alpha remains available with circular response';
     if (s.mode==='contour' && !s.search && !this.receiver?.contour_ready)
       return this.receiver?.contour_reason || 'Waiting for accurate GPS for contour flight';
     if (t.qr_tracking!=='decoded') return s.search?'Waiting for an exact QR decode to anchor the contour':'Waiting for an exact QR decode before takeoff';
@@ -278,7 +288,7 @@ export class AutonomousResponse {
       return 'Fire detected; waiting for its incident record to be accepted';
     if (s.mode==='contour' && accepted.qr_text!==t.qr_text)
       return 'Waiting for the matching Tiny fire incident record';
-    return s.search?'Marker 2 confirmed; reading scenario weather and measuring the fire location':
+    return s.search?'Marker 2 confirmed; measuring its location and using the best available wind input':
       'Fire confirmed; checking measured position and takeoff readiness';
   }
   snapshot() {

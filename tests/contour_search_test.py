@@ -8,7 +8,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).parents[1]/'bridge'))
 from contour_search import run_airborne_search
-from fire_contour import ContourPlan, GPSFix, geographic_offset, local_offset, run_contour
+from fire_contour import (ContourPlan, GPSFix, geographic_offset, local_offset, run_contour,
+                          OUTDOOR_DETAILS, OutdoorContourLimits)
 from fire_detection import parse_marker, TINY_FIRE_MARKER_PAYLOAD
 from qr_orbit_core import Limits, Vehicle
 
@@ -16,13 +17,13 @@ from qr_orbit_core import Limits, Vehicle
 class SearchTests(unittest.TestCase):
     """Verify measured height, actual search movement, anchoring and continued contour flight."""
 
-    def harness(self, *, height=.6, fault=None, find_after=4, stop_after=25, flight_seconds=None):
+    def harness(self, *, height=.6, fault=None, find_after=4, stop_after=25, flight_seconds=None, outdoor=False):
         """Build a feedback-controlled synthetic aircraft with injectable faults and QR timing."""
         origin=(43.78,-79.19)
         state={'time':10.,'height':height,'position':origin,'yaw':0.,'moves':[],'phases':[],
                'acquired_at':None,'horizontal':0,'plan':None,'hold_started':None}
         abort=threading.Event()
-        limits=Limits(speed_mps=.1)
+        limits=OutdoorContourLimits(speed_mps=.5) if outdoor else Limits(speed_mps=.1)
 
         def clock():
             """Return the synthetic monotonic clock."""
@@ -35,13 +36,23 @@ class SearchTests(unittest.TestCase):
         def sample():
             """Publish actual synthetic measurements with the requested failure injection."""
             vehicle=Vehicle(clock(),True,'hovering',80,state['height'],.1,0.)
-            fix=GPSFix(clock(),*state['position'],.2,True)
+            coordinate=state['position']
+            if outdoor:
+                north,east=local_offset(origin,coordinate)
+                coordinate=geographic_offset(origin,round(north),round(east))
+            fix=GPSFix(clock(),*coordinate,2.8 if outdoor else .2,True)
             if fault=='battery':vehicle=replace(vehicle,battery_pct=20)
             if fault=='disconnect':vehicle=replace(vehicle,connected=False)
             if fault=='gps':fix=replace(fix,at=clock()-2)
             if fault=='gps-during-move' and state['moves']:fix=replace(fix,fixed=False)
+            if fault=='gps-frozen':fix=replace(fix,latitude=origin[0],longitude=origin[1])
             if fault=='envelope':fix=replace(fix,latitude=origin[0]+.001)
             return vehicle,fix,state['yaw']
+
+        def wind():
+            """Provide the outdoor contour with real-wind-shaped test data, never marker weather."""
+            return {'source':'flight-controller','speed_mps':2.,'direction_deg':90.,
+                    'observed_at':'2026-10-18T12:00:00Z','age_s':0.}
 
         class Driver:
             """A moveBy fake that supplies actual measured displacement and watchdog callbacks."""
@@ -76,7 +87,9 @@ class SearchTests(unittest.TestCase):
                 return None
             state['acquired_at']=clock()
             plan=ContourPlan(geographic_offset(state['position'],.5,0),origin,
-                             parse_marker(TINY_FIRE_MARKER_PAYLOAD),clock(),clock()*1000)
+                             OUTDOOR_DETAILS if outdoor else parse_marker(TINY_FIRE_MARKER_PAYLOAD),
+                             clock(),clock()*1000,outdoor=outdoor)
+            if outdoor:plan=plan.with_weather(wind())
             state['plan']=plan
             return plan
 
@@ -84,9 +97,10 @@ class SearchTests(unittest.TestCase):
         def run():
             """Execute real search commands and transfer the same driver to GPS contour following."""
             plan=run_airborne_search(driver,limits,origin,sample,abort,report,seen,acquire,
-                started=10.,flight_seconds=flight_seconds,clock=clock,sleep=sleep)
+                started=10.,flight_seconds=flight_seconds,clock=clock,sleep=sleep,outdoor=outdoor)
             run_contour(driver,limits,plan,sample,abort,report,
-                started=10.,flight_seconds=flight_seconds,clock=clock,sleep=sleep)
+                started=10.,flight_seconds=flight_seconds,clock=clock,sleep=sleep,
+                wind_snapshot=wind if outdoor else None)
 
         return run,state,abort
 
@@ -156,6 +170,40 @@ class SearchTests(unittest.TestCase):
         self.assertIsNone(state['plan'])
         self.assertGreater(state['phases'].count('airborne-search'),1)
         self.assertEqual(state['horizontal'],10)
+
+    def test_outdoor_search_moves_beyond_gps_precision_then_follows_live_wind_plan(self):
+        """Whole-metre GPS supports an actual search and transfer to the 50 m-wide course."""
+        run,state,_=self.harness(outdoor=True,stop_after=45)
+        with self.assertRaisesRegex(InterruptedError,'Operator requested landing'):run()
+        self.assertEqual(state['phases'][:4],['holding','airborne-search','acquiring','tracking'])
+        self.assertIn('contour',state['phases'])
+        self.assertTrue(state['plan'].outdoor)
+        self.assertEqual(state['plan'].scenario['wind'],7.2)
+        self.assertEqual(state['plan'].details['wind_kmh'],.2)
+        self.assertEqual(state['plan'].launch,(43.78,-79.19))
+        self.assertGreater(math.hypot(*local_offset((43.78,-79.19),state['position'])),15)
+        for offset,speed,height in state['moves']:
+            self.assertLessEqual(math.hypot(*offset[:2]),2.000001)
+            self.assertLessEqual(abs(offset[2]),.100001)
+            if math.hypot(*offset[:2])>.01:
+                self.assertLessEqual(abs(height-1.),.05)
+                self.assertTrue(.5<=speed<=1.)
+
+    def test_outdoor_search_does_not_stall_on_quantized_gps_or_escape_its_course(self):
+        """A marker-free search keeps moving inside its explicit 20 m launch envelope."""
+        run,state,_=self.harness(height=1.,outdoor=True,find_after=None,stop_after=100)
+        with self.assertRaisesRegex(InterruptedError,'Operator requested landing'):run()
+        self.assertEqual(state['horizontal'],100)
+        self.assertGreater(state['time'],310.)
+        self.assertLess(math.hypot(*local_offset((43.78,-79.19),state['position'])),20.)
+
+    def test_outdoor_search_stops_on_fresh_gps_that_contradicts_acknowledged_motion(self):
+        """A frozen coordinate cannot repeatedly authorize another two-metre search command."""
+        run,state,_=self.harness(height=1.,outdoor=True,find_after=None,stop_after=100,fault='gps-frozen')
+        with self.assertRaisesRegex(InterruptedError,'GPS disagrees.*frozen'):run()
+        self.assertLessEqual(state['horizontal'],7)
+        self.assertGreater(state['horizontal'],1)
+        self.assertLess(math.hypot(*local_offset((43.78,-79.19),state['position'])),20.)
 
 
 if __name__=='__main__':unittest.main()
