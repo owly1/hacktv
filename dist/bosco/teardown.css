@@ -16,9 +16,13 @@
   position: absolute; left: 0; right: 0; top: 0; padding: 24px 32px;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.teardown-progress { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--label); }
+.teardown-intro {
+  margin: 0; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+  line-height: 1.5; color: var(--label);
+}
+.teardown-intro b { font-size: 1.45em; font-weight: 600; color: var(--accent); }
 .teardown-close {
-  all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%;
+  all: unset; cursor: pointer; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 0 0 1px var(--ring-soft); color: var(--strong);
 }
@@ -27,17 +31,17 @@
 
 .teardown-rail {
   position: absolute; left: 32px; top: 50%; transform: translateY(-50%);
-  margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px;
+  margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 18px;
 }
 .teardown-rail li {
-  display: flex; align-items: center; gap: 12px;
-  font-weight: 900; font-stretch: 125%; font-size: 28px; line-height: 1; color: var(--future);
+  display: flex; align-items: center; gap: 16px;
+  font-weight: 900; font-stretch: 125%; font-size: 52px; line-height: 1; color: var(--future);
   transition: color .25s ease;
 }
 .teardown-rail li.is-past { color: var(--text); }
 .teardown-rail li.is-current { color: var(--accent); }
 .teardown-rail .word {
-  font-family: var(--font-mono); font-weight: 400; font-stretch: 100%; font-size: 11px;
+  font-family: var(--font-mono); font-weight: 400; font-stretch: 100%; font-size: 13px;
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--label);
   opacity: 0; transition: opacity .25s ease;
 }
@@ -77,9 +81,10 @@ html.is-teardown-open, html.is-teardown-open body { overflow: hidden; }
 /* Narrow screens: the rail and callout move out of the drone's way. */
 @media (max-width: 760px) {
   .teardown-top { padding: 16px 16px; }
-  .teardown-frame { padding: 64px 16px 260px; align-items: flex-start; padding-top: 96px; }
-  .teardown-rail { left: 16px; top: 72px; transform: none; flex-direction: row; gap: 10px; }
-  .teardown-rail li { font-size: 20px; gap: 6px; }
+  .teardown-frame { padding: 64px 16px 260px; align-items: flex-start; padding-top: 150px; }
+  .teardown-rail { left: 16px; top: 104px; transform: none; flex-direction: row; gap: 10px; }
+  .teardown-rail li { font-size: 30px; gap: 6px; }
+  .teardown-intro { font-size: 11px; }
   .teardown-rail .word { display: none; }
   .teardown-callouts { left: 16px; right: 16px; width: auto; bottom: 88px; }
   .callout { padding: 18px; }
