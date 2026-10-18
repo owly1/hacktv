@@ -11,9 +11,9 @@ function overlap(a, b) {
 export class AutonomousResponse {
   constructor(now = () => Date.now()) {
     this.now = now; this.session = null; this.receiver = null; this.target = null; this.lastFrameAt = -Infinity;
-    this.accepted = new Map(); this.consumed = new Set(); this.reason = 'Autonomous response is off';
+    this.accepted = new Map(); this.consumed = new Set(); this.reason = 'Autonomous response is off'; this.camera = null;
   }
-  disable(reason) { this.session = null; this.reason = reason; }
+  disable(reason) { this.session = null; this.camera = null; this.reason = reason; }
   tick() {
     if (this.session && (!fresh(this.session.heartbeat, this.now(), 5000) || !this.receiverFresh())) {
       this.disable('Control connection expired; landing requested');
@@ -32,7 +32,8 @@ export class AutonomousResponse {
     }
     if (this.receiver && this.receiver.receiver_id !== body.receiver_id) this.disable('Receiver restarted; enable a new session');
     this.receiver = {receiver_id: body.receiver_id, ready: body.ready, reason: body.reason,
-      phase: String(body.phase ?? 'waiting').slice(0,40), at: this.now(), position: body.position ?? null};
+      phase: String(body.phase ?? 'waiting').slice(0,40), at: this.now(), position: body.position ?? null,
+      camera_ready: body.camera_ready === true};
     if (this.session?.mission && ['landed','error'].includes(this.receiver.phase)) this.disable('Flight finished; enable a new session when ready');
     this.tick(); return this.snapshot();
   }
@@ -40,15 +41,20 @@ export class AutonomousResponse {
     this.tick();
     if (body?.action === 'disable' || body?.action === 'land') {
       this.disable('Operator requested landing and disabled autonomous response');
+    } else if (body?.action === 'camera') {
+      if (this.session || !this.receiverFresh() || !this.receiver.camera_ready)
+        throw new ApiError(409,'Camera preview requires a connected, stationary drone with autonomous response OFF');
+      if (![0,-45,-70].includes(body.pitch_deg)) throw new ApiError(400,'Select level, down 45°, or down 70°');
+      this.camera={id:crypto.randomUUID(),pitch_deg:body.pitch_deg,at:this.now(),receiver_id:this.receiver.receiver_id};
     } else if (body?.action === 'enable') {
       if (this.session) throw new ApiError(409,'An autonomous session is already enabled');
       if (!this.receiverFresh() || !this.receiver.ready) throw new ApiError(409,this.receiver?.reason || 'Response receiver is offline');
       this.session = {id: crypto.randomUUID(), enabled_at: this.now(), heartbeat: this.now(), mission: null};
-      this.target = null; this.reason = 'Waiting for a newly confirmed fire';
+      this.target = null; this.camera = null; this.reason = 'Waiting for a newly confirmed fire';
     } else if (body?.action === 'heartbeat') {
       if (!this.session || body.session_id !== this.session.id) throw new ApiError(409,'Session expired');
       this.session.heartbeat = this.now();
-    } else throw new ApiError(400,'Use enable, disable, land or heartbeat');
+    } else throw new ApiError(400,'Use enable, disable, land, camera or heartbeat');
     return this.snapshot();
   }
   incident(record) {
@@ -96,6 +102,7 @@ export class AutonomousResponse {
     return {enabled:!!s,session_id:s?.id??null,mission:s?.mission??null,reason:this.reason,
       receiver:this.receiverFresh()?this.receiver:null,target:this.candidate(),
       observed_target:this.target && fresh(this.target.at,this.now(),1000)?this.target:null,
+      camera:!s && this.receiverFresh() && this.camera && fresh(this.camera.at,this.now(),5000)?this.camera:null,
       radius_m:1,height_m:1,flight_seconds:300};
   }
 }

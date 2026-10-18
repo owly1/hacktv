@@ -146,6 +146,13 @@ Dashboard-token endpoints: `GET /api/autonomy` reads state;
 `{action: "heartbeat", session_id}`. Only the page that enabled the session
 renews its five-second lease. LAND is available from any authenticated page.
 
+`POST /api/autonomy` also accepts `{action:"camera", pitch_deg:0|-45|-70}`
+while response is OFF and the receiver reports `camera_ready:true`. The
+receiver-bound request expires after five seconds. The receiver independently
+checks grounded state, fresh telemetry and stationary preflight conditions;
+it sends only a gimbal pitch command and consumes each request once. Missing
+flight geometry does not block these camera-only previews.
+
 Ingest-token endpoints:
 
 - `POST /api/ingest/autonomy/status`: receiver ID, ready boolean, reason,

@@ -32,6 +32,7 @@ class FireResponse(QRAutoPreset):
         self.receiver_id=secrets.token_hex(16)
         self.control=None; self.control_at=float('-inf'); self.target=None
         self.claimed_session=None; self.episode=None; self.projected_at=None
+        self.preview_command_id=None
         self.geometry=None; self.geometry_stamp=None; self.geometry_error='Calibration not loaded'
         self.target_error='Waiting for confirmed fire'; self.control_stop=threading.Event()
         self._load_geometry()
@@ -90,6 +91,20 @@ class FireResponse(QRAutoPreset):
         except (ValueError,KeyError,TypeError) as error:
             self.target=None; self.target_error=str(error)
 
+    def _preview_camera(self,control):
+        command=control.get('camera')
+        if (not command or command.get('id')==self.preview_command_id or control.get('enabled')
+                or command.get('receiver_id')!=self.receiver_id or self.takeoff_used
+                or not self.running or HoverCheckout.checkout_reason(self,starting=True)):
+            return
+        if command.get('pitch_deg') not in (0,-45,-70) or not 0<=time.time()-command.get('at',0)/1000<=5:
+            return
+        self.preview_command_id=command['id']
+        # Camera only. This path never creates a flight worker or sends TakeOff.
+        self.drone(gimbal.set_target(gimbal_id=0,control_mode='position',
+            yaw_frame_of_reference='none',yaw=0.,pitch_frame_of_reference='absolute',
+            pitch=float(command['pitch_deg']),roll_frame_of_reference='none',roll=0.,_no_expect=True))
+
     def _control_loop(self):
         while self.running and not self.control_stop.is_set():
             try:
@@ -101,10 +116,12 @@ class FireResponse(QRAutoPreset):
                     'source':'calibrated-ground-plane'}
                 control=self._request('/api/ingest/autonomy/status',{
                     'receiver_id':self.receiver_id,'ready':not reason and not self.takeoff_used,
+                    'camera_ready':not self.takeoff_used and not HoverCheckout.checkout_reason(self,starting=True),
                     'reason':(self.target_error or 'Tracking measured fire') if self.takeoff_used else reason or 'Ready for a new session',
                     'phase':self.flight_phase or 'waiting','position':position})
                 with self.takeoff_lock:
                     self.control=control; self.control_at=time.monotonic()
+                    self._preview_camera(control)
                     if self.takeoff_used and (not control.get('enabled') or control.get('session_id')!=self.claimed_session):
                         self._request_landing(force=False)
                     self._update_target()

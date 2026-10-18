@@ -140,6 +140,12 @@ The camera displays the current fire rectangle and distinguishes confirmation
 from a located target. Smoke, other QR codes, replay, old detections and a
 single unconfirmed frame cannot authorize flight.
 
+For a floor target while the drone is resting on a table, use **Down 45°**
+or **Down 70°** in the camera-only controls. **Level** restores the horizontal
+view. These controls work before flight calibration is complete, require a
+connected stationary grounded aircraft and autonomous response OFF, and never
+authorize takeoff. The displayed camera angle comes from aircraft telemetry.
+
 The receiver locates the fire's ground contact using calibrated video pixels,
 the actual gimbal attitude and aircraft height. After a stable position is
 acquired, it aligns to a one-metre radius and repeatedly circles the measured

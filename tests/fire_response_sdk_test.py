@@ -73,5 +73,21 @@ class ResponseTests(unittest.TestCase):
         self.assertEqual(b.overlay[0]['bbox'],observation['bbox'])
         observation['at']-=3000;b._detect_step(None,0);self.assertEqual(b.overlay,[])
 
+    def test_preview_tilts_camera_without_calibration_or_takeoff_and_rejects_unsafe_state(self):
+        b=self.bridge()
+        control={'enabled':False,'camera':{'id':'preview-one','at':time.time()*1000,
+                 'pitch_deg':-45,'receiver_id':b.receiver_id}}
+        with patch.object(response.gimbal,'set_target',return_value='camera-only') as tilt:
+            b._preview_camera(control);b._preview_camera(control)
+        tilt.assert_called_once();self.assertEqual(tilt.call_args.kwargs['pitch'],-45)
+        b.drone.assert_called_once_with('camera-only');self.assertFalse(b.takeoff_used)
+        for fault in ('enabled','flying','stale','receiver'):
+            b=self.bridge();c={**control,'camera':{**control['camera'],'receiver_id':b.receiver_id}}
+            if fault=='enabled':c['enabled']=True
+            if fault=='flying':b.telemetry['state']='flying'
+            if fault=='stale':c['camera']['at']-=10000
+            if fault=='receiver':c['camera']['receiver_id']='old-receiver'
+            b._preview_camera(c);b.drone.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

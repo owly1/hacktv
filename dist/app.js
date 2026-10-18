@@ -48,6 +48,10 @@ function renderAutonomy() {
   $('autonomy-state').className='pill '+(enabled?'soft-orange':'muted');
   $('autonomy-enable').disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.ready;
   $('autonomy-enable').textContent=enabled?'Response enabled':'Enable this session';
+  for(const id of ['camera-level','camera-down','camera-steep'])
+    $(id).disabled=autonomyActionPending||state.mode!=='live'||enabled||!a?.receiver?.camera_ready;
+  const pitch=state.telemetry?.extra?.gimbal_pitch_deg;
+  $('camera-pitch-status').textContent=Number.isFinite(pitch)&&a?.receiver?`Camera ${Math.round(pitch)}°`:'';
   const phase=a?.receiver?.phase;
   const position=a?.receiver?.position;
   $('autonomy-detail').textContent=state.mode!=='live'?'Enable is available in Live mode only. LAND remains available.':
@@ -78,16 +82,17 @@ async function pollAutonomy() {
   }
   renderAutonomy();
 }
-async function setAutonomy(action) {
+async function setAutonomy(action,extra={}) {
   if (action==='enable' && (state.mode!=='live'||autonomyActionPending)) return;
+  if (action==='camera' && (state.mode!=='live'||autonomyActionPending||state.autonomy?.enabled)) return;
   const revision=++autonomyRevision;
   autonomyActionPending=true; renderAutonomy();
   try {
-    const response=await getJson('/api/autonomy',{method:'POST',body:{action},timeout:1500});
+    const response=await getJson('/api/autonomy',{method:'POST',body:{action,...extra},timeout:1500});
     if (revision!==autonomyRevision) return;
     state.autonomy=response;
     autonomousSession=action==='enable'?state.autonomy.session_id:null;
-    toast(action==='enable'?'Autonomous response enabled for this live session.':'Landing requested; autonomous response disabled.');
+    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?'Autonomous response enabled for this live session.':'Landing requested; autonomous response disabled.');
   } catch(error) {toast(error.message);}
   finally {if(revision===autonomyRevision){autonomyActionPending=false;renderAutonomy();}}
 }
@@ -921,6 +926,9 @@ async function connect() {
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
   $('autonomy-enable').onclick=()=>setAutonomy('enable');
   $('autonomy-land').onclick=()=>setAutonomy('land');
+  $('camera-level').onclick=()=>setAutonomy('camera',{pitch_deg:0});
+  $('camera-down').onclick=()=>setAutonomy('camera',{pitch_deg:-45});
+  $('camera-steep').onclick=()=>setAutonomy('camera',{pitch_deg:-70});
   every(250,'autonomy',pollAutonomy);
   every(2000, 'people', pollPeople); every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
   try { const {plan} = await getJson('/api/plan/latest'); if (plan) { state.plan = plan; renderPlan(); } } catch {}
