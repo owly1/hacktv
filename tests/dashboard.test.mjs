@@ -39,7 +39,7 @@ async function dashboard() {
     state.droneMarker = L.marker();
     for (const name of ['fire', 'people', 'coverage', 'mission', 'spread', 'wind']) state.layers[name] = L.layerGroup();
     var originalRenderSpread = renderSpread;
-    renderSpread = fitToFire = renderPlan = renderPeople = toast = setDemoVideo = () => {};
+    renderSpread = fitToFire = renderPeople = toast = setDemoVideo = drawWaiting = () => {};
     camera = () => null;
   `, context);
   return {context, /* Evaluate the selected dashboard operation inside its isolated VM fixture. */ run: source => vm.runInContext(source, context), element};
@@ -61,39 +61,58 @@ test('replay animation and live connection no longer request or poll scene analy
   await run('connect()');
   assert.ok(polls.includes('people') && polls.includes('telemetry'));
   assert.ok(!polls.includes('analysis'));
-  assert.ok(calls.every(url => !url.includes('analy')));
+  assert.ok(calls.every(url => !/analy|plan|ask/.test(url)));
   const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /id="analysis-panel"|id="analyze"|Gemini analysis/);
-  assert.match(html, /id="questions-panel"/);
+  assert.doesNotMatch(html, /questions-panel|response-panel|ask-input|generate-plan|Gemini/);
 });
 
-test('person search and historical replay switch without reusing a historical drone or plan', async () => {
+test('fire-first camera interpolation shares the map pose and uses the short heading turn', async () => {
+  const {context,run,element} = await dashboard();
+  run("selectDemo('people'); var fakeCam = {ok:true}; camera = () => fakeCam;");
+  const capture = [];
+  context.EmberCamera = {setScene() {},render(ctx,cam,pose,opts) {capture.push({pose,opts});}};
+  element('camera').getContext = () => ({});
+  const make = (t,e,heading) => ({simulated:true,t,duration_s:560,leads:[],camera:{origin:{latitude:43,longitude:-79},wind_deg:60,wind_kmh:25,
+    pose:{e,n:10,alt:70,heading,pitch:55},fire:{a:50,b:50,shift:0},objects:[]},
+    drone:{latitude:43+e/111320,longitude:-79,ground_speed_mps:9,battery_pct:80},mission:{phase:'orbit',mode:'survey'}});
+  context.first = make(0,0,359); context.second = make(3,9,1);
+  run('acceptPeopleFrame(first); acceptPeopleFrame(second); var captureAt = peopleState.demo.frame.received;');
+  const heading = run('peopleFrame(captureAt + 500).pose.heading');
+  assert.ok(heading < .01 || heading > 359.99);
+  run('renderPeopleCamera(captureAt + 500)');
+  assert.equal(capture[0].pose.e,4.5); assert.equal(capture[0].opts.speed,9);
+  assert.equal(run('state.demo.pos[0]'),43+4.5/111320);
+  assert.match(element('power').innerHTML,/80/);
+  assert.match(element('video-status').textContent,/3D search replay/);
+  run('selectDemo(state.demo.fires[0].id)');
+  assert.equal(run('peopleState.demo'),null);
+  run('renderPeopleCamera(captureAt+1000)');
+  assert.equal(capture.length,1,'leaving the case stops its camera rendering');
+});
+
+test('person search and historical replay never reuse a removed drone or stale search frame', async () => {
   const {run} = await dashboard();
   run('selectDemo(state.demo.fires[0].id)');
-  assert.equal(run('demoCase().id'), run('state.demo.fires[0].id'));
   assert.ok(run('state.demo.marker'));
-  run("demoResults().plan = {title: 'Historical plan'}; selectDemo('people')");
-  assert.equal(run('demoCase()'), null, 'person search is not a historical camera case');
-  assert.equal(run('state.demo.marker'), null, 'the removed historical marker cannot keep animating');
-  assert.equal(run('state.plan'), null);
-  run('animateDemoCase(performance.now())');
-  run("demoResults().plan = {title: 'UTSC search'}; selectDemo('people:' + state.demo.fires[0].id)");
-  assert.equal(run('state.plan'), null, 'each search scenario owns its results');
   run("selectDemo('people')");
-  assert.equal(run('state.plan.title'), 'UTSC search');
+  assert.equal(run('demoCase()'), null);
+  assert.equal(run('state.demo.marker'), null);
+  assert.equal(run('peopleState.demo.frame'), null);
+  run('animateDemoCase(performance.now())');
   run('selectDemo(state.demo.fires[0].id)');
-  assert.equal(run('state.plan.title'), 'Historical plan');
   assert.equal(run('peopleDemoActive()'), false);
+  assert.equal(run('peopleState.demo'), null);
 });
 
 test('fleet POV, replay speed and scenario switches preserve shared evidence and selected telemetry', async () => {
   const {run, element} = await dashboard();
   run('selectDemo(state.demo.fires[0].id); state.demo.started = performance.now() - 90000;');
   const time = run('demoT()');
-  run("state.minute = 30; demoResults().plan = {title:'shared plan'}; selectFleetDrone('ANAFI-03')");
+  run("state.minute = 30; var savedScene = state.demo.scout; selectFleetDrone('ANAFI-03')");
   assert.ok(Math.abs(run('demoT()') - time) < 1);
   assert.equal(run('state.minute'), 30);
-  assert.equal(run('demoResults().plan.title'), 'shared plan');
+  assert.equal(run('state.demo.scout === savedScene'), true);
   assert.equal(run('state.demo.autoPOV'), false);
   assert.equal(run('simCase(demoCase()).drone.telemetry.drone_id'), 'ANAFI-03');
   assert.equal(run('simCase(demoCase()).fleet.length'), 4);
@@ -187,41 +206,6 @@ test('QR scenario wind is retained when an old derived estimate is supplied', as
   assert.equal(run('state.scenario.wind'), 30);
   run("applyWindEstimate({created_at:'analysis-2', episode_id:'previous-fire', wind_estimate:{speed_mps:25, direction_deg:180}})");
   assert.equal(run('state.scenario.wind'), 30);
-});
-
-test('live plan response cannot overwrite a replay selected during inference', async () => {
-  const {run, context, element} = await dashboard();
-  context.incident = liveIncident();
-  run("state.mode = 'live'; state.incident = incident; renderIncident()");
-  let finish;
-  context.fetch = () => new Promise(resolve => {finish = resolve;});
-  element('objective').value = 'initial-attack';
-  const pending = run('generatePlan()');
-  run("state.mode = 'demo'; state.plan = {title: 'Replay plan'}");
-  finish({ok: true, json: async () => ({title: 'Live plan'})});
-  await pending;
-  assert.equal(run('state.plan.title'), 'Replay plan');
-});
-
-test('simulated rescue plans use the demo endpoint and include that scenario\'s leads', async () => {
-  const {context, run, element} = await dashboard();
-  const calls = [];
-  context.fetch = async (url, options) => {
-    calls.push({url, options: {...options, body: JSON.parse(options.body)}});
-    return {ok: true, /* Return the controlled response body for this fake HTTP request. */ json: async () => ({id: 'demo-plan'})};
-  };
-  run(`
-    selectDemo('people');
-    state.demo.selected.lat = 43.78; state.demo.selected.lon = -79.19;
-    peopleState.snap = {simulated: true, fire: {latitude: 43.78, longitude: -79.19},
-      drone: {altitude_m: 60}, leads: [{id: 'simulated-lead'}]};
-  `);
-  element('objective').value = 'search-and-rescue';
-  await run("demoGemini('plan')");
-  assert.equal(calls[0].url, '/api/demo/plan');
-  assert.equal(calls[0].options.body.case.provenance, 'simulated');
-  assert.equal(calls[0].options.body.case.rescue_leads[0].id, 'simulated-lead');
-  assert.ok(calls[0].options.body.projection.area_ha > 0);
 });
 
 test('an in-flight live lead poll cannot overwrite a newly selected demo', async () => {

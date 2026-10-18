@@ -18,8 +18,7 @@ npm ci
 
 Keep your configured `.env`. On a fresh checkout, first run
 `Copy-Item .env.example .env` and configure distinct `INGEST_TOKEN` and
-`DASHBOARD_TOKEN`. Gemini is optional for flight/camera/people replay; set
-`GEMINI_API_KEY` to test incident questions and planning. Enter `DASHBOARD_TOKEN` in the
+`DASHBOARD_TOKEN`. Gemini is not required by either dashboard. Enter `DASHBOARD_TOKEN` in the
 dashboard's Integrations dialog when prompted. Credentials stay local.
 
 Open <http://127.0.0.1:9001/?demo>. On Mac/Linux use
@@ -60,15 +59,29 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
    camera/telemetry take focus. Manual selection disables Follow searches;
    enable it to resume automatic POV changes. Use full screen for the camera
    panel or map, and “Centre on the drone and fire” to frame the whole fleet.
-7. Exercise the forecast slider, Conditions, incident Q&A, Generate operational
-   plan and Export brief. Incident questions/planning require
-   Gemini configuration and retain visible service errors when unavailable.
-   Plans receive fleet poses and shared leads; briefs include fleet telemetry
-   and source drones. Case switching preserves each case's evidence and results.
-   Scene analysis and automatic analysis requests are removed from both replay
-   and live dashboards. Questions and response plans run only when requested.
+7. Exercise the forecast slider, Conditions, lead review and Export brief.
+   Briefs include fleet telemetry and source drones. Scene analysis, incident
+   Q&A and response planning are removed from both replay and live dashboards.
+   No Gemini key or cloud inference is needed for these dashboard features.
 8. Exit replay. Fleet controls disappear and live inputs resume. Fictional
    evidence never posts to live ingest, rescue-lead storage or aircraft control.
+
+## Fire-first person-search replay
+
+The **Person search · fire first** selector group remains a distinct single-drone
+mission, with a fictional trapped-person scenario, uncertainty, revisits and
+simulated store-and-forward during a link outage. It previously drew a waiting
+placeholder instead of camera input. It now shows the same moving ANAFI-01 pose
+in the 3D camera, map and telemetry, including speed and battery.
+
+Select **UTSC · Highland Creek ravine** in that group. Within a second, confirm
+the **ANAFI-01 · Search POV** header, **3D search replay** source, altitude/speed/
+power, heading and moving map marker. Expand the drone panel to inspect person
+overlays and the fire box. Switch to a historical search and then back to a
+fleet case; the previous search camera must stop. Camera scene objects and
+thermal cues are fictional; standard ANAFI RGB is not thermal hardware. During
+the staged link outage the rendered onboard replay continues, labeled as such,
+while observations follow the existing delayed-delivery behavior.
 
 ## Implementation limits
 

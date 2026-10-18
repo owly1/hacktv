@@ -43,10 +43,12 @@ aircraft, scrolling POV previews, coordinated exterior descents and shared
 fictional leads. See [the demo guide](docs/FLEET_DEMO.md). This browser replay
 does not implement per-drone live ingest or real fleet flight coordination.
 
-The shared replay/live UI no longer includes Gemini scene analysis or analysis
-polling. Backend automatic scene analysis defaults off. Incident Q&A and human
-requested response plans remain; authenticated legacy analysis routes are kept
-for compatibility, with automatic mode available only to explicit app embedders.
+The shared replay/live UI no longer includes scene analysis, incident Q&A or
+response planning, and makes no Gemini requests. Backend automatic scene
+analysis defaults off; authenticated legacy AI APIs remain for compatibility.
+Fire-first person-search replay now includes a 3D ANAFI-01 camera with matching
+map pose, heading, altitude, speed and power, sourced only from its simulated
+snapshot. Its thermal observations are fictional illustrations, not ANAFI hardware.
 
 ## Branching for every teammate
 

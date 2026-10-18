@@ -12,8 +12,8 @@ Changed files and behavior:
   camera-visible observations, shared identities and bounded evidence.
 - `dist/app.js`, `index.html`, `styles.css`, `fullscreen.js`: scrolling per-drone
   camera previews, selected full POV/telemetry, automatic search following,
-  1×/2×/4× common clock, map focus and bounded colored trails. Forecast controls,
-  Gemini tools and scenario caches remain available.
+  1×/2×/4× common clock, map focus and bounded colored trails. Forecast controls
+  and scenario camera/review state remain available; all AI panels are removed.
 - `dist/sim-camera.js`: bank-aware 3D projection and other aircraft drawn at
   their world positions/heights. Existing fire and person overlays remain.
 - `dist/people.js`: source aircraft shown in lead cards and briefs. Local named
@@ -22,8 +22,8 @@ Changed files and behavior:
 - README/shared context and `docs/FLEET_DEMO.md`: launch and presentation guide.
 
 Contracts or decisions changed: no live API or aircraft command changes. Only
-explicit historical Replay generates these aircraft/people. Demo Gemini requests
-and briefs now include the whole simulated fleet and source-attributed leads.
+explicit Replay generates these aircraft/people. Briefs include the whole
+simulated fleet and source-attributed leads; the dashboard sends no Gemini requests.
 The prediction remains the existing illustrative model, shared across views.
 The older backend person-search fixtures and pad flight replay stay separate.
 
@@ -50,12 +50,23 @@ Open issue / next step: integrate through review into `main`. Real fleet ingest,
 freshness isolation, multi-view boundary fusion and physical coordination remain
 separate work in `spec.md`. Browser reload starts a new randomized replay session.
 
-Dashboard follow-up: removed the Gemini scene-analysis panel, analyze button,
-replay auto-analysis, live analysis polling and analysis section in briefs.
-Incident Q&A has its own panel; response planning remains available on demand.
-Backend automatic scene analysis defaults off (explicit embedding opt-in and
-authenticated legacy API routes remain compatible). Applies to both `?demo`
-and `?live-demo` through the shared dashboard files. Regression checks cover
-live/replay request behavior and detection without automatic Gemini calls.
-Browser verified both modes without scene-analysis headings or analyze controls;
-the running local backend reports `gemini.automatic_analysis: false`.
+Latest dashboard follow-up: scene analysis, incident Q&A and response planning
+are all removed from the shared replay/live UI, navigation, controls, brief
+sections and Gemini status chips. No dashboard AI requests or plan polling remain.
+Backend automatic scene analysis defaults off; authenticated legacy API routes
+remain compatible for explicit callers.
+
+Fire-first search had a deliberate waiting-camera placeholder despite its
+existing simulated drone. `backend/people-sim.mjs` now adds replay-only camera
+geometry/objects and measured simulation-step speed, power and identity.
+`dist/people.js` renders its camera and interpolates one capture interval using
+the same position/heading for the map and telemetry. First load, case switching
+and loop restart clear incompatible camera state. The fake radio outage keeps
+the local onboard illustration while detections still follow delayed delivery.
+Thermal and false-positive examples remain explicitly fictional.
+
+Validation: 107 Node tests and 13 relevant Python checks passed. Added geometry
+checks for UTSC and every historical search case, telemetry/camera agreement,
+heading wrap, clearing a camera on case switch, and no UI AI requests. Browser
+verified both modes without Q&A/planning and the fire-first rendered camera,
+source labels, overlays, speed and battery. No aircraft or cloud inference used.

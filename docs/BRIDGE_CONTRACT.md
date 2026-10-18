@@ -8,6 +8,13 @@ Source of truth: `backend/validation.mjs`, `backend/people.mjs`, `backend/server
 
 ## Ingest routes
 
+`GET /api/demo/people` now includes replay-only `camera` geometry: `origin`,
+east/north/up `pose` in metres relative to the fire, downward-positive pitch,
+fire dimensions and fictional visible objects. Its simulated `drone` includes
+identity, capture time, ground speed and battery. These additive replay fields
+never enter live ingest or live rescue-lead storage. Live gimbal pitch remains
+negative downward; the browser converts it for rendering.
+
 | POST route | Body / result |
 |---|---|
 | `/api/ingest/telemetry` | JSON below; returns accepted sample |

@@ -47,7 +47,7 @@ function openBrowser(url) {
 }
 export async function main() {
   process.chdir(root);
-  if (!existsSync('.env')) throw new Error('Missing .env: copy .env.example and configure your tokens and GEMINI_API_KEY.');
+  if (!existsSync('.env')) throw new Error('Missing .env: copy .env.example and configure distinct ingest and dashboard tokens.');
   process.loadEnvFile('.env');
   const { port, open, live } = options(process.argv.slice(2));
   const base = `http://127.0.0.1:${port}`, url = `${base}/?${live ? 'live-demo' : 'demo'}`;

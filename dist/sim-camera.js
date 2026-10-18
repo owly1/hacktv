@@ -315,7 +315,7 @@ void main() {
     } else {
       ctx.fillStyle = '#2d3c3e'; ctx.fillRect(0, 0, cam.w, cam.h);
     }
-    if (!cam.video && opts.t >= 8) drawPeople(ctx, cam, pose, opts.people || []);
+    if (!cam.video && opts.people) drawPeople(ctx, cam, pose, opts.people);
     if (!cam.video && opts.fleet) drawFleet(ctx, cam, pose, opts.fleet);
     hud(ctx, cam, pose, opts);
     return found;
@@ -342,17 +342,22 @@ void main() {
   function drawPeople(ctx, cam, pose, people) {
     ctx.save();
     for (const person of people) {
-      if (Math.hypot(person.e - pose.e, person.n - pose.n) >= 180) continue;
+      if (Math.hypot(person.e - pose.e, person.n - pose.n) >= (person.max_range ?? 180)) continue;
       const feet = project(cam, pose, [person.e, person.n, 0]);
       const head = project(cam, pose, [person.e, person.n, 1.8]);
       if (!feet || !head || feet[0] < 10 || feet[0] > cam.w - 10 || feet[1] < 10 || feet[1] > cam.h - 10) continue;
       const h = Math.max(12, Math.abs(feet[1] - head[1])), x = feet[0], y = feet[1] - h;
-      ctx.fillStyle = '#f4f2e8'; ctx.beginPath(); ctx.arc(x, y + h * .15, h * .12, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(x - h * .13, y + h * .3, h * .26, h * .65);
+      if (person.kind === 'rock') {
+        ctx.fillStyle = '#b0a08a'; ctx.beginPath(); ctx.ellipse(x, feet[1] - h * .15, h * .35, h * .2, 0, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = '#f4f2e8'; ctx.beginPath(); ctx.arc(x, y + h * .15, h * .12, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(x - h * .13, y + h * .3, h * .26, h * .65);
+      }
+      if (person.detected === false) continue;
       ctx.strokeStyle = '#5CC8C0'; ctx.lineWidth = Math.max(2, cam.w / 400);
       ctx.strokeRect(x - h * .5, y - 5, h, h + 10);
       ctx.fillStyle = '#5CC8C0'; ctx.font = `600 ${Math.round(cam.w / 55)}px Consolas, monospace`;
-      ctx.fillText(`PERSON ${person.number} · SIM`, x - h * .5, Math.max(18, y - 9));
+      ctx.fillText(person.label ?? `PERSON ${person.number} · SIM`, x - h * .5, Math.max(18, y - 9));
     }
     ctx.restore();
   }

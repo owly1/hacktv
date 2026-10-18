@@ -268,6 +268,7 @@ export class PersonSearchSim {
 
   /** Advance the simulated mission, sensor views, radio outage and revisit decisions. */
   step(t) {
+    const previous = [...this.pos];
     const nowMs = this.startMs + t * 1000;
     const linkUp = t < OUTAGE[0] || t >= OUTAGE[1];
     if (t === OUTAGE[0]) this.say(t, 'Radio link lost — the aircraft keeps searching and stores observations on board.');
@@ -319,6 +320,7 @@ export class PersonSearchSim {
         }
       }
     }
+    this.speed = Math.hypot(this.pos[0] - previous[0], this.pos[1] - previous[1]);
     const altNow = ALT;
     const [lat, lon] = this.ll(...this.pos);
     const cam = { alt: altNow, heading: this.heading, pitch: this.pitch, hfov: HFOV, vfov: 2 * Math.atan(Math.tan(HFOV * RAD / 2) / ASPECT) / RAD };
@@ -385,6 +387,24 @@ export class PersonSearchSim {
   /** Return the simulated fire centre in geographic coordinates. */
   fireLL() { const [lat, lon] = this.ll(...this.F); return { latitude: lat, longitude: lon }; }
 
+  /** Expose fictional replay objects for rendering; none of these are live observations. */
+  cameraScene() {
+    const t = Math.max(0, this.t), wind = this.details.wind_dir_deg;
+    const cam = {alt: ALT, heading: this.heading, pitch: this.pitch, hfov: HFOV, vfov: 2 * Math.atan(Math.tan(HFOV * RAD / 2) / ASPECT) / RAD};
+    const objects = TARGETS.flatMap((target, index) => {
+      const [e, n] = this.wf(target.u(t), target.v(t));
+      const from = wrap(Math.atan2(e - this.pos[0], n - this.pos[1]) / RAD + 180 - wind);
+      if (target.hiddenRel?.some(arc => inArc(from, arc)) || (target.seenFromRel && !inArc(from, target.seenFromRel))) return [];
+      if (!projectToImage(cam, e - this.pos[0], n - this.pos[1])) return [];
+      return [{id: target.id, number: index + 1, e: e - this.F[0], n: n - this.F[1], max_range: 300,
+        kind: target.id === 'hot-rock' ? 'rock' : 'person', detected: t - (this.lastSeen.get(target.id) ?? -99) <= 2,
+        label: target.id === 'hot-rock' ? 'HOT OBJECT · SIM' : 'PERSON · SIM'}];
+    });
+    return {provenance: 'simulated', origin: this.fireLL(), wind_deg: wind, wind_kmh: this.details.wind_kmh,
+      pose: {e: this.pos[0] - this.F[0], n: this.pos[1] - this.F[1], alt: ALT, heading: this.heading, pitch: -this.pitch},
+      fire: {a: EM.startRadius(this.details), b: EM.startRadius(this.details), shift: 0}, objects};
+  }
+
   /** Return the labeled simulation state, leads, coverage, drone and mission log. */
   snapshot() {
     const nowMs = this.startMs + Math.max(0, this.t) * 1000;
@@ -396,7 +416,10 @@ export class PersonSearchSim {
       ...this.search.snapshot(nowMs, this.context()),
       fire,
       fire_model: { origin: this.spread.origin, scenario: this.spread.scenario, details: this.details },
-      drone: { latitude: lat, longitude: lon, altitude_m: ALT, heading_deg: Math.round(this.heading), gimbal_pitch_deg: this.pitch },
+      drone: {drone_id: 'ANAFI-01', provenance: 'simulated', observed_at: new Date(nowMs).toISOString(),
+        latitude: lat, longitude: lon, altitude_m: ALT, heading_deg: this.heading, gimbal_pitch_deg: this.pitch,
+        ground_speed_mps: this.speed ?? 0, battery_pct: Math.max(15, 82 - Math.max(0, this.t) / 45), state: this.mode === 'done' ? 'hovering' : 'flying'},
+      camera: this.cameraScene(),
       track: this.track,
       mission: { phase: this.phase, mode: this.mode, revisit: this.revisit?.id ?? null, link: this.t >= OUTAGE[0] && this.t < OUTAGE[1] ? 'down' : 'up', stored: this.queue.length, log: this.log.slice(-14).reverse(), heading_text: compass(this.heading) },
     };

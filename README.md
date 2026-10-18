@@ -1,7 +1,7 @@
 # BOSCO 
 
 Wildfire-monitoring prototype for a Parrot ANAFI: live camera and telemetry,
-fire detection, illustrative spread, incident questions, and human-reviewed plans.
+fire detection, illustrative spread, and person-search observations.
 Person search adds rescue leads, location uncertainty, and coverage views.
 
 ## Start here
@@ -23,8 +23,9 @@ npm start
 ```
 
 On PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
-Open <http://127.0.0.1:8787/>. Live mode waits for real input. Gemini and
-TigerData are optional; configure their values in `.env` using [KEYS.md](docs/KEYS.md).
+Open <http://127.0.0.1:8787/>. Live mode waits for real input. Gemini is not
+required by the dashboard. TigerData is optional; configure storage in `.env`
+using [KEYS.md](docs/KEYS.md).
 Run `npm run db:init` once when configuring a database; it applies the schema
 and checks an insert/readback.
 
@@ -36,10 +37,10 @@ npm run demo -- --port 9000
 ```
 
 Replay offers simulated person searches, historical incidents, and a flight
-pattern. On-demand questions and planning require a configured Gemini key; scene
-analysis is removed from replay/live dashboards and automatic analysis is off.
-Replay results stay out
-of live storage. The Windows wrapper is `.\demo.ps1 -Port 9000`.
+pattern. Scene analysis, incident Q&A and response planning are removed from
+replay/live dashboards; the dashboard makes no Gemini requests. Fire-first
+person searches include a simulated ANAFI-01 camera and synchronized telemetry.
+Replay results stay out of live storage. The Windows wrapper is `.\demo.ps1 -Port 9000`.
 
 Historical fire cases include a four-drone perimeter-search replay. Scroll
 the camera cards or click a map drone to choose its 3D POV and matching
