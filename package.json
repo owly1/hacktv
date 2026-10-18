@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Emberwatch \u2014 Parrot ANAFI wildfire-monitoring hackathon dashboard (Hack the Valley 11)",
   "scripts": {
-    "start": "node --env-file=.env backend/server.mjs",
+    "start": "node scripts/start-local.mjs",
     "demo": "node scripts/demo.mjs",
     "live-demo": "node scripts/demo.mjs --live",
     "vision": "node --env-file=.env scripts/vision.mjs --detect-smoke",

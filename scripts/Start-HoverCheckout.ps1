@@ -63,7 +63,7 @@ if (($Mode -in @('QrCheckout','QrOrbit')) -or ($Mode -eq 'QrAutoCircle' -and $Ex
 }
 $remote = @'
 test -f /home/pet/emberwatch/qr-demo/__PROGRAM__ || exit 1
-if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\.py'; then
+if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle|fire_response)\.py'; then
   printf 'A flight checkout is already running. Use its terminal; do not open another.\n' >&2
   exit 1
 fi

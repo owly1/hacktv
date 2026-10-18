@@ -29,6 +29,13 @@ using [KEYS.md](docs/KEYS.md).
 Run `npm run db:init` once when configuring a database; it applies the schema
 and checks an insert/readback.
 
+On a provisioned Mac, `npm start` also starts the disarmed Pi fire-response
+receiver and laptop detector. **Start BOSCO** in Live explicitly enables that
+page's flight session; **LAND / STOP** ends it. Use
+`EMBERWATCH_RECEIVER=off npm start` for the dashboard alone. See
+[Mac setup](docs/MAC_SETUP.md) for calibration, launch-relative height and
+the continuous QR orbit. Replay never enables aircraft control.
+
 For a demonstration without an aircraft:
 
 ```sh
@@ -154,8 +161,9 @@ Tests use fixtures and mocked aircraft, not live cloud services or motors.
 - [Work areas](docs/EXECUTION_PLAN.md), [Gemini handoff](docs/HANDOFF_D.md).
 - [Proposed orbit-loop extension](spec.md), [integration references](docs/SOURCES.md).
 
-Spread and rescue locations are model estimates. A reviewer evaluates plans;
-the dashboard and Gemini do not issue aircraft commands or dispatch crews.
+Spread and rescue locations are model estimates. A reviewer evaluates plans.
+Only the explicitly enabled Live BOSCO session authorizes the separate
+aircraft runtime; map, replay and Gemini features never command it or dispatch crews.
 
 ## Live detection extension
 

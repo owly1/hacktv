@@ -28,12 +28,52 @@ and preserves an existing `.env`. A new `.env` gets distinct random tokens;
 add optional cloud settings locally. This workflow reuses a provisioned Pi;
 it does not build Olympe or prepare a blank SD card.
 
-## Start observation
+## Start BOSCO
+
+On a provisioned Mac, normal startup serves the dashboard, installs this
+checkout through the receiver guard and starts one disarmed fire-response
+receiver plus its laptop detector:
+
+```sh
+npm start
+```
+
+Open <http://127.0.0.1:8787/> in Live. **Start BOSCO** enables camera search
+and the response for that page's expiring session. Confirmed fire, measured
+geometry and preflight checks are still required before takeoff. **LAND / STOP**
+ends the session. A disconnected receiver reconnects disarmed; it cannot resume
+an old authorization. Keep Skycontroller off and FreeFlight closed.
+
+Normal QR response estimates scale from measured vertical travel using the
+camera calibration, then holds a one-metre radius and altitude one metre above
+the takeoff surface. A box under the launch point does not change that altitude
+reference when the floor drops away. Keep the target stationary. The camera
+aims at its measured physical location and fresh motion propagates that
+location through QR visibility gaps. Repeated laps target 15 seconds each;
+acquisition and radial correction can continue while progress is made within
+the mission budget. LAND, battery, stale control/sensor data, flight envelope
+and no-progress guards remain active. See [flight diagnosis and regression
+evidence](BOSCO_FLIGHT_RELIABILITY.md).
+
+For a manually managed response receiver, first stop the automatic launcher,
+then run `EMBERWATCH_RECEIVER=off npm start` and, in a second terminal:
+
+```sh
+.venv/bin/python scripts/mac.py install-pi
+.venv/bin/python scripts/mac.py pi --mode fire-response --headless
+```
+
+Do not start a second monitor or receiver alongside it. The installer refuses
+to replace flight code while a receiver is active. Stop the existing owner and
+confirm landing before installing changes. Calibration and local credentials
+remain in the deployment; source synchronization does not enable a mission.
+
+## Start observation only
 
 ```sh
 .venv/bin/python scripts/mac.py install-pi
 .venv/bin/python scripts/mac.py check-pi
-npm start
+EMBERWATCH_RECEIVER=off npm start
 ```
 
 Keep the backend open. In a second terminal:
@@ -48,9 +88,9 @@ checks for competing receivers, aligns the Pi clock and tunnels Pi loopback
 8788 to this backend. Repeat `install-pi` after bridge/token changes.
 
 Observation starts the Pi receiver plus `fire_monitor.py` on the Mac. It
-retries disconnected sessions; **flight modes never auto-restart**. Fresh
+retries disconnected sessions; terminal flight modes do not auto-restart. Fresh
 camera/telemetry timestamps establish reception. The selected fire marker
-creates a labeled test incident and automatic analysis; video alone does not
+creates a labeled test incident; video alone does not
 prove detector readiness. `/api/status.vision` reports detector health.
 
 To stop this Mac's observation/retry loop:
@@ -64,8 +104,10 @@ Keep the receiver terminal open while using it; Ctrl+C stops reception.
 
 ## Select another mode
 
-Stop observation first; use only one receiver. Without `--execute`, flight
-modes have no motor commands. With it, each mode follows its own trigger:
+Stop the current receiver first; use only one receiver. The terminal modes
+below have no motor commands without `--execute`. With it, each follows its
+own trigger. The dashboard-controlled `fire-response` mode instead requires
+Start BOSCO and does not use `--execute`.
 
 | Command suffix after `scripts/mac.py pi` | Behavior / guide |
 |---|---|

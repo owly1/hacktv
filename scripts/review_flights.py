@@ -27,12 +27,27 @@ def review(path):
     samples = [e['data'] for e in events if e['kind'] == 'telemetry' and
                e['data'].get('state') in ('hovering', 'flying')]
     heights = [s['altitude_m'] for s in samples if isinstance(s.get('altitude_m'), (int, float))]
+    telemetry=[e for e in events if e['kind']=='telemetry']
+    emergencies=[e for e in events if e['kind'] in ('telemetry','aircraft_state') and e['data'].get('state')=='emergency']
+    landing_claims=[e for e in controls if e['data'].get('phase')=='landed']
+    conflicts=[]
+    for claim in landing_claims:
+        preceding=[e for e in telemetry if e['at_unix']<=claim['at_unix']]
+        recent=preceding[-1]['data'] if preceding else {}
+        attitude=recent.get('attitude_deg') or {}
+        tilted=any(isinstance(attitude.get(k),(int,float)) and abs(attitude[k])>20 for k in ('roll','pitch'))
+        if any(e['at_unix']<=claim['at_unix'] for e in emergencies) or recent.get('state')=='emergency' or tilted:
+            conflicts.append({'claim':claim,'latest_telemetry':preceding[-1] if preceding else None})
     elapsed = frames[-1]['captured_at_unix']-frames[0]['captured_at_unix'] if len(frames)>1 else 0
     report = {'video_frames': len(frames), 'video_seconds': elapsed,
               'average_recorded_fps': (len(frames)-1)/elapsed if elapsed>0 else 0,
               'hover_flight_height_min_m': min(heights) if heights else None,
               'hover_flight_height_max_m': max(heights) if heights else None,
               'last_control_event': controls[-1] if controls else None,
+              'outcome':('emergency' if emergencies else 'landing_unconfirmed' if conflicts else
+                         'landed_reported' if landing_claims else 'unknown'),
+              'emergency_events':emergencies,'landing_claim_conflicts':conflicts,
+              'commands':[e for e in events if e['kind'] in ('move_requested','landing_requested')],
               'failures': failures,
               'move_results': [e for e in events if e['kind'] == 'move_completed']}
     (path/'review.json').write_text(json.dumps(report, indent=2)+'\n')

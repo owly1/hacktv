@@ -26,6 +26,19 @@ class MacLauncherTests(unittest.TestCase):
         stack.enter_context(patch.object(mac, 'stop_child'))
         return stack
 
+    def test_flight_monitor_excludes_person_work_and_observer_retains_it(self):
+        """The launch mode selects person inference before the child starts."""
+        env = {'PORT': 8787, 'INGEST_TOKEN': 'test-ingest', 'DASHBOARD_TOKEN': 'test-dashboard'}
+        with patch.object(mac.subprocess, 'Popen') as spawn:
+            mac.start_fire_monitor(env)
+            argv = spawn.call_args.args[0]
+            self.assertIn('--flight-targets', argv)
+            self.assertIn('--no-people', argv)
+            mac.start_fire_monitor(env, observer=True)
+            argv = spawn.call_args.args[0]
+            self.assertNotIn('--flight-targets', argv)
+            self.assertNotIn('--no-people', argv)
+
     def test_off_at_start_then_two_sessions_without_restarting_backend(self):
         """Verify off at start then two sessions without restarting backend."""
         # Missing Wi-Fi at startup, first live session loses link, next is
@@ -115,6 +128,34 @@ class MacLauncherTests(unittest.TestCase):
             self.assertNotIn('--preflight-file',text)
             self.assertNotIn('ARM QR PRESET',text)
 
+    def test_fire_response_is_session_controlled_with_native_video(self):
+        command=mac.runtime_command(mac.DEFAULTS,'fire-response',False)
+        self.assertIn('python -u fire_response.py',command)
+        self.assertIn('--video-width 0',command)
+        self.assertIn('--video-fps 30',command)
+        self.assertIn('--camera-calibration camera.local.json',command)
+        self.assertNotIn('--execute',command)
+        self.assertIn('fire_response',mac.prepare_command(mac.DEFAULTS))
+        with self.assertRaisesRegex(ValueError,'dashboard session'):
+            mac.runtime_command(mac.DEFAULTS,'fire-response',True)
+        self.assertNotIn('--short-test',command)
+        self.assertIn('--short-test',mac.runtime_command(mac.DEFAULTS,'fire-response',False,short_test=True))
+        with self.assertRaises(ValueError):mac.runtime_command(mac.DEFAULTS,'qr-demo',True,short_test=True)
+
+    def test_fire_supervisor_restarts_monitor_and_receiver_without_enabling(self):
+        child=Mock(wait=Mock(side_effect=[subprocess.TimeoutExpired('receiver',1),0]))
+        monitor=Mock(poll=Mock(side_effect=[None,1]))
+        with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
+             patch.object(mac,'start_fire_monitor',side_effect=[monitor,Mock()]) as vision, \
+             patch.object(mac,'backend_status'),patch.object(mac,'remote'), \
+             patch.object(mac,'sync_clock'),patch.object(mac,'fetch_flights'), \
+             patch.object(mac.subprocess,'Popen',return_value=child) as launch, \
+             patch.object(mac.time,'sleep',side_effect=KeyboardInterrupt):
+            mac.supervise_fire_response(mac.DEFAULTS,{'PORT':8787},'fire_response.py')
+        self.assertEqual(vision.call_count,2)
+        self.assertIn('-T',launch.call_args.args[0])
+        self.assertNotIn('--execute',' '.join(launch.call_args.args[0]))
+
     def test_connection_guards_precede_runtime_start(self):
         """Verify connection guards precede runtime start."""
         preparation = mac.prepare_command(mac.DEFAULTS)
@@ -127,6 +168,77 @@ class MacLauncherTests(unittest.TestCase):
         self.assertNotIn('set-clock', command)
         self.assertNotIn('wifi-profile', command)
 
+    def test_fire_supervisor_cleans_its_orphan_before_relaunch(self):
+        first=Mock(wait=Mock(return_value=255))
+        second=Mock(wait=Mock(side_effect=[KeyboardInterrupt,0]))
+        commands=[]
+        cleanup_attempts=0
+        def remote_call(config,command):
+            nonlocal cleanup_attempts
+            commands.append(command)
+            if 'Requested graceful stop' in command:
+                cleanup_attempts+=1
+                if cleanup_attempts==1:
+                    raise subprocess.CalledProcessError(75,'still stopping')
+        with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
+             patch.object(mac,'backend_status'),patch.object(mac,'remote',side_effect=remote_call), \
+             patch.object(mac,'sync_clock'),patch.object(mac,'fetch_flights'), \
+             patch.object(mac.time,'sleep'), \
+             patch.object(mac.secrets,'token_hex',side_effect=['a'*32,'b'*32]), \
+             patch.object(mac.subprocess,'Popen',side_effect=[first,second]) as launch:
+            mac.supervise_fire_response(mac.DEFAULTS,{'PORT':8787},'receiver')
+        self.assertEqual(launch.call_count,2)
+        self.assertEqual(commands[0],mac.prepare_command(mac.DEFAULTS))
+        self.assertEqual(commands[1],commands[2])  # retry cleanup, never launch over it
+        self.assertIn('a'*32,commands[1])
+        self.assertEqual(commands[3],mac.prepare_command(mac.DEFAULTS))
+        self.assertIn('b'*32,commands[4])  # shutdown owns only the new receiver
+        self.assertIn('EMBERWATCH_RECEIVER_OWNER='+'a'*32,launch.call_args_list[0].args[0][-1])
+
+    def test_fire_supervisor_reselects_wifi_while_sdk_is_still_running(self):
+        child=Mock(wait=Mock(side_effect=[subprocess.TimeoutExpired('receiver',1),0]))
+        with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
+             patch.object(mac,'backend_status'),patch.object(mac,'remote') as remote, \
+             patch.object(mac,'sync_clock'),patch.object(mac,'fetch_flights'), \
+             patch.object(mac.subprocess,'Popen',return_value=child), \
+             patch.object(mac.time,'monotonic',side_effect=[0,0,11,11]), \
+             patch.object(mac.time,'sleep',side_effect=KeyboardInterrupt):
+            mac.supervise_fire_response(mac.DEFAULTS,{'PORT':8787},'receiver')
+        self.assertEqual(remote.call_args_list[1].args[1],mac.wifi_command(mac.DEFAULTS))
+        self.assertIn('!=',mac.wifi_command(mac.DEFAULTS))
+
+    def test_fire_supervisor_does_not_claim_another_receiver(self):
+        with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
+             patch.object(mac,'backend_status'), \
+             patch.object(mac,'remote',side_effect=subprocess.CalledProcessError(73,'guard')) as remote, \
+             patch.object(mac.subprocess,'Popen') as launch:
+            with self.assertRaisesRegex(ValueError,'Another receiver'):
+                mac.supervise_fire_response(mac.DEFAULTS,{'PORT':8787},'receiver')
+        remote.assert_called_once()
+        launch.assert_not_called()
+
+    def test_owned_cleanup_only_signals_matching_launch(self):
+        owner='a'*32
+        code=shlex.split(mac.stop_receiver_command(mac.DEFAULTS,'fire_response.py','fire response',owner))[-1]
+        process=Mock()
+        process.name='123'
+        files={
+            'cmdline':Mock(read_bytes=Mock(return_value=b'python\0fire_response.py\0')),
+            'cwd':Mock(resolve=Mock(return_value=(Path('/home/pet')/mac.DEFAULTS['directory']).resolve())),
+            'environ':Mock(read_bytes=Mock(return_value=('EMBERWATCH_RECEIVER_OWNER='+'b'*32).encode()))}
+        process.__truediv__=Mock(side_effect=files.__getitem__)
+        process.exists=Mock(return_value=False)
+        for token,expected in [('b'*32,0),(owner,1)]:
+            files['environ'].read_bytes.return_value=('EMBERWATCH_RECEIVER_OWNER='+token).encode()
+            with self.subTest(owner=token), \
+                 patch.object(Path,'home',return_value=Path('/home/pet')), \
+                 patch.object(Path,'iterdir',return_value=iter([process])), \
+                 patch.object(mac.os,'kill') as kill,contextlib.redirect_stdout(io.StringIO()):
+                exec(code,{})
+                self.assertEqual(kill.call_count,expected)
+                if expected:kill.assert_called_once_with(123,mac.signal.SIGINT)
+        self.assertIn('EMBERWATCH_RECEIVER_OWNER=',code)
+
     def test_stop_only_targets_the_observer_in_this_macs_directory(self):
         """Verify stop only targets the observer in this macs directory."""
         code = shlex.split(mac.stop_observer_command(mac.DEFAULTS))[-1]
@@ -135,6 +247,14 @@ class MacLauncherTests(unittest.TestCase):
         self.assertIn('signal.SIGINT', code)
         self.assertNotIn('qr_preset_demo.py', code)
         compile(code, '<remote-stop-observer>', 'exec')
+
+    def test_fire_shutdown_signals_only_this_deployments_response_receiver(self):
+        code=shlex.split(mac.stop_receiver_command(mac.DEFAULTS,'fire_response.py','fire response'))[-1]
+        self.assertIn("b'fire_response.py' in argv",code)
+        self.assertIn("(process / 'cwd').resolve() == root.resolve()",code)
+        self.assertIn('signal.SIGINT',code)
+        self.assertNotIn('SIGKILL',code)
+        compile(code,'<remote-stop-response>','exec')
 
     def test_deployment_keeps_existing_pi_credentials_separate(self):
         """Verify deployment keeps existing pi credentials separate."""
@@ -152,6 +272,26 @@ class MacLauncherTests(unittest.TestCase):
             self.assertEqual(shlex.split(text), ['export', 'INGEST_TOKEN=' + token])
             self.assertNotIn('DASHBOARD_TOKEN', text)
             self.assertNotIn('DATABASE_URL', text)
+
+    def test_deployment_refuses_source_changes_under_any_flight_receiver(self):
+        command = mac.install_command(mac.DEFAULTS)
+        self.assertLess(command.index('flight receiver is running'), command.index('mkdir -p'))
+        guard = command[:command.index('umask 077')] + "printf 'deployment-allowed'"
+        process_query = 'ps -C python,python3,python3.11 -o args='
+        for program in ('fire_response.py', 'hover_checkout.py', 'qr_auto_circle.py',
+                        'qr_orbit_bridge.py', 'qr_preset_demo.py', 'qr_takeoff_demo.py'):
+            fake_processes = 'printf %s ' + shlex.quote('/usr/bin/python /other/operator/' + program)
+            result = subprocess.run(['/bin/sh', '-c', guard.replace(process_query, fake_processes)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 73, program)
+            self.assertNotIn('deployment-allowed', result.stdout)
+        # A read-only receiver does not arm anything, and normal startup stops
+        # it before launching the freshly installed response receiver.
+        result = subprocess.run(['/bin/sh', '-c', guard.replace(process_query,
+                                "printf '%s' '/usr/bin/python anafi_observer.py'")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, 'deployment-allowed')
 
     def test_normal_ssh_never_accepts_unverified_keys(self):
         """Verify normal ssh never accepts unverified keys."""

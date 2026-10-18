@@ -75,6 +75,15 @@
    <button class="button white" id="export-brief"><svg><use href="#i-down"/></svg>Export brief</button>
   </section>
   <div class="simulation-banner status-banner" id="status-banner" role="status"><svg><use href="#i-info"/></svg><span id="banner-text"><strong>Connecting to the BOSCO backend…</strong></span><button class="button compact" id="dismiss-fire" hidden>Mark false alarm</button></div>
+  <section class="autonomy-panel" aria-labelledby="autonomy-heading">
+   <div><h2 id="autonomy-heading">BOSCO autonomous response <span class="pill muted" id="autonomy-state">OFF</span></h2>
+    <p id="autonomy-detail" role="status">Connecting to the flight receiver…</p>
+    <p class="microcopy">Start BOSCO → camera searches → confirmed fire triggers takeoff → track and circle. ANAFI scans up/down; left/right viewing requires aircraft rotation during flight.</p>
+    <p class="microcopy" id="autonomy-limits">1 m radius · about 1 m above launch. Keep this live page open. LAND, disconnect or power-off ends the session.</p>
+    <p class="microcopy" id="autonomy-calibration">Waiting for the receiver's measured camera configuration.</p>
+    <div class="camera-preview"><span>Camera only · no takeoff</span><button class="button compact" id="camera-level" disabled>Level</button><button class="button compact" id="camera-shallow" disabled>Down 30°</button><button class="button compact" id="camera-down" disabled>Down 45°</button><button class="button compact" id="camera-steep" disabled>Down 70°</button><span id="camera-pitch-status"></span></div></div>
+   <div class="autonomy-actions"><button class="button primary" id="autonomy-enable" disabled>Start BOSCO</button><button class="button autonomy-land" id="autonomy-land">LAND &amp; stop BOSCO</button></div>
+  </section>
   <div class="replay-picker" id="replay-picker" hidden><label for="demo-fire">Replay case</label><select id="demo-fire" class="demo-select" aria-label="Replay case" hidden></select><span>Fleet patrol · person search · flight pattern</span></div>
   <section class="metrics" aria-label="Incident metrics">
    <article class="metric"><div class="metric-label"><svg><use href="#i-flame"/></svg>Fire area</div><div><strong id="area-value">—</strong><span class="unit">ha</span><span class="metric-context" id="area-context">no fire detected</span></div></article>

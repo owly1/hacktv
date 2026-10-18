@@ -93,9 +93,11 @@ do not reset away teammates' work. After integration, start the next task from
 updated `main` instead of reusing an old feature branch. Branch names in older
 handoff documents describe their original work, not the current starting point.
 
-`codex/autonomous-fire-response` is intentionally excluded from this baseline.
-Do not merge it, cherry-pick its unique commits, or use it as the starting point
-for team work unless the user explicitly changes that decision.
+The user explicitly approved integrating `codex/autonomous-fire-response` into
+`main`. Its measured QR orbit, camera tracking, detector and flight gates are
+the aircraft-control baseline; the current BOSCO UI, fleet replay, person
+search and other product features remain the main baseline. Future work starts
+from updated `main`. See [the integration handoff](docs/DRONE_MAIN_INTEGRATION.md).
 
 ## Where to work
 
@@ -131,9 +133,10 @@ for team work unless the user explicitly changes that decision.
   projected arrival times and incident Q&A are illustrative decision support.
 - The only fire QR is `EW1:Alpha|120|X|35|M|30|60|31|18|18`.
   Change all pinned copies and tests together if its identity changes.
-- The dashboard/Gemini cannot pilot. Aircraft commands belong to an explicitly
-  enabled terminal flight runtime; observation is separate. One SDK owner per
-  aircraft; do not run competing receivers for the same drone.
+- Aircraft commands belong to a separately enabled flight runtime. The Live
+  dashboard's Start BOSCO / LAND controls authorize and end its expiring
+  session; ordinary dashboard startup, Replay, maps and Gemini cannot pilot.
+  Observation remains separate. One SDK owner per aircraft; do not run competing receivers.
 - Automatic `qr-demo` and `qr-circle` can take off after recognition when
   `--execute` is enabled. Preserve their one-shot, freshness and landing gates.
 - Person leads carry uncertainty and require human review. Their state is JSON
@@ -144,6 +147,11 @@ for team work unless the user explicitly changes that decision.
 - `npm run live-demo` opens live monitoring; `npm run vision` starts laptop
   inference with installed weights. `npm run demo` selects historical Replay.
   Run only one monitor per stream; the Mac observer launcher already starts one.
+- On a provisioned Mac, `npm start` starts a disarmed response receiver and
+  flight detector. `EMBERWATCH_RECEIVER=off npm start` serves only the dashboard.
+  The QR controller holds altitude above takeoff, retains a fixed measured
+  fire location through visual gaps, and renews correction attempts on measured
+  progress. Keep its control and sensor watchdogs separate from UI/replay pacing.
 - Unit tests, configured services and sent landing commands are not physical proof.
 
 ## Working routine
