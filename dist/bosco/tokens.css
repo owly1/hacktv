@@ -1,0 +1,159 @@
+/* BOSCO design tokens and shared base styles.
+   Every colour used by the BOSCO pages comes from a custom property here;
+   components never hard-code hex. Dark is the default (Home and Dashboard).
+   The Dashboard's light theme is the same page with data-theme="light" on
+   <html>, which only overrides tokens. Camera feeds and the transition cover
+   read the --feed-* / --cover-* tokens, which the light theme leaves dark. */
+:root {
+  --bg: #08080A;
+  --surface: #111114;
+  --surface-sunk: #0C0C0F;
+  --surface-raised: #18181C;
+  --line-1: #1C1D21;
+  --line-2: #222327;
+  --line-3: #2E2F35;
+  --line-chip: #2A2B30;          /* overlay chips and pills on panels */
+  --line-dashed: #4A4B52;        /* dashed tags, compass tail */
+  --text: #D8D7D2;
+  --text-2: #C4C3BE;
+  --muted: #A9ABB0;
+  --label: #94959B;
+  --faint: #7A7B81;
+  --future: #3A3B40;             /* teardown letters not reached yet */
+  --strong: #ECEBE7;             /* callout headings on the teardown */
+  --accent: #E2574C;
+  --accent-text: #F08178;
+  --accent-tag-text: #F4B1AA;    /* red text on a tinted tag */
+  --accent-banner-text: #F2CFCA; /* body copy inside the red banner */
+  --accent-soft: color-mix(in srgb, var(--accent) 9%, transparent);
+  --accent-tint: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 26%, transparent);
+  --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+  --on-accent: #08080A;          /* text on accent buttons */
+  --selected: #D8D7D2;           /* selected chips: off-white fill… */
+  --on-selected: #08080A;        /* …with dark text */
+  --selected-soft: rgba(236, 235, 231, 0.08);
+  --overlay: rgba(17, 17, 20, 0.88);   /* chips floating on the map */
+  --overlay-strong: rgba(17, 17, 20, 0.92);
+  --drone-blue: #4C7DFF;         /* logo orbit dot and Home status lights only */
+
+  /* Fleet greys: drones are told apart by lightness, never by hue. */
+  --drone-1: #D8D7D2;
+  --drone-2: #C4C3BE;
+  --drone-3: #94959B;
+  --drone-4: #77797F;
+
+  /* Illustrative map terrain. */
+  --map-bg: #0F1012;
+  --map-forest-1: #17181B;
+  --map-forest-2: #151619;
+  --map-forest-3: #191A1D;
+  --map-tone-1: #131417;
+  --map-tone-2: #121316;
+  --map-tone-3: #1C1D20;
+  --map-river-bank: #18191C;
+  --map-river: #26282D;
+  --map-road: #2C2F36;
+  --map-label: #8A8C92;          /* reference #5A5C62 fails 4.5:1 */
+  --map-ink: #D8D7D2;            /* grid, patrol route, brackets, camera cone */
+  --map-marker-fill: #08080A;
+
+  /* Always dark: camera feeds and the page-transition cover. */
+  --feed-bg: #25262A;
+  --feed-line: #2A2B30;
+  --feed-ink: #D8D7D2;
+  --feed-ink-soft: rgba(236, 235, 231, 0.9);
+  --feed-chip: rgba(8, 8, 10, 0.6);
+  --cover-bg: #08080A;
+  --cover-ring: #D8D7D2;
+
+  --font-sans: 'Archivo', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --radius-panel: 16px;
+  --radius-card: 14px;
+  --radius-pill: 999px;
+
+  color-scheme: dark;
+}
+
+/* Light theme: Dashboard only (Home never sets data-theme). */
+:root[data-theme="light"] {
+  --bg: #F4F3EF;
+  --surface: #FFFFFF;
+  --surface-sunk: #FAFAF8;
+  --surface-raised: #EDECE7;
+  --line-1: #E6E4DE;
+  --line-2: #E2E0DA;
+  --line-3: #D3D1CA;
+  --line-chip: #DAD8D1;
+  --line-dashed: #B5B3AC;
+  --text: #111114;
+  --text-2: #2A2B30;
+  --muted: #55575D;
+  --label: #64666C;
+  --faint: #6B6D73;              /* brief: #7A7C82, darkened to pass 4.5:1 */
+  --accent: #D12F22;
+  --accent-text: #C42A1D;
+  --accent-tag-text: #B42318;
+  --accent-banner-text: #8A1D14;
+  --on-accent: #FFFFFF;
+  --selected: #111114;
+  --on-selected: #F4F3EF;
+  --selected-soft: rgba(17, 17, 20, 0.08);
+  --overlay: rgba(255, 255, 255, 0.92);
+  --overlay-strong: rgba(255, 255, 255, 0.95);
+  --drone-1: #111114;
+  --drone-2: #4A4B50;
+  --drone-3: #64666C;
+  --drone-4: #8A8C92;
+  --map-bg: #E9E8E3;
+  --map-forest-1: #DDDCD6;
+  --map-forest-2: #E0DFD9;
+  --map-forest-3: #DCDBD5;
+  --map-tone-1: #E4E3DE;
+  --map-tone-2: #E5E4DF;
+  --map-tone-3: #DCDBD5;
+  --map-river-bank: #D2D5D9;
+  --map-river: #C3C8CE;
+  --map-road: #C9C7C0;
+  --map-label: #5F6167;
+  --map-ink: #111114;
+  --map-marker-fill: #F4F3EF;
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--text); }
+a:hover { color: var(--text); text-decoration-color: var(--accent-text); }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Type helpers. Wide display is reserved for wordmarks, the Home hero and
+   the incident title. */
+.t-wide { font-weight: 900; font-stretch: 125%; }
+.t-mono { font-family: var(--font-mono); }
+.t-label { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; color: var(--label); }
+
+/* Reduced motion: every animation and transition stops. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
