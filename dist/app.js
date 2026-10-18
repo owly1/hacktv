@@ -906,9 +906,9 @@ function animateDemoCase(now) {
   $('telemetry-note').textContent = `${p.drone_id} · SIMULATED POSITION · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${Math.round(BoscoScout.clearance(state.demo.scout, t, p))} m from fire edge`;
   for (const q of poses) {
     $(`fleet-phase-${q.drone_id}`).textContent = q.phase;
-    $(`fleet-tel-${q.drone_id}`).textContent = `${q.alt.toFixed(0)} m high · ${Math.round(BoscoScout.clearance(state.demo.scout, t, q))} m from fire · ${Math.round(q.battery)}%`;
+    $(`fleet-tel-${q.drone_id}`).textContent = `${q.alt.toFixed(0)} m high · ${q.speed.toFixed(1)} m/s · ${Math.round(q.battery)}%`;
     const count = state.demo.scout.targets.filter(x => x.seenBy.includes(q.drone_id)).length;
-    $(`fleet-people-${q.drone_id}`).textContent = `${count} people spotted · ${q.sector}`;
+    $(`fleet-people-${q.drone_id}`).textContent = `${count} people spotted · ${Math.round(BoscoScout.clearance(state.demo.scout, t, q))} m from fire · ${q.sector}`;
   }
   const active = poses.find(q => q.phase !== 'Observing');
   $('fleet-summary').textContent = `${peopleState.snap?.leads.length ?? 0} unique people · ${active ? `${active.drone_id} ${active.phase.toLowerCase()}` : '4 drones observing'} · ${state.demo.playbackRate ?? 2}× replay`;
