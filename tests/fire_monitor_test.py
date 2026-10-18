@@ -123,8 +123,8 @@ class FireMonitorTests(unittest.TestCase):
         detector.labels = ('fire', 'smoke')
         self.assertEqual(detector.detect(image)['label'], 'smoke')
 
-    def test_real_decoder_reaches_incident_and_auto_analysis_on_isolated_backend(self):
-        """Verify real decoder reaches incident and auto analysis on isolated backend."""
+    def test_real_decoder_reaches_incident_without_auto_analysis_on_isolated_backend(self):
+        """Verify real QR/HTTP detection still works with background analysis disabled."""
         # Real QR decoding and HTTP ingest, with a fake Gemini transport and
         # memory-only storage so no test image is submitted to production.
         js = """
@@ -132,7 +132,7 @@ import http from 'node:http';
 import {createApp, MemoryStorage} from './backend/server.mjs';
 const app=createApp({ingestToken:'test-ingest', dashboardToken:'test-dashboard',
  storage:new MemoryStorage(), dataDir:null,
- geminiTransport:async()=>({candidates:[{content:{parts:[{text:JSON.stringify({summary:'QR scenario confirmed',unknowns:[],limitations:'Isolated test'})}]}}]})});
+ geminiTransport:async()=>{throw new Error('Unexpected background scene analysis');}});
 const server=http.createServer(app); server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
 """
         server = subprocess.Popen(['node', '--input-type=module', '-e', js], cwd=ROOT,
@@ -158,15 +158,13 @@ const server=http.createServer(app); server.listen(0,'127.0.0.1',()=>console.log
             self.assertTrue(incident['active'])
             self.assertEqual(incident['latest']['source'], 'qr-test')
             self.assertTrue(incident['latest']['details']['position_simulated'])
-            deadline = time.monotonic()+3
-            while True:
-                with monitor.get('/api/analysis/latest') as response:
-                    analysis = json.load(response).get('analysis')
-                if analysis or time.monotonic() >= deadline:
-                    break
-                time.sleep(.02)
-            self.assertEqual(analysis['trigger'], 'auto-detection')
-            self.assertEqual(analysis['episode_id'], incident['episode_id'])
+            with monitor.get('/api/analysis/latest') as response:
+                analysis = json.load(response)
+            self.assertIsNone(analysis['analysis'])
+            self.assertFalse(analysis['pending'])
+            self.assertIsNone(analysis['error'])
+            with monitor.get('/api/status') as response:
+                self.assertFalse(json.load(response)['gemini']['automatic_analysis'])
         finally:
             server.terminate()
             server.communicate(timeout=5)

@@ -19,7 +19,7 @@ npm ci
 Keep your configured `.env`. On a fresh checkout, first run
 `Copy-Item .env.example .env` and configure distinct `INGEST_TOKEN` and
 `DASHBOARD_TOKEN`. Gemini is optional for flight/camera/people replay; set
-`GEMINI_API_KEY` to test analysis and planning. Enter `DASHBOARD_TOKEN` in the
+`GEMINI_API_KEY` to test incident questions and planning. Enter `DASHBOARD_TOKEN` in the
 dashboard's Integrations dialog when prompted. Credentials stay local.
 
 Open <http://127.0.0.1:9001/?demo>. On Mac/Linux use
@@ -60,11 +60,13 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
    camera/telemetry take focus. Manual selection disables Follow searches;
    enable it to resume automatic POV changes. Use full screen for the camera
    panel or map, and “Centre on the drone and fire” to frame the whole fleet.
-7. Exercise the forecast slider, Conditions, Analyze current view, incident
-   Q&A, Generate operational plan and Export brief. Analysis/planning require
+7. Exercise the forecast slider, Conditions, incident Q&A, Generate operational
+   plan and Export brief. Incident questions/planning require
    Gemini configuration and retain visible service errors when unavailable.
    Plans receive fleet poses and shared leads; briefs include fleet telemetry
    and source drones. Case switching preserves each case's evidence and results.
+   Scene analysis and automatic analysis requests are removed from both replay
+   and live dashboards. Questions and response plans run only when requested.
 8. Exit replay. Fleet controls disappear and live inputs resume. Fictional
    evidence never posts to live ingest, rescue-lead storage or aircraft control.
 

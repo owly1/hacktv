@@ -27,8 +27,8 @@ and briefs now include the whole simulated fleet and source-attributed leads.
 The prediction remains the existing illustrative model, shared across views.
 The older backend person-search fixtures and pad flight replay stay separate.
 
-Checks run (including skips): `npm test` (105 passed); relevant Windows-compatible Python
-fire-marker checks (3 passed). New coverage exercises all nine historical
+Checks run (including skips): `npm test` (107 passed); Windows-compatible Python
+fire-monitor (10 passed) and fire-marker checks (3 passed). New coverage exercises all nine historical
 geometries, 100 seeds/headings, all four detection contributors, exterior paths,
 vertical speed/continuity, coordinated coverage, shared identities, bounded
 memory, POV/rate/case state and exports. Full Python discovery was not run on
@@ -49,3 +49,13 @@ buffer clearance through maximum growth and long presentations.
 Open issue / next step: integrate through review into `main`. Real fleet ingest,
 freshness isolation, multi-view boundary fusion and physical coordination remain
 separate work in `spec.md`. Browser reload starts a new randomized replay session.
+
+Dashboard follow-up: removed the Gemini scene-analysis panel, analyze button,
+replay auto-analysis, live analysis polling and analysis section in briefs.
+Incident Q&A has its own panel; response planning remains available on demand.
+Backend automatic scene analysis defaults off (explicit embedding opt-in and
+authenticated legacy API routes remain compatible). Applies to both `?demo`
+and `?live-demo` through the shared dashboard files. Regression checks cover
+live/replay request behavior and detection without automatic Gemini calls.
+Browser verified both modes without scene-analysis headings or analyze controls;
+the running local backend reports `gemini.automatic_analysis: false`.

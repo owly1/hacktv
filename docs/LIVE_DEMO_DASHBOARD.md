@@ -76,8 +76,10 @@ are unchanged outside the explicit vision demo command.
   and a box expires within two seconds if inference stops. These previews
   do not create incidents or refresh camera freshness/FPS.
 - Three distinct QR frames or five overlapping fire/smoke frames confirm
-  an incident. The existing detection endpoint stores it and triggers
-  automatic Gemini analysis once per episode. Repeat sightings keep the
+  an incident. The existing detection endpoint stores it without starting
+  Gemini scene analysis. Scene analysis has been removed from replay/live
+  dashboards; incident questions and response planning remain on demand.
+  Repeat sightings keep the
   incident current without resetting operator changes to the timeline.
 - The fire summary shows the source, area, fuel, spread rate and conditions.
   The QR payload drives the initial 120 ha Alpha scenario: 35 m/min,

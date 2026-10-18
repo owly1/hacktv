@@ -1003,7 +1003,7 @@ export function createApp({
   site = DEFAULT_SITE,
   demoFires = [],
   tileFetch = fetch,
-  autoAnalyze = true,
+  autoAnalyze = false,
   personSearch = {},
 }) {
   if (!ingestToken || !dashboardToken || ingestToken === dashboardToken) {
@@ -1494,6 +1494,7 @@ export function createApp({
         storage: { status: storage.status() },
         gemini: {
           configured: Boolean(geminiTransport),
+          automatic_analysis: autoAnalyze,
           model: geminiModel,
           last_ok_at: state.gemini.lastOkAt,
           last_error: state.gemini.lastError,

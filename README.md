@@ -1,7 +1,7 @@
 # BOSCO 
 
 Wildfire-monitoring prototype for a Parrot ANAFI: live camera and telemetry,
-fire detection, illustrative spread, Gemini analysis, and human-reviewed plans.
+fire detection, illustrative spread, incident questions, and human-reviewed plans.
 Person search adds rescue leads, location uncertainty, and coverage views.
 
 ## Start here
@@ -36,7 +36,9 @@ npm run demo -- --port 9000
 ```
 
 Replay offers simulated person searches, historical incidents, and a flight
-pattern. Its Gemini calls require a configured key; replay results stay out
+pattern. On-demand questions and planning require a configured Gemini key; scene
+analysis is removed from replay/live dashboards and automatic analysis is off.
+Replay results stay out
 of live storage. The Windows wrapper is `.\demo.ps1 -Port 9000`.
 
 Historical fire cases include a four-drone perimeter-search replay. Scroll

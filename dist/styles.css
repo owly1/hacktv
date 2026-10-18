@@ -284,20 +284,10 @@ body[data-mode=alert] .map-location .dot{color:var(--ember)}
 .drone-panel.is-fullscreen .fleet-controls{flex:none}
 
 /* gemini */
-.analysis-content{padding:0 16px 16px;display:flex;flex-direction:column;gap:12px}
-.analysis-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--muted);margin:0;display:flex;align-items:center;gap:8px}
-#analysis-summary{font-size:14px;line-height:1.55;margin:0}
-.insight{display:flex;gap:10px;background:var(--violet-pale);border-radius:12px;padding:12px}
-.insight-icon{width:30px;height:30px;background:var(--white);color:var(--violet);border-radius:9px;display:grid;place-items:center;flex-shrink:0;font-size:17px}
-.insight strong{font-size:14px;color:var(--violet-ink)}
-.insight p{font-size:13px;color:var(--violet-ink);margin:2px 0 0;line-height:1.5}
-.analysis-list{margin:0;padding-left:18px;font-size:13px;line-height:1.55}
-.analysis-list:empty{display:none}
-.analysis-uncertainty{display:flex;align-items:start;gap:8px;font-size:12px;line-height:1.45;color:var(--muted)}
-.analysis-uncertainty svg{width:15px;height:15px;margin-top:1px}
-.analysis-content .button.full{border:1.5px solid var(--violet);color:var(--violet-ink)}
-.analysis-content .button.full:hover:not(:disabled){background:var(--violet-pale);border-color:var(--violet)}
-.analysis-content .button svg{color:var(--violet)}
+.question-content{padding:0 16px 16px;display:flex;flex-direction:column;gap:12px}
+.question-content .button.full{border:1.5px solid var(--violet);color:var(--violet-ink)}
+.question-content .button.full:hover:not(:disabled){background:var(--violet-pale);border-color:var(--violet)}
+.question-content .button svg{color:var(--violet)}
 .ask-block{border-top:1px dashed var(--line-2);padding-top:10px;display:flex;flex-direction:column;gap:8px}
 .ask-block .field-label{margin:0}
 .ask-row{display:flex;gap:8px}
@@ -408,8 +398,7 @@ body.panel-fullscreen{overflow:hidden}
 .map-panel.is-fullscreen .map-viewport{flex:1 1 auto;height:auto;min-height:320px}
 .drone-panel.is-fullscreen .video-frame{flex:1 1 auto;height:auto;min-height:260px;margin:16px 18px 0}
 .drone-panel.is-fullscreen .telemetry-grid{grid-template-columns:repeat(4,minmax(0,1fr));margin:12px 18px}
-.analysis-panel.is-fullscreen .analysis-content{max-width:860px;width:100%;margin:20px auto;padding:0 24px 24px}
-.analysis-panel.is-fullscreen #analysis-summary{font-size:17px}
+.incident-questions-panel.is-fullscreen .question-content{max-width:860px;width:100%;margin:20px auto;padding:0 24px 24px}
 .response-panel.is-fullscreen .response-body{padding:20px 24px 24px;flex:1}
 .fs-hint{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:40;background:var(--ember);color:var(--night);font-weight:600;font-family:var(--mono);font-size:12px;padding:7px 14px;border-radius:999px;pointer-events:none;animation:hint 2.6s ease forwards}
 @keyframes hint{0%,70%{opacity:1}100%{opacity:0}}
@@ -553,14 +542,6 @@ body.panel-fullscreen{overflow:hidden}
  .primary-grid>.map-panel .map-frame{flex:1 1 auto;display:flex;flex-direction:column}
  .primary-grid>.map-panel .map-viewport{flex:1 1 auto;height:auto;min-height:470px}
 }
-/* Gemini analysis stays compact: four lines of summary (click to expand), details folded. */
-#analysis-summary{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
-#analysis-summary.expanded{display:block}
-.insight p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.analysis-more summary{cursor:pointer;font-size:12.5px;color:var(--muted)}
-.analysis-more[open] summary{margin-bottom:8px}
-/* No analysis yet: just the summary line and the button. */
-.analysis-panel:not(.has-analysis) .insight,.analysis-panel:not(.has-analysis) .analysis-uncertainty{display:none}
 .lead-empty{padding:18px 22px}
 .lead-empty h3{font-size:17px;margin:0;color:var(--muted);font-weight:600}
 .draft-placeholder{min-height:180px;align-items:center}

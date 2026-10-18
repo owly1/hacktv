@@ -5,7 +5,7 @@
     'map-panel': 'Fire spread explorer',
     'people-panel': 'People · rescue leads',
     'drone-panel': 'Drone cameras and telemetry',
-    'analysis-panel': 'Gemini analysis',
+    'questions-panel': 'Ask the incident',
     'response-panel': 'Response planning assistant',
   };
   const railLinks = [...document.querySelectorAll('.rail-links a[href^="#"]')];

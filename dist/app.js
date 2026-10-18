@@ -1,7 +1,7 @@
 'use strict';
 /* BOSCO dashboard (Bushfire Observation, Simulation and Coordination Operations). Opens live against the backend that serves it:
    video, telemetry, detections and flight events from the ANAFI bridge;
-   Gemini analysis and plans from the backend; history from TigerData.
+   incident questions and response plans from the backend; history from TigerData.
    Demo mode (historical fires from examples/ + flight-pattern replay) runs
    only when the Demo button is pressed. */
 const $ = id => document.getElementById(id), M = EmberModel;
@@ -19,7 +19,7 @@ const state = {
   mode: 'live', liveDemo: false, token: '', connected: false, status: null,
   site: {name: 'UTSC · Sam Ibrahim Building', latitude: 43.7866, longitude: -79.1903},
   telemetry: null, incident: null, episodeSeen: null, incidentModelKey: null, flight: {events: [], path: []},
-  analysis: null, analysisMeta: null, plan: null, planDirty: false,
+  plan: null, planDirty: false,
   scenario: {...M.BASE}, detectedScenario: null, minute: 0, playing: false, speed: 1,
   // created_at of the analysis whose derived wind last set scenario.wind, the
   // analysis the user manually overrode, and the estimate shown in the UI
@@ -104,7 +104,7 @@ function renderDetectionDetails() {
     : loc ? `Estimated fire location: ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)} · ${loc.position_source || 'camera estimate'}`
       : 'Fire location unavailable. Enable Live demo to explore spread at the configured site.';
   $('detection-model-note').textContent = d.source === 'qr-test'
-    ? 'Spread starts from the QR payload. Timeline, conditions, analysis and response tools use this incident.'
+    ? 'Spread starts from the QR payload. Timeline, conditions and response tools use this incident.'
     : 'Spread uses the camera area estimate when available and adjustable environmental assumptions.';
 }
 
@@ -120,7 +120,7 @@ function renderHeading() {
     const location = loc?.simulated ? 'Scenario location · configured site, not measured GPS' : loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'Fire location unavailable';
     $('incident-sub').textContent = `First sighted ${fmtTime(inc.first_detected_at)} · ${inc.sightings} sighting${inc.sightings === 1 ? '' : 's'} · ${location}`;
     const how = d.source === 'qr-test' ? 'test marker' : `fire model (${d.label})`;
-    setBanner('alert', `<strong>${escapeHTML(d.label === 'smoke' ? 'Smoke' : 'Fire')} detected at ${escapeHTML(fmtTime(d.detected_at))}</strong> by ANAFI-01 · ${escapeHTML(how)}, ${Math.round(d.confidence * 100)}%. ${loc?.simulated ? 'Spread uses the configured demo location, not measured fire GPS.' : !loc ? 'Location unavailable; map projection is waiting.' : 'Fire location is available for the spread projection.'} Analysis and response tools are below.`, true);
+    setBanner('alert', `<strong>${escapeHTML(d.label === 'smoke' ? 'Smoke' : 'Fire')} detected at ${escapeHTML(fmtTime(d.detected_at))}</strong> by ANAFI-01 · ${escapeHTML(how)}, ${Math.round(d.confidence * 100)}%. ${loc?.simulated ? 'Spread uses the configured demo location, not measured fire GPS.' : !loc ? 'Location unavailable; map projection is waiting.' : 'Fire location is available for the spread projection.'} Forecast and response tools are below.`, true);
     setModePill('alert-badge', state.liveDemo ? 'Live demo · detected' : 'Fire detected');
   } else {
     $('incident-eyebrow').textContent = 'LIVE MONITORING · ANAFI-01'; $('incident-dot').classList.remove('alert');
@@ -436,11 +436,10 @@ function renderIncident() {
     state.scenario = {...state.detectedScenario}; state.minute = 0;
     state.windAuto = state.windManual = state.windDerived = null;
     state.playing = false; setPlayButton();
-    if (state.analysis?.episode_id !== inc.episode_id) { state.analysis = null; state.analysisMeta = null; }
     if (state.plan?.episode_id !== inc.episode_id) { state.plan = null; state.planDirty = false; }
-    resetAnalysisPanel(); resetPlanPanel(); renderAnalysis(); if (state.plan) renderPlan();
+    resetPlanPanel(); if (state.plan) renderPlan();
     markPlanDirty(); renderFirePin(); renderSpread(); fitToFire();
-    toast(`Fire detected — ${inc.latest.details?.name || inc.latest.label}. See analysis and response below.`);
+    toast(`Fire detected — ${inc.latest.details?.name || inc.latest.label}. See the forecast and response tools below.`);
   } else {
     renderFirePin();
     if (inc && modelChanged) {
@@ -461,30 +460,6 @@ function renderIncident() {
 }
 
 // -------------------------------------------------------------- analysis
-
-/** Present the current structured scene assessment, uncertainty and derived-wind context. */
-function renderAnalysis() {
-  const meta = state.analysisMeta, a = state.analysis;
-  $('analysis-panel').classList.toggle('has-analysis', !!a);
-  let offline = null;
-  if (meta && !meta.configured) offline = 'GEMINI_API_KEY is not set on the backend.';
-  else if (meta?.error && (!a || meta.error.at > a.created_at)) offline = meta.error.message;
-  $('analysis-offline').hidden = !offline; $('analysis-offline-text').textContent = offline || '';
-  if (meta?.pending) $('analysis-source').textContent = 'ANALYZING…';
-  if (!a) { if (!meta?.pending) $('analysis-source').textContent = offline ? 'UNAVAILABLE' : 'WAITING'; return; }
-  if (!meta?.pending) $('analysis-source').textContent = `GEMINI · ${a.trigger === 'auto-detection' ? 'AUTO' : 'MANUAL'} · ${fmtTime(a.created_at)}`;
-  $('analysis-severity').hidden = !a.severity; $('analysis-severity').textContent = a.severity || ''; $('analysis-severity').className = 'severity ' + (a.severity || '');
-  $('analysis-summary').textContent = a.summary;
-  $('analysis-title').textContent = 'Spread outlook';
-  $('analysis-detail').textContent = a.spread_outlook || (a.unknowns || []).join(' ');
-  const obs = (a.observations || []).slice(0, 3);
-  $('analysis-observations').innerHTML = obs.map(o => `<li>${escapeHTML(o)}</li>`).join('');
-  $('analysis-more').hidden = !obs.length && !a.limitations && !(a.unknowns || []).length;
-  const w = a.wind_estimate;
-  const windLine = w ? `Wind est. ${w.speed_mps != null ? `≈${w.speed_mps} m/s` : 'unknown speed'}${w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}° ${M.compass(w.direction_deg)}` : ''} — ${w.method} (${w.confidence})` : null;
-  $('analysis-limit').textContent = [windLine, (a.unknowns || [])[0], a.limitations].filter(Boolean).join(' · ');
-  applyWindEstimate(a);
-}
 
 /* Which estimator a wind_estimate came from — the label follows the method,
    so a flight-controller value and a tilt-derived value are not conflated. */
@@ -649,34 +624,25 @@ async function generatePlan() {
 
 const DEMO_FLIGHT_S = 26;
 const PANEL_DEFAULTS = {};
-/** Cache original analysis/plan placeholders before switching scenarios. */
-function savePanelDefaults() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit', 'draft-area']) PANEL_DEFAULTS[id] = $(id).innerHTML; }
-/** Restore empty analysis markup and clear prior severity/error indicators. */
-function resetAnalysisPanel() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit']) $(id).innerHTML = PANEL_DEFAULTS[id]; $('analysis-severity').hidden = true; $('analysis-offline').hidden = true; }
+/** Cache the response-plan placeholder before switching scenarios. */
+function savePanelDefaults() { for (const id of ['draft-area']) PANEL_DEFAULTS[id] = $(id).innerHTML; }
 /** Restore the empty plan placeholder when changing evidence context. */
 function resetPlanPanel() { $('draft-area').innerHTML = PANEL_DEFAULTS['draft-area']; }
 /** Return only a historical camera case, excluding flight-pattern and person-search replay. */
 const demoCase = () => state.mode === 'demo' && state.demo.selected && state.demo.selected !== 'flight' && state.demo.selected.id !== 'people' ? state.demo.selected : null;
-/** Return an isolated analysis/plan cache for the currently selected replay scenario. */
+/** Return an isolated plan cache for the currently selected replay scenario. */
 const demoResults = () => {
   const f = state.mode === 'demo' && state.demo.selected;
   if (!f || f === 'flight') return null;
   const key = f.id === 'people' ? `people:${f.scenario}` : f.id;
-  return (state.demo.results[key] ??= {analysis: null, plan: null, planDirty: false});
+  return (state.demo.results[key] ??= {plan: null, planDirty: false});
 };
 
-/* Show the selected case's own Gemini results, or empty panels until Gemini is asked. */
+/** Restore only the selected replay's own response plan. */
 function showDemoResults() {
   const r = demoResults();
-  state.analysis = r?.analysis ?? null; state.plan = r?.plan ?? null; state.planDirty = r?.planDirty ?? false;
-  state.analysisMeta = {configured: state.status?.gemini?.configured ?? true, pending: false, error: null};
-  resetAnalysisPanel(); resetPlanPanel();
-  if (!r) { $('analysis-summary').textContent = 'Select an incident; Gemini analyzes it once ANAFI-01 geolocates the fire.'; $('analysis-source').textContent = 'WAITING'; return; }
-  if (!state.analysis) {
-    $('analysis-summary').textContent = peopleDemoActive() ? 'Analyze current view to review the simulated fire and rescue leads.' : `Gemini analyzes ${demoCase().name} automatically once ANAFI-01 geolocates it.`;
-    $('analysis-detail').textContent = peopleDemoActive() ? 'Gemini receives simulated observations; results stay in this replay session.' : 'Gemini receives the drone camera frame, telemetry and observed conditions.';
-  }
-  renderAnalysis(); if (state.plan) renderPlan();
+  state.plan = r?.plan ?? null; state.planDirty = r?.planDirty ?? false;
+  resetPlanPanel(); if (state.plan) renderPlan();
 }
 
 /* Simulated ANAFI-01 for a demo case, t seconds after its camera first saw
@@ -684,9 +650,9 @@ function showDemoResults() {
    detection is confirmed, then climbs at up to 4 m/s (ANAFI max) to its
    recorded 120 m while widening to a 450 m survey orbit at 8 m/s, camera
    locked on the fire's head. Information reaches the workspace in the order
-   a real sighting would: detection confirmed, fire geolocated, Gemini. */
+   a real sighting would: detection confirmed, then fire geolocated. */
 const SIM = {r0: 280, alt0: 35, climbS: 32, orbitR: 450, orbitV: 8};
-const SIM_DELAY = {confirm: 2.5, locate: 4, analyze: 5};
+const SIM_DELAY = {confirm: 2.5, locate: 4};
 /** Smoothly interpolate a bounded zero-to-one simulation transition. */
 const ease = k => { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
 /* The burning front the camera sees; the map's T + 0 outline is the same ellipse. */
@@ -794,35 +760,11 @@ function locateDemoFire(f) {
     .bindPopup(`<b>${escapeHTML(f.name)}</b><br>${escapeHTML(f.region)} · ${escapeHTML(f.startDate)}<br>Cause: ${escapeHTML(f.cause)}<br>≈${f.areaHa.toLocaleString()} ha · structures ${n(i.structures)} · evacuated ${n(i.evacuated)} · deaths ${i.deaths ?? '—'}<br><small>${escapeHTML(f.notes)}</small><br><small>Source: ${escapeHTML(f.source)}</small>`);
   state.demo.sight = L.polyline([state.demo.pos, [f.lat, f.lon]], {color: '#e66c43', weight: 1.5, dashArray: '3 4'}).addTo(state.demo.layer);
   $('incident-tag').hidden = false; $('incident-dot').classList.add('alert');
-  setBanner('demo', `<strong>Fire geolocated · ${escapeHTML(f.name)}.</strong> ANAFI-01 is climbing to survey it. Conditions on scene: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%. Gemini is analyzing it automatically.`);
-  toast(`Fire detected — ${f.name}. Gemini is analyzing it.`);
+  setBanner('demo', `<strong>Fire geolocated · ${escapeHTML(f.name)}.</strong> The simulated fleet is observing the fire. Conditions on scene: ${f.drivers.tempC ?? '—'} °C, wind ${f.drivers.windKmh ?? '—'} km/h toward ${M.compass(f.directionDeg)}, RH ${f.drivers.rhPct ?? '—'}%.`);
+  toast(`Fire detected — ${f.name}. The forecast is ready.`);
   renderSpread();
 }
 
-/* Gemini analyzes each demo fire on its own once it is geolocated, as it does
-   for live detections. Retries rate limits (one request per 10 s) and Gemini
-   timeouts; gives up only when Gemini is not configured or keeps failing. */
-async function autoAnalyze(f) {
-  const ATTEMPTS = 4;
-  for (let attempt = 1; attempt <= ATTEMPTS && demoCase() === f; attempt++) {
-    const r = demoResults(); if (r.analysis) return;
-    state.analysisMeta = {...state.analysisMeta, pending: true, error: null}; renderAnalysis();
-    if (!state.analysis) $('analysis-summary').textContent = attempt === 1 ? `Gemini is analyzing the ${f.name} detection…` : `Gemini is analyzing the ${f.name} detection… (retry ${attempt - 1})`;
-    try {
-      const a = await demoGemini('analyze', 'auto-detection'); r.analysis = a;
-      if (demoCase() === f) { state.analysis = a; state.analysisMeta = {...state.analysisMeta, pending: false}; renderAnalysis(); toast('Gemini analysis ready.'); }
-      return;
-    } catch (e) {
-      if (demoCase() !== f) return;
-      if (e.status === 503 || attempt === ATTEMPTS) {
-        state.analysisMeta = {...state.analysisMeta, pending: false, configured: e.status !== 503, error: {message: e.message, at: new Date().toISOString()}}; renderAnalysis();
-        if (!state.analysis) $('analysis-summary').textContent = 'Gemini could not analyze this fire. Press "Analyze current view" to try again.';
-        return;
-      }
-      await sleep(10500);
-    }
-  }
-}
 /* The incident as Gemini sees it for a live detection: where the fire is, the
    observed conditions, and the drone's telemetry and detection right now. */
 function simCase(f) {
@@ -867,7 +809,7 @@ function setDemoVideo(f) {
 }
 
 let lastPanel = 0;
-/** Advance only the selected historical camera case, detection timing and automatic analysis. */
+/** Advance only the selected historical camera case, detection timing and shared fleet cameras. */
 function animateDemoCase(now) {
   const f = demoCase(); if (!f || !state.demo.marker) return;
   const t = demoT(), conf = simConfidence(f, t), confirmed = t >= SIM_DELAY.confirm;
@@ -886,7 +828,6 @@ function animateDemoCase(now) {
   if (!state.demo.located && t >= SIM_DELAY.locate) locateDemoFire(f);
   state.demo.sight?.setLatLngs([state.demo.pos, [f.lat, f.lon]]);
   if (state.demo.located && !state.playing && now - (state.demo.lastSpread ?? 0) > 1000) { state.demo.lastSpread = now; renderSpread(); } // the live fire keeps growing
-  if (!state.demo.autoAsked && t >= SIM_DELAY.analyze) { state.demo.autoAsked = true; autoAnalyze(f); }
   if (t - (state.demo.lastTrail ?? -9) >= 1) state.demo.lastTrail = t;
   if (state.follow && now - (state.demo.lastPan ?? 0) > 250) { state.demo.lastPan = now; state.map.panTo(state.demo.pos, {animate: false}); }
   const cam = camera();
@@ -937,22 +878,16 @@ function demoProjection() {
   return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(demoOutline(f, state.minute)).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: f.lat, longitude: f.lon}, basis: 'detected fire front growing to the recorded final burn area over a 60-minute replay'};
 }
 
-/* The drone camera frame as base64 JPEG, as the bridge sends it for live detections. */
-function cameraFrame() {
-  if (!camera()?.ok) return undefined;
-  try { return $('camera').toDataURL('image/jpeg', .85).split(',')[1]; } catch { return undefined; }
-}
-
-/** Submit the selected simulated incident/leads through the replay-only Gemini endpoint. */
-async function demoGemini(kind, trigger = 'manual') {
+/** Submit a response plan with replay-only incident, fleet and rescue evidence. */
+async function demoGemini(kind) {
+  if (kind !== 'plan') throw new Error('Scene analysis is no longer part of the dashboard');
   const f = demoCase(), snap = peopleDemoActive() ? peopleState.snap : null;
   if (!f && !snap?.simulated) { toast('Select an incident and wait for its observations first.'); return null; }
   const incident = f ? simCase(f) : {
     id: `people:${state.demo.selected.scenario}`, name: state.demo.selected.name,
     provenance: 'simulated', fire: snap.fire, drone: snap.drone, rescue_leads: snap.leads,
   };
-  const a = state.analysis;
-  return getJson(`/api/demo/${kind}`, {method: 'POST', timeout: 100000, body: {case: incident, scenario: state.scenario, ...(kind === 'analyze' ? {...(f ? {image: cameraFrame()} : {}), trigger} : {}), ...(kind === 'plan' ? {objective: $('objective').value, notes: $('notes').value, projection: projection(), analysis: a && {summary: a.summary, severity: a.severity, spread_outlook: a.spread_outlook}} : {})}});
+  return getJson('/api/demo/plan', {method: 'POST', timeout: 100000, body: {case: incident, scenario: state.scenario, objective: $('objective').value, notes: $('notes').value, projection: projection()}});
 }
 
 /** Enter explicit replay with per-scenario state, or restore live monitoring. */
@@ -961,7 +896,7 @@ async function toggleDemo() {
   state.demo.fires = window.EMBER_DEMO?.cases ?? [];
   if (!state.demo.fires.length) { toast('Incident replays failed to load (demo-cases.js).'); return; }
   state.demo.results ??= {};
-  state.live = {analysis: state.analysis, analysisMeta: state.analysisMeta, plan: state.plan, planDirty: state.planDirty};
+  state.live = {plan: state.plan, planDirty: state.planDirty};
   state.mode = 'demo'; state.playing = false; setPlayButton();
   $('detection-details').hidden = true;
   state.basemapBeforeDemo = state.basemap; setBasemap('sat'); await loadDemoVideos();
@@ -1048,7 +983,7 @@ function selectDemo(id) {
     state.demo.playbackRate ??= 2;
     state.demo.started = performance.now() - state.demo.scout.elapsed * 1000 / state.demo.playbackRate; state.demo.lastTrail = null; state.demo.inView = false;
     state.demo.lastScout = -2000;
-    state.demo.located = false; state.demo.autoAsked = false; state.demo.sight = null; state.demo.lastSpread = 0;
+    state.demo.located = false; state.demo.sight = null; state.demo.lastSpread = 0;
     const start = simPose(f, state.demo.scout.elapsed); state.demo.pos = [start.lat, start.lon];
     initDemoFleet();
     const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'fire', lat: f.lat, lon: f.lon, windDeg: f.directionDeg, windKmh: f.drivers.windKmh});
@@ -1079,7 +1014,7 @@ function exitDemo() {
   $('map-location').textContent = state.site.name; state.detectedScenario = null; state.scenario = {...M.BASE}; state.minute = 0; state.episodeSeen = null; state.centredOnDrone = false;
   $('telemetry-tag').textContent = 'LIVE'; $('telemetry-note').textContent = 'No telemetry yet'; $('camera-clock').textContent = '—'; $('video-status').textContent = 'No video'; state.video.lastAt = 0;
   $('battery-value').innerHTML = '—<span class="small-unit">%</span>'; $('battery-context').textContent = 'no telemetry yet'; $('drone-source').textContent = 'Waiting for drone';
-  Object.assign(state, state.live ?? {}); resetAnalysisPanel(); resetPlanPanel(); renderAnalysis(); if (state.plan) renderPlan();
+  Object.assign(state, state.live ?? {}); resetPlanPanel(); if (state.plan) renderPlan();
   state.windAuto = state.windManual = state.windDerived = null;
   renderIncident(); renderDrone(); renderSpread(); renderTelemetry(); renderFlight(); fitToFire();
   pollPeople().catch(() => {});
@@ -1130,16 +1065,6 @@ async function pollTelemetry() {
 async function pollIncident() { state.incident = (await getJson('/api/incident')).incident; renderIncident(); }
 /** Refresh flight-event/path data and redraw its live map representation. */
 async function pollFlight() { state.flight = await getJson('/api/flight'); renderFlight(); renderDrone(); }
-async function pollAnalysis() {
-  if (state.mode === 'demo') return;
-  const m = await getJson('/api/analysis/latest');
-  if (state.mode === 'demo') return;
-  state.analysisMeta = m;
-  const a = m.analysis, inc = activeFire();
-  state.analysis = typeof a?.summary === 'string' && (!inc || a.episode_id === inc.episode_id) ? a : null;
-  if (!state.analysis) resetAnalysisPanel();
-  renderAnalysis();
-}
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
   const s = state.status; state.site = s.site || state.site; if (state.mode !== 'demo') $('map-location').textContent = state.site.name;
@@ -1182,7 +1107,7 @@ function bindUi() {
   $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'From the detected fire.' : ''; openDialog('scenario-dialog'); };
   for (const [id, key] of [['wind-input', 'wind'], ['direction-input', 'direction'], ['dry-input', 'dryness'], ['temp-input', 'temp'], ['rh-input', 'rh']]) $(id).oninput = () => { pending[key] = +$(id).value; scenarioControls(pending); };
   $('reset-scenario').onclick = () => { pending = {...(state.detectedScenario || M.BASE)}; scenarioControls(pending); };
-  $('apply-scenario').onclick = () => { state.scenario = {...pending}; state.windManual = state.analysis?.created_at ?? 'manual'; state.windDerived = null; markPlanDirty(); renderSpread(); refreshFireTiming(); $('scenario-dialog').close(); };
+  $('apply-scenario').onclick = () => { state.scenario = {...pending}; state.windManual = 'manual'; state.windDerived = null; markPlanDirty(); renderSpread(); refreshFireTiming(); $('scenario-dialog').close(); };
   $('play').onclick = () => { state.playing = !state.playing; setPlayButton(); };
   $('speed').onclick = () => { state.speed = state.speed === 4 ? 1 : state.speed * 2; $('speed').textContent = state.speed + '×'; };
   $('timeline').oninput = () => { state.playing = false; setPlayButton(); state.minute = +$('timeline').value; renderSpread(); };
@@ -1192,24 +1117,6 @@ function bindUi() {
   $('zoom-in').onclick = () => state.map.zoomIn(); $('zoom-out').onclick = () => state.map.zoomOut(); $('zoom-reset').onclick = () => { setFollow(false); fitToFire(); };
   $('zoom-drone').onclick = () => setFollow(!state.follow); $('layer-sat').onchange = () => setBasemap($('layer-sat').checked ? 'sat' : 'osm');
   $('dismiss-fire').onclick = async () => { const inc = state.incident; if (!inc) return; try { await api('/api/incident/dismiss', {method: 'POST', body: {episode_id: inc.episode_id}}); toast('Marked as a false alarm.'); await pollIncident(); } catch (e) { toast(e.message); } };
-  $('analysis-summary').onclick = () => $('analysis-summary').classList.toggle('expanded');
-  $('analyze').onclick = async () => {
-    const mode = state.mode, episode = activeFire()?.episode_id, results = demoResults();
-    const currentView = () => state.mode === mode && (mode === 'demo' ? demoResults() === results : activeFire()?.episode_id === episode);
-    $('analyze').disabled = true; $('analysis-source').textContent = 'ANALYZING…';
-    try {
-      if (state.mode === 'demo') { const r = demoResults(), a = await demoGemini('analyze'); if (!a) return; r.analysis = a; if (demoResults() !== r) return; state.analysis = a; }
-      else {
-        const episode = activeFire()?.episode_id;
-        const analysis = await getJson('/api/analyze', {method: 'POST', body: {}, timeout: 90000});
-        if (state.mode !== 'live' || activeFire()?.episode_id !== episode) return;
-        state.analysis = analysis;
-      }
-      state.analysisMeta = {...state.analysisMeta, error: null, pending: false}; toast('Gemini analysis updated.');
-    }
-    catch (e) { if (!currentView()) return; if (e.status === 409 || e.status === 429) toast(e.message); else state.analysisMeta = {...state.analysisMeta, configured: e.status !== 503, error: {message: e.message, at: new Date().toISOString()}}; }
-    finally { $('analyze').disabled = false; renderAnalysis(); }
-  };
   $('generate-plan').onclick = generatePlan;
   $('ask-send').onclick = askIncident;
   $('ask-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') askIncident(); });
@@ -1225,7 +1132,7 @@ function bindUi() {
 
 /** Export the current evidence, lead review, projection and plan with source labels. */
 function exportBrief() {
-  const inc = activeFire(), a = state.analysis, p = state.plan, proj = projection();
+  const inc = activeFire(), p = state.plan, proj = projection();
   const simulatedCase = demoCase() ? simCase(demoCase()) : null;
   const telemetry = simulatedCase?.drone.telemetry ?? (peopleDemoActive() ? peopleState.snap?.drone : state.telemetry);
   const lines = ['# BOSCO incident brief', '', `Generated: ${new Date().toISOString()}`, `Site: ${state.site.name} (${state.site.latitude}, ${state.site.longitude})`, `Mode: ${state.mode === 'demo' ? 'incident replay' : state.mode}`, '',
@@ -1234,7 +1141,6 @@ function exportBrief() {
     '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nProjection origin: ${JSON.stringify(proj.origin)}\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
     '## Drone telemetry', telemetry ? '```json\n' + JSON.stringify(telemetry, null, 2) + '\n```' : 'No telemetry.', '',
     ...(simulatedCase?.fleet.length ? ['## Simulated fleet', '```json\n' + JSON.stringify(simulatedCase.fleet, null, 2) + '\n```', ''] : []),
-    '## Gemini analysis', a ? `${a.summary}\n\nSeverity: ${a.severity ?? '—'}\nSpread outlook: ${a.spread_outlook ?? '—'}\nUnknowns: ${(a.unknowns || []).join('; ') || '—'}\nLimitations: ${a.limitations ?? '—'}\n(${a.model}, ${a.created_at})` : 'None yet.', '',
     '## Operational plan', p ? `${p.title}\n\n${p.situation}\n\nAdvantage: ${p.advantage}\n\n${p.actions.map(x => `${x.priority}. ${x.action} — ${x.owner || ''} (${x.timing || ''})`).join('\n')}\n\n${p.approvedBy ? `Approved by ${p.approvedBy} at ${p.approvedAt}` : 'Not yet approved.'}${state.planDirty ? '\n(Conditions changed after this plan was generated.)' : ''}` : 'None yet.'];
   download('bosco-incident-brief.md', lines.join('\n'), 'text/markdown'); toast('Incident brief exported.');
 }
@@ -1252,7 +1158,7 @@ async function connect() {
   if (started) return; started = true;
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
-  every(2000, 'people', pollPeople); every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
+  every(2000, 'people', pollPeople); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
   try { const {plan} = await getJson('/api/plan/latest'); if (state.mode === 'live' && plan && (!activeFire() || plan.episode_id === activeFire().episode_id)) { state.plan = plan; renderPlan(); } } catch {}
   streamVideo();
 }

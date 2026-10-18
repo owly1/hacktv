@@ -43,6 +43,11 @@ aircraft, scrolling POV previews, coordinated exterior descents and shared
 fictional leads. See [the demo guide](docs/FLEET_DEMO.md). This browser replay
 does not implement per-drone live ingest or real fleet flight coordination.
 
+The shared replay/live UI no longer includes Gemini scene analysis or analysis
+polling. Backend automatic scene analysis defaults off. Incident Q&A and human
+requested response plans remain; authenticated legacy analysis routes are kept
+for compatibility, with automatic mode available only to explicit app embedders.
+
 ## Branching for every teammate
 
 Start each new task from an up-to-date `origin/main`:
