@@ -13,9 +13,9 @@ const FLIGHT_STATES = {landed:'Landed', takingoff:'Taking off', hovering:'Hoveri
 const SPREAD_BANDS = [[1.08,'#ffc459',.22],[1,'#ffb345',.24],[.79,'#ff8e43',.33],[.55,'#f54b31',.45],[.27,'#c7332c',.6]];
 
 const state = {
-  mode: 'live', token: '', connected: false, status: null,
+  mode: 'live', liveDemo: false, token: '', connected: false, status: null,
   site: {name: 'UTSC · Sam Ibrahim Building', latitude: 43.7866, longitude: -79.1903},
-  telemetry: null, incident: null, episodeSeen: null, flight: {events: [], path: []},
+  telemetry: null, incident: null, episodeSeen: null, incidentModelKey: null, flight: {events: [], path: []},
   analysis: null, analysisMeta: null, plan: null, planDirty: false,
   scenario: {...M.BASE}, detectedScenario: null, minute: 0, playing: false, speed: 1,
   // created_at of the analysis whose derived wind last set scenario.wind, the
@@ -53,6 +53,50 @@ function activeFire() {
   return inc && inc.active ? inc : null;
 }
 
+// Demo anchoring changes only the projection, never the captured detection.
+function fireLocation() {
+  const d = activeFire()?.latest;
+  if (!d) return null;
+  if (d.fire.latitude != null) return {...d.fire, simulated: !!d.details?.position_simulated};
+  if (state.liveDemo) return {...state.site, simulated: true, position_source: 'configured-demo-site-not-measured'};
+  return null;
+}
+
+function setLiveDemo(on) {
+  state.liveDemo = on;
+  $('live-demo-toggle').setAttribute('aria-pressed', String(on));
+  $('live-demo-toggle').classList.toggle('active', on);
+  if (state.mode === 'demo') exitDemo();
+  $('map-pill').textContent = on ? 'Live demo' : 'Live';
+  const url = new URL(location.href);
+  url.searchParams.delete('demo');
+  if (on) url.searchParams.set('live-demo', ''); else url.searchParams.delete('live-demo');
+  history.replaceState(null, '', url);
+  state.incidentModelKey = null;
+  markPlanDirty(); renderIncident(); renderSpread(); fitToFire(); refreshFireTiming();
+}
+
+function renderDetectionDetails() {
+  const inc = activeFire();
+  $('detection-details').hidden = !inc;
+  if (!inc) return;
+  const d = inc.latest, det = d.details || {}, loc = fireLocation();
+  $('detection-source').textContent = d.source === 'qr-test' ? 'QR FIRE SCENARIO' : `CAMERA · ${d.label.toUpperCase()}`;
+  $('detection-conditions').textContent = [
+    det.area_ha != null ? `${det.area_ha} ha${det.area_source ? ' (estimated)' : ''}` : 'Area estimated by model',
+    det.intensity, det.fuel, det.spread_m_per_min != null ? `${det.spread_m_per_min} m/min` : null,
+    `${state.scenario.wind} km/h toward ${M.compass(state.scenario.direction)}`,
+    `${state.scenario.temp} °C`, `${state.scenario.rh}% RH`,
+  ].filter(Boolean).join(' · ');
+  $('detection-location').textContent = loc?.simulated
+    ? `Scenario location: ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)} · configured demo site; fire position not measured`
+    : loc ? `Estimated fire location: ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)} · ${loc.position_source || 'camera estimate'}`
+      : 'Fire location unavailable. Enable Live demo to explore spread at the configured site.';
+  $('detection-model-note').textContent = d.source === 'qr-test'
+    ? 'Spread starts from the QR payload. Timeline, conditions, analysis and response tools use this incident.'
+    : 'Spread uses the camera area estimate when available and adjustable environmental assumptions.';
+}
+
 function renderHeading() {
   if (state.mode === 'demo') return;
   const inc = activeFire(), t = state.telemetry;
@@ -61,11 +105,12 @@ function renderHeading() {
     const d = inc.latest, det = d.details || {};
     $('incident-eyebrow').textContent = 'ACTIVE FIRE · ANAFI-01'; $('incident-dot').classList.add('alert');
     $('incident-title').textContent = det.name ? `${det.name} fire` : 'Fire detected'; $('incident-tag').hidden = false;
-    const location = d.details?.position_simulated ? 'Scenario location · configured site, not measured GPS' : d.fire.latitude != null ? `${d.fire.latitude.toFixed(5)}, ${d.fire.longitude.toFixed(5)}` : 'Fire location unavailable';
+    const loc = fireLocation();
+    const location = loc?.simulated ? 'Scenario location · configured site, not measured GPS' : loc ? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` : 'Fire location unavailable';
     $('incident-sub').textContent = `First sighted ${fmtTime(inc.first_detected_at)} · ${inc.sightings} sighting${inc.sightings === 1 ? '' : 's'} · ${location}`;
     const how = d.source === 'qr-test' ? 'test marker' : `fire model (${d.label})`;
-    setBanner('alert', `<strong>Fire detected at ${escapeHTML(fmtTime(d.detected_at))}</strong> by ANAFI-01 · ${escapeHTML(how)}, ${Math.round(d.confidence * 100)}%. ${d.details?.position_simulated ? 'Spread uses the configured test location.' : d.fire.latitude == null ? 'Location unavailable; map projection is waiting.' : 'Fire location is available for the spread projection.'} Analysis and response tools are below.`, true);
-    setModePill('alert-badge', 'Fire detected');
+    setBanner('alert', `<strong>${escapeHTML(d.label === 'smoke' ? 'Smoke' : 'Fire')} detected at ${escapeHTML(fmtTime(d.detected_at))}</strong> by ANAFI-01 · ${escapeHTML(how)}, ${Math.round(d.confidence * 100)}%. ${loc?.simulated ? 'Spread uses the configured demo location, not measured fire GPS.' : !loc ? 'Location unavailable; map projection is waiting.' : 'Fire location is available for the spread projection.'} Analysis and response tools are below.`, true);
+    setModePill('alert-badge', state.liveDemo ? 'Live demo · detected' : 'Fire detected');
   } else {
     $('incident-eyebrow').textContent = 'LIVE MONITORING · ANAFI-01'; $('incident-dot').classList.remove('alert');
     $('incident-title').textContent = 'Monitoring for fire'; $('incident-tag').hidden = true;
@@ -75,7 +120,7 @@ function renderHeading() {
     else {
       const v = state.status?.vision;
       const vision = !v?.fresh ? 'Fire detector is offline; video reception is active.' : v.error ? 'Fire detector reported an error; check its terminal.' : v.camera_state !== 'live' ? 'Fire detector is waiting for fresh camera frames.' : v.model_status === 'ready' ? 'RGB fire/smoke classification and QR fire testing are active.' : 'QR fire testing is active; RGB fire model is unavailable.';
-      setBanner('info', `<strong>Live · monitoring.</strong> ${vision}`); setModePill('live-badge', 'Live · monitoring');
+      setBanner('info', `<strong>${state.liveDemo ? 'Live demo' : 'Live'} · monitoring.</strong> ${vision}`); setModePill('live-badge', state.liveDemo ? 'Live demo · monitoring' : 'Live · monitoring');
     }
   }
 }
@@ -164,12 +209,13 @@ const modelledFire = () => state.mode === 'live' ? !!activeFire() : !!(state.dem
 function origin() {
   if (peopleDemoActive()) { const f = state.demo.selected; return f.lat != null ? [f.lat, f.lon] : null; }
   if (state.mode === 'demo') { const f = demoCase(); return f && state.demo.located ? [f.lat, f.lon] : null; }
-  const inc = activeFire(); return inc?.latest.fire.latitude != null ? [inc.latest.fire.latitude, inc.latest.fire.longitude] : null;
+  const loc = fireLocation(); return loc ? [loc.latitude, loc.longitude] : null;
 }
 
 /* Projected spread at the selected minute, drawn as layered intensity bands. */
 function renderSpread() {
   const sc = state.scenario, t = state.minute;
+  renderDetectionDetails();
   $('time-label').textContent = `T + ${Math.round(t)} min`; $('timeline').value = t;
   document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - t) < .5));
   $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? ' · derived est.' : '');
@@ -199,11 +245,11 @@ function renderSpread() {
 function renderFirePin() {
   state.layers.fire.clearLayers();
   const inc = activeFire(); if (!inc || !origin()) return;
-  const d = inc.latest, det = d.details || {};
-  L.marker([d.fire.latitude, d.fire.longitude], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})})
+  const d = inc.latest, det = d.details || {}, loc = fireLocation();
+  L.marker([loc.latitude, loc.longitude], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})})
     .addTo(state.layers.fire)
-    .bindPopup(`<b>${escapeHTML(det.name || 'Detected fire')}</b><br>${escapeHTML(d.label)} · ${Math.round(d.confidence * 100)}% · ${escapeHTML(d.source)}<br>${d.fire.latitude.toFixed(6)}, ${d.fire.longitude.toFixed(6)}<br>${d.fire.distance_m} m from drone · bearing ${d.fire.bearing_deg}°${det.area_ha != null ? `<br>Reported area ${det.area_ha} ha` : ''}${det.fuel ? `<br>Fuel: ${escapeHTML(det.fuel)}` : ''}`);
-  if (d.drone?.latitude != null) L.polyline([[d.drone.latitude, d.drone.longitude], [d.fire.latitude, d.fire.longitude]], {color: '#E8562A', weight: 1.5, dashArray: '3 4'}).addTo(state.layers.fire);
+    .bindPopup(`<b>${escapeHTML(det.name || 'Detected fire')}</b><br>${escapeHTML(d.label)} · ${Math.round(d.confidence * 100)}% · ${escapeHTML(d.source)}<br>${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}<br>${loc.simulated ? 'Configured scenario location · not measured' : escapeHTML(loc.position_source || 'camera estimate')}${det.area_ha != null ? `<br>Reported area ${escapeHTML(det.area_ha)} ha` : ''}${det.fuel ? `<br>Fuel: ${escapeHTML(det.fuel)}` : ''}`);
+  if (!loc.simulated && d.drone?.latitude != null) L.polyline([[d.drone.latitude, d.drone.longitude], [loc.latitude, loc.longitude]], {color: '#E8562A', weight: 1.5, dashArray: '3 4'}).addTo(state.layers.fire);
 }
 
 function fitToFire() {
@@ -286,16 +332,26 @@ async function drawFrame(f) {
   state.video.decoding = true;
   try {
     const bmp = await createImageBitmap(new Blob([f.jpeg], {type: 'image/jpeg'}));
+    if (state.mode === 'demo') { bmp.close(); return; }
     const canvas = $('camera'), ctx = canvas.getContext('2d');
-    if (canvas.width !== bmp.width) { canvas.width = bmp.width; canvas.height = bmp.height; }
+    if (canvas.width !== bmp.width || canvas.height !== bmp.height) { canvas.width = bmp.width; canvas.height = bmp.height; }
     ctx.drawImage(bmp, 0, 0); bmp.close();
-    for (const d of f.detections) {
+    const detections = (Array.isArray(f.detections) ? f.detections : []).filter(d => d && Array.isArray(d.bbox)
+      && d.bbox.length === 4 && d.bbox.every(v => Number.isFinite(v) && v >= 0 && v <= 1)
+      && d.bbox[2] > d.bbox[0] && d.bbox[3] > d.bbox[1] && Number.isFinite(d.confidence));
+    for (const d of detections) {
       const [x1, y1, x2, y2] = d.bbox, w = canvas.width, h = canvas.height;
-      ctx.strokeStyle = '#E8562A'; ctx.lineWidth = Math.max(3, w / 240); ctx.strokeRect(x1 * w, y1 * h, (x2 - x1) * w, (y2 - y1) * h);
-      ctx.fillStyle = '#E8562A'; ctx.font = `600 ${Math.round(w / 40)}px 'IBM Plex Mono', ui-monospace, monospace`; ctx.fillText(`${d.source === 'qr-test' ? 'FIRE · test marker' : d.label.toUpperCase()} ${Math.round(d.confidence * 100)}%`, x1 * w, Math.max(h / 20, y1 * h - 8));
+      const color = d.label === 'person' ? '#5CC8C0' : '#E8562A';
+      ctx.strokeStyle = color; ctx.lineWidth = Math.max(3, w / 240); ctx.strokeRect(x1 * w, y1 * h, (x2 - x1) * w, (y2 - y1) * h);
+      ctx.fillStyle = color; ctx.font = `600 ${Math.round(w / 40)}px 'IBM Plex Mono', ui-monospace, monospace`; ctx.fillText(`${d.source === 'qr-test' ? 'FIRE · QR scenario' : String(d.label || 'DETECTION').toUpperCase()} ${Math.round(d.confidence * 100)}%`, x1 * w, Math.max(h / 20, y1 * h - 8));
     }
-    const now = Date.now(); state.video.lastAt = now; state.video.times.push(now); state.video.times = state.video.times.filter(t => now - t < 2000);
-    $('camera-label').innerHTML = f.detections.length ? '<i class="hot"></i> FIRE IN VIEW' : '<i></i> LIVE · ANAFI-01';
+    const now = Date.now(), captured = Date.parse(f.captured);
+    // A late overlay can redraw an image; that is not a new camera frame.
+    if (Number.isFinite(captured)) state.video.lastAt = captured;
+    if (state.video.lastCapture !== f.captured) state.video.times.push(now);
+    state.video.lastCapture = f.captured; state.video.times = state.video.times.filter(t => now - t < 2000);
+    const fire = detections.find(d => d.label === 'fire' || d.label === 'smoke');
+    $('camera-label').innerHTML = fire ? `<i class="hot"></i> ${fire.label === 'smoke' ? 'SMOKE' : 'FIRE'} IN VIEW` : '<i></i> LIVE · ANAFI-01';
     $('camera-clock').textContent = f.captured ? new Date(f.captured).toLocaleTimeString() : '—';
     $('video-fps').textContent = `${(state.video.times.length / 2).toFixed(1)} fps`;
     $('video-status').textContent = 'Live camera frames via backend relay';
@@ -321,20 +377,37 @@ function videoWatchdog() {
 function renderIncident() {
   if (state.mode === 'demo') return;
   const inc = activeFire();
+  const modelKey = inc ? JSON.stringify([inc.episode_id, fireLocation(), inc.latest.details, state.liveDemo]) : null;
+  const modelChanged = modelKey !== state.incidentModelKey;
+  state.incidentModelKey = modelKey;
   if (inc && inc.episode_id !== state.episodeSeen) {
     state.episodeSeen = inc.episode_id;
     state.detectedScenario = M.scenarioFrom(inc.latest.details);
     state.scenario = {...state.detectedScenario}; state.minute = 0;
     state.windAuto = state.windManual = state.windDerived = null;
+    state.playing = false; setPlayButton();
+    if (state.analysis?.episode_id !== inc.episode_id) { state.analysis = null; state.analysisMeta = null; }
+    if (state.plan?.episode_id !== inc.episode_id) { state.plan = null; state.planDirty = false; }
+    resetAnalysisPanel(); resetPlanPanel(); renderAnalysis(); if (state.plan) renderPlan();
     markPlanDirty(); renderFirePin(); renderSpread(); fitToFire();
     toast(`Fire detected — ${inc.latest.details?.name || inc.latest.label}. See analysis and response below.`);
-  } else renderFirePin();
+  } else {
+    renderFirePin();
+    if (inc && modelChanged) {
+      // Keep operator changes, but adopt updated reported conditions when
+      // the previous detection's defaults are still selected.
+      const following = JSON.stringify(state.scenario) === JSON.stringify(state.detectedScenario);
+      state.detectedScenario = M.scenarioFrom(inc.latest.details);
+      if (following) state.scenario = {...state.detectedScenario};
+      markPlanDirty(); renderSpread(); refreshFireTiming();
+    }
+  }
   if (!inc && state.episodeSeen) { state.episodeSeen = null; renderSpread(); }
   if (inc) {
     $('detect-value').textContent = Math.round(inc.max_confidence * 100); $('detect-unit').textContent = '%';
     $('detect-context').textContent = `${inc.latest.source === 'qr-test' ? 'test marker' : 'fire model · ' + inc.latest.label} · ${inc.sightings} sightings`;
   } else { $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'watching the camera feed'; }
-  renderHeading();
+  renderDetectionDetails(); renderHeading();
 }
 
 // -------------------------------------------------------------- analysis
@@ -367,6 +440,10 @@ function renderAnalysis() {
 function applyWindEstimate(a) {
   const w = a?.wind_estimate;
   if (!w || state.mode === 'demo') return;
+  // The QR carries explicit scenario weather. Keep it reproducible even
+  // when Gemini derives a different wind estimate from a grounded drone.
+  if (activeFire()?.latest.source === 'qr-test') return;
+  if (a.episode_id && a.episode_id !== activeFire()?.episode_id) return;
   if (a.created_at === state.windAuto || a.created_at === state.windManual) return;
   const kmh = w.speed_mps != null ? Math.round(w.speed_mps * 3.6) : null;
   const deg = w.direction_deg != null ? ((Math.round(w.direction_deg) % 360) + 360) % 360 : null;
@@ -387,7 +464,8 @@ function projection() {
   const o = origin(); if (!o) return null;
   if (demoCase()) return demoProjection();
   const details = fireDetails();
-  return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(M.footprint(o, state.minute, state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(state.minute, state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1]}};
+  const loc = fireLocation();
+  return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(M.footprint(o, state.minute, state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(state.minute, state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1], position_source: loc?.position_source ?? null, simulated: loc?.simulated ?? state.mode === 'demo'}};
 }
 function markPlanDirty() { if (state.plan && !state.planDirty) { state.planDirty = true; const r = demoResults(); if (r) r.planDirty = true; renderPlan(); } }
 
@@ -405,13 +483,21 @@ function renderPlan(offline) {
 }
 
 async function generatePlan() {
+  const mode = state.mode, episode = activeFire()?.episode_id, results = demoResults();
+  const currentView = () => state.mode === mode && (mode === 'demo' ? demoResults() === results : activeFire()?.episode_id === episode);
   $('generate-plan').disabled = true; $('generate-plan').innerHTML = '<svg><use href="#i-spark"/></svg>Gemini is planning…';
   try {
     const r = demoResults();
     if (state.mode === 'demo') { const plan = await demoGemini('plan'); if (!plan) return; r.plan = plan; r.planDirty = false; if (demoResults() !== r) return; state.plan = plan; }
-    else state.plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 100000});
+    else {
+      const episode = activeFire()?.episode_id;
+      const plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 100000});
+      if (state.mode !== 'live' || activeFire()?.episode_id !== episode) return;
+      state.plan = plan;
+    }
     state.planDirty = false; renderPlan(); toast('Operational plan ready.');
   } catch (e) {
+    if (!currentView()) return;
     if (e.status === 429) toast(e.message);
     else renderPlan(e.status === 503 ? 'GEMINI_API_KEY is not set on the backend.' : e.message);
   } finally { $('generate-plan').disabled = false; $('generate-plan').innerHTML = '<svg><use href="#i-spark"/></svg>Generate operational plan'; }
@@ -623,6 +709,7 @@ async function toggleDemo() {
   state.demo.results ??= {};
   state.live = {analysis: state.analysis, analysisMeta: state.analysisMeta, plan: state.plan, planDirty: state.planDirty};
   state.mode = 'demo'; state.playing = false; setPlayButton();
+  $('detection-details').hidden = true;
   state.basemapBeforeDemo = state.basemap; setBasemap('sat'); await loadDemoVideos();
   $('demo-toggle').innerHTML = 'Exit replay <svg><use href="#i-close"/></svg>';
   setModePill('demo', 'Replay'); setBanner('demo', '<strong>Incident replay.</strong> Historical fires replayed through the full ANAFI-01 → Gemini pipeline. Live data resumes when you exit.');
@@ -721,7 +808,7 @@ function exitDemo() {
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.map.closePopup();
   setDemoVideo(null); setBasemap(state.basemapBeforeDemo ?? 'osm'); setFollow(false);
   $('demo-toggle').innerHTML = 'Replay <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
-  $('map-pill').textContent = 'Live'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
+  $('map-pill').textContent = state.liveDemo ? 'Live demo' : 'Live'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
   $('map-location').textContent = state.site.name; state.detectedScenario = null; state.scenario = {...M.BASE}; state.minute = 0; state.episodeSeen = null; state.centredOnDrone = false;
   $('telemetry-tag').textContent = 'LIVE'; $('telemetry-note').textContent = 'Waiting for live telemetry'; $('camera-clock').textContent = '—'; $('video-status').textContent = 'Waiting for the bridge'; state.video.lastAt = 0;
   $('battery-value').innerHTML = '—<span class="small-unit">%</span>'; $('battery-context').textContent = 'no telemetry yet'; $('drone-source').textContent = 'Waiting for drone';
@@ -771,7 +858,16 @@ async function pollTelemetry() {
 }
 async function pollIncident() { state.incident = (await getJson('/api/incident')).incident; renderIncident(); }
 async function pollFlight() { state.flight = await getJson('/api/flight'); renderFlight(); renderDrone(); }
-async function pollAnalysis() { if (state.mode === 'demo') return; const m = await getJson('/api/analysis/latest'); if (state.mode === 'demo') return; state.analysisMeta = m; if (typeof m.analysis?.summary === 'string') state.analysis = m.analysis; renderAnalysis(); }
+async function pollAnalysis() {
+  if (state.mode === 'demo') return;
+  const m = await getJson('/api/analysis/latest');
+  if (state.mode === 'demo') return;
+  state.analysisMeta = m;
+  const a = m.analysis, inc = activeFire();
+  state.analysis = typeof a?.summary === 'string' && (!inc || a.episode_id === inc.episode_id) ? a : null;
+  if (!state.analysis) resetAnalysisPanel();
+  renderAnalysis();
+}
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
   const s = state.status; state.site = s.site || state.site; if (state.mode !== 'demo') $('map-location').textContent = state.site.name;
@@ -821,18 +917,26 @@ function bindUi() {
   $('zoom-drone').onclick = () => setFollow(!state.follow); $('layer-sat').onchange = () => setBasemap($('layer-sat').checked ? 'sat' : 'osm');
   $('dismiss-fire').onclick = async () => { const inc = state.incident; if (!inc) return; try { await api('/api/incident/dismiss', {method: 'POST', body: {episode_id: inc.episode_id}}); toast('Marked as a false alarm.'); await pollIncident(); } catch (e) { toast(e.message); } };
   $('analyze').onclick = async () => {
+    const mode = state.mode, episode = activeFire()?.episode_id, results = demoResults();
+    const currentView = () => state.mode === mode && (mode === 'demo' ? demoResults() === results : activeFire()?.episode_id === episode);
     $('analyze').disabled = true; $('analysis-source').textContent = 'ANALYZING…';
     try {
       if (state.mode === 'demo') { const r = demoResults(), a = await demoGemini('analyze'); if (!a) return; r.analysis = a; if (demoResults() !== r) return; state.analysis = a; }
-      else state.analysis = await getJson('/api/analyze', {method: 'POST', body: {}, timeout: 90000});
+      else {
+        const episode = activeFire()?.episode_id;
+        const analysis = await getJson('/api/analyze', {method: 'POST', body: {}, timeout: 90000});
+        if (state.mode !== 'live' || activeFire()?.episode_id !== episode) return;
+        state.analysis = analysis;
+      }
       state.analysisMeta = {...state.analysisMeta, error: null, pending: false}; toast('Gemini analysis updated.');
     }
-    catch (e) { if (e.status === 409 || e.status === 429) toast(e.message); else state.analysisMeta = {...state.analysisMeta, configured: e.status !== 503, error: {message: e.message, at: new Date().toISOString()}}; }
+    catch (e) { if (!currentView()) return; if (e.status === 409 || e.status === 429) toast(e.message); else state.analysisMeta = {...state.analysisMeta, configured: e.status !== 503, error: {message: e.message, at: new Date().toISOString()}}; }
     finally { $('analyze').disabled = false; renderAnalysis(); }
   };
   $('generate-plan').onclick = generatePlan;
   $('objective').onchange = markPlanDirty; $('notes').oninput = markPlanDirty;
   $('demo-toggle').onclick = toggleDemo; $('demo-fire').onchange = () => selectDemo($('demo-fire').value);
+  $('live-demo-toggle').onclick = () => setLiveDemo(state.mode === 'demo' || !state.liveDemo);
   for (const id of ['open-integrations', 'top-integrations']) $(id).onclick = () => { openDialog('integrations-dialog'); pollStatus().catch(() => {}); renderHistory().catch(() => { $('history-source').textContent = 'unavailable'; }); };
   $('connect-api').onclick = async () => { const t = $('api-token').value.trim(); if (t) state.token = t; await connect(); };
   $('export-brief').onclick = exportBrief;
@@ -843,7 +947,7 @@ function exportBrief() {
   const lines = ['# BOSCO incident brief', '', `Generated: ${new Date().toISOString()}`, `Site: ${state.site.name} (${state.site.latitude}, ${state.site.longitude})`, `Mode: ${state.mode === 'demo' ? 'incident replay' : state.mode}`, '',
     '## People · rescue leads', peopleBrief(), '',
     '## Fire', inc ? [`Detected ${inc.first_detected_at} by ANAFI-01 (${inc.latest.source}, ${inc.latest.label}, max confidence ${Math.round(inc.max_confidence * 100)}%), ${inc.sightings} sightings.`, `Position: ${inc.latest.fire.latitude}, ${inc.latest.fire.longitude} — ${inc.latest.fire.distance_m} m from the drone, bearing ${inc.latest.fire.bearing_deg}° (${inc.latest.fire.position_source}).`, `Details: ${JSON.stringify(inc.latest.details)}`].join('\n') : 'No active fire.', '',
-    '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
+    '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nProjection origin: ${JSON.stringify(proj.origin)}\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
     '## Drone telemetry', state.telemetry ? '```json\n' + JSON.stringify(state.telemetry, null, 2) + '\n```' : 'No telemetry.', '',
     '## Gemini analysis', a ? `${a.summary}\n\nSeverity: ${a.severity ?? '—'}\nSpread outlook: ${a.spread_outlook ?? '—'}\nUnknowns: ${(a.unknowns || []).join('; ') || '—'}\nLimitations: ${a.limitations ?? '—'}\n(${a.model}, ${a.created_at})` : 'None yet.', '',
     '## Operational plan', p ? `${p.title}\n\n${p.situation}\n\nAdvantage: ${p.advantage}\n\n${p.actions.map(x => `${x.priority}. ${x.action} — ${x.owner || ''} (${x.timing || ''})`).join('\n')}\n\n${p.approvedBy ? `Approved by ${p.approvedBy} at ${p.approvedAt}` : 'Not yet approved.'}${state.planDirty ? '\n(Conditions changed after this plan was generated.)' : ''}` : 'None yet.'];
@@ -863,7 +967,7 @@ async function connect() {
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
   every(2000, 'people', pollPeople); every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
-  try { const {plan} = await getJson('/api/plan/latest'); if (plan) { state.plan = plan; renderPlan(); } } catch {}
+  try { const {plan} = await getJson('/api/plan/latest'); if (state.mode === 'live' && plan && (!activeFire() || plan.episode_id === activeFire().episode_id)) { state.plan = plan; renderPlan(); } } catch {}
   streamVideo();
 }
 
@@ -877,6 +981,10 @@ function animate(now) {
 }
 
 async function boot() {
+  state.liveDemo = new URLSearchParams(location.search).has('live-demo');
+  $('live-demo-toggle').setAttribute('aria-pressed', String(state.liveDemo));
+  $('live-demo-toggle').classList.toggle('active', state.liveDemo);
+  $('map-pill').textContent = state.liveDemo ? 'Live demo' : 'Live';
   savePanelDefaults(); initMap(); bindUi(); drawWaiting('Waiting for live video', 'The bridge relays the ANAFI camera through the backend'); renderSpread(); renderMapChip();
   // Opened straight from disk there is no backend to talk to: say so instead of asking for a token.
   if (location.protocol === 'file:') {

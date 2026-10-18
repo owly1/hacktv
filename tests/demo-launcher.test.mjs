@@ -7,6 +7,7 @@ test('demo launcher uses the same port options on Mac and Windows', () => {
   assert.equal(options(['--port','9000'], { PORT:'8787' }).port, 9000);
   assert.equal(options(['-Port','9000'], {}).port, 9000);
   assert.equal(options(['--no-open'], {}).open, false);
+  assert.equal(options(['--live'], {}).live, true);
   for (const args of [['--port'], ['--port','0'], ['--port','65536'], ['--oops']]) assert.throws(() => options(args, {}));
 });
 test('demo launcher refuses an old backend and probes without credentials or inference', async () => {

@@ -16,7 +16,7 @@ async function dashboard() {
   };
   const layer = () => ({
     addTo() {return this;}, remove() {}, clearLayers() {}, bindTooltip() {return this;},
-    setLatLng() {return this;}, setOpacity() {return this;},
+    bindPopup() {return this;}, setLatLng() {return this;}, setOpacity() {return this;},
   });
   const context = vm.createContext({
     console, performance, URLSearchParams, AbortSignal,
@@ -32,7 +32,9 @@ async function dashboard() {
   vm.runInContext(`
     state.mode = 'demo'; state.demo.results = {}; state.demo.fires = window.EMBER_DEMO.cases;
     state.map = {setView() {}, closePopup() {}};
-    for (const name of ['fire', 'people', 'coverage', 'mission']) state.layers[name] = L.layerGroup();
+    state.droneMarker = L.marker();
+    for (const name of ['fire', 'people', 'coverage', 'mission', 'spread', 'wind']) state.layers[name] = L.layerGroup();
+    var originalRenderSpread = renderSpread, originalRenderAnalysis = renderAnalysis;
     renderSpread = fitToFire = renderAnalysis = renderPlan = renderPeople = toast = setDemoVideo = () => {};
     camera = () => null;
   `, context);
@@ -56,6 +58,81 @@ test('person search and historical replay switch without reusing a historical dr
   run('selectDemo(state.demo.fires[0].id)');
   assert.equal(run('state.analysis.summary'), 'Historical analysis');
   assert.equal(run('peopleDemoActive()'), false);
+});
+
+const liveIncident = (over = {}) => ({
+  active: true, episode_id: 'live-qr', first_detected_at: new Date().toISOString(),
+  last_seen_at: new Date().toISOString(), sightings: 3, max_confidence: 1,
+  latest: {source: 'qr-test', label: 'fire', confidence: 1, detected_at: new Date().toISOString(),
+    fire: {latitude: 43.7866, longitude: -79.1903, position_source: 'qr-scenario-site-not-measured'},
+    details: {name: 'Alpha', area_ha: 120, spread_m_per_min: 35, wind_kmh: 30,
+      wind_dir_deg: 60, temp_c: 31, rh_pct: 18, position_simulated: true}},
+  ...over,
+});
+
+test('confirmed live QR populates conditions and an interactive projection using its payload', async () => {
+  const {run, context, element} = await dashboard();
+  context.incident = liveIncident();
+  run("state.mode = 'live'; state.incident = incident; renderSpread = originalRenderSpread; renderIncident()");
+  assert.equal(run('state.scenario.wind'), 30);
+  assert.equal(run('state.scenario.temp'), 31);
+  assert.equal(run('state.scenario.rh'), 18);
+  assert.ok(Math.abs(run('projection().area_ha') - 120) < 1);
+  assert.equal(run('projection().spread_rate_m_per_min'), 35);
+  assert.equal(run('projection().origin.simulated'), true);
+  const nowArea = run('projection().area_ha');
+  run('state.minute = 60; renderSpread()');
+  assert.ok(run('projection().area_ha') > nowArea);
+  assert.match(element('detection-conditions').textContent, /120 ha.*35 m\/min.*30 km\/h/);
+  assert.match(element('detection-location').textContent, /not measured/);
+  run('state.scenario.wind = 60; renderSpread()');
+  assert.ok(run('projection().spread_rate_m_per_min') > 35);
+  run('renderIncident()');
+  assert.equal(run('state.scenario.wind'), 60, 'repeat sightings preserve operator adjustments');
+});
+
+test('live demo anchors unlocated smoke without changing detection evidence; location recovery updates spread', async () => {
+  const {run, context, element} = await dashboard();
+  context.incident = liveIncident();
+  context.incident.latest = {...context.incident.latest, source: 'yolo', label: 'smoke',
+    details: null, fire: {latitude: null, longitude: null, position_source: 'unavailable'}};
+  run("state.mode = 'live'; state.incident = incident; renderSpread = originalRenderSpread; renderIncident()");
+  assert.equal(run('projection()'), null);
+  run('state.liveDemo = true; renderIncident()');
+  assert.ok(run('projection().area_ha') > 0);
+  assert.equal(run('state.incident.latest.fire.latitude'), null);
+  assert.equal(run('projection().origin.simulated'), true);
+  assert.match(element('detection-location').textContent, /configured demo site/);
+  run('state.incident.latest.fire = {latitude: 43.79, longitude: -79.2}; renderIncident()');
+  assert.equal(run('projection().origin.latitude'), 43.79);
+  assert.equal(run('projection().origin.simulated'), false);
+  assert.notEqual(element('area-value').textContent, '—');
+});
+
+test('QR scenario wind is retained and analysis from a previous fire cannot change the new incident', async () => {
+  const {run, context} = await dashboard();
+  context.incident = liveIncident();
+  run("state.mode = 'live'; state.incident = incident; renderIncident()");
+  run("applyWindEstimate({created_at:'analysis-1', episode_id:'live-qr', wind_estimate:{speed_mps:20, direction_deg:180}})");
+  assert.equal(run('state.scenario.wind'), 30);
+  context.fetch = async () => ({ok: true, json: async () => ({configured: true,
+    analysis: {summary: 'Old fire', episode_id: 'previous-fire'}})});
+  await run('pollAnalysis()');
+  assert.equal(run('state.analysis'), null);
+});
+
+test('live plan response cannot overwrite a replay selected during inference', async () => {
+  const {run, context, element} = await dashboard();
+  context.incident = liveIncident();
+  run("state.mode = 'live'; state.incident = incident; renderIncident()");
+  let finish;
+  context.fetch = () => new Promise(resolve => {finish = resolve;});
+  element('objective').value = 'initial-attack';
+  const pending = run('generatePlan()');
+  run("state.mode = 'demo'; state.plan = {title: 'Replay plan'}");
+  finish({ok: true, json: async () => ({title: 'Live plan'})});
+  await pending;
+  assert.equal(run('state.plan.title'), 'Replay plan');
 });
 
 test('simulated rescue plans use the demo endpoint and include that scenario\'s leads', async () => {

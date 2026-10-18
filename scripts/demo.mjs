@@ -7,13 +7,15 @@ import path from 'node:path';
 const root = fileURLToPath(new URL('../', import.meta.url));
 export function options(argv, env = process.env) {
   let port = Number(env.PORT || 8787), open = true;
+  let live = false;
   for (let i = 0; i < argv.length; i++) {
     if (['--port', '-Port'].includes(argv[i])) port = Number(argv[++i]);
     else if (argv[i] === '--no-open') open = false;
+    else if (argv[i] === '--live') live = true;
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be 1–65535');
-  return { port, open };
+  return { port, open, ...(live ? {live: true} : {}) };
 }
 export async function probe(base, fetchImpl = fetch) {
   try { await fetchImpl(base, { signal: AbortSignal.timeout(1500) }); }
@@ -37,8 +39,8 @@ export async function main() {
   process.chdir(root);
   if (!existsSync('.env')) throw new Error('Missing .env: copy .env.example and configure your tokens and GEMINI_API_KEY.');
   process.loadEnvFile('.env');
-  const { port, open } = options(process.argv.slice(2));
-  const base = `http://127.0.0.1:${port}`, url = `${base}/?demo`;
+  const { port, open, live } = options(process.argv.slice(2));
+  const base = `http://127.0.0.1:${port}`, url = `${base}/?${live ? 'live-demo' : 'demo'}`;
   if (await probe(base)) {
     console.log(`Emberwatch is already running: ${url}`);
     if (open) openBrowser(url);

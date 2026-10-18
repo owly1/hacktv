@@ -36,6 +36,23 @@ TigerData: put the service URL in `DATABASE_URL`, then `npm run db:init` once
 (creates the hypertables, continuous aggregate and compression policy, then
 proves an insert and read-back).
 
+### Live detection demo (drone camera + QR/fire/smoke)
+
+Run `npm run live-demo` and keep the Pi observer or ANAFI bridge streaming.
+The dashboard opens at `/?live-demo` and waits for actual detections; it does
+not select a historical fire. With the observation-only Pi receiver, run
+`npm run vision` in a second terminal to decode the fire QR and detect RGB
+fire/smoke on the laptop (Python/OpenCV and the fire model are required).
+The Mac observation launcher already starts a fire monitor.
+
+Fresh detector boxes appear over the real footage, telemetry stays live,
+and the QR's area, spread rate and weather drive the fire spread explorer.
+The timeline, conditions, layers, Gemini analysis, response plans and exports
+use that incident. When fire coordinates are unavailable, Live demo uses
+the configured site for a clearly labeled scenario projection. Ordinary
+Live mode keeps waiting for a fire location. **Replay** still opens the
+original historical demos. See [the setup and verification guide](docs/LIVE_DEMO_DASHBOARD.md).
+
 ### Demo cases (no drone)
 
 ```sh

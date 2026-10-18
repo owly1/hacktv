@@ -53,6 +53,7 @@
   <a class="wordmark" href="#overview" title="Back to the overview">BOSCO<span aria-hidden="true">/</span><small>Incident workspace</small></a>
   <div class="top-right">
    <span class="pill demo" id="mode-pill" role="status"><span class="dot"></span> Connecting…</span>
+   <button class="mode-switch" id="live-demo-toggle" aria-pressed="false" title="Use real camera detections and telemetry; preview unlocated fires at the configured demo site">Live demo <svg><use href="#i-drone"/></svg></button>
    <button class="mode-switch" id="demo-toggle" title="Replay historical fires and the drone flight pattern through the full pipeline">Replay <svg><use href="#i-play"/></svg></button>
    <button class="service-strip" id="top-integrations" title="Open integrations" aria-label="Integrations: ANAFI, TigerData and Gemini status">
     <span class="svc" data-svc="parrot-status"><i></i>ANAFI</span>
@@ -74,9 +75,13 @@
    <article class="metric metric-people"><div class="metric-label"><svg><use href="#i-person"/></svg>People found</div><div><strong id="people-value">0</strong><span class="unit" id="people-unit">leads</span><span class="metric-context" id="people-context">no one reported yet</span></div></article>
    <article class="metric"><div class="metric-label"><svg><use href="#i-battery"/></svg>Drone power <span class="tiny-tag" id="telemetry-tag">LIVE</span></div><div><strong id="battery-value">—<span class="small-unit">%</span></strong><span class="metric-context" id="battery-context">no telemetry yet</span></div></article>
   </section>
+  <section class="detection-details" id="detection-details" aria-label="Detected fire conditions" hidden>
+   <div class="detection-summary"><span class="tiny-tag" id="detection-source"></span><strong id="detection-conditions"></strong></div>
+   <p id="detection-location"></p><p id="detection-model-note"></p>
+  </section>
   <div class="primary-grid">
    <section class="panel map-panel" id="map-panel">
-    <div class="panel-header"><div><h2>Incident map <span class="pill soft-orange" id="map-pill">Live</span></h2><p id="map-subtitle">People found, ground the drone has observed, the fire and its projected spread</p></div><button id="scenario-open" class="button compact"><svg><use href="#i-wind"/></svg>Conditions</button></div>
+    <div class="panel-header"><div><h2>Fire spread explorer <span class="pill soft-orange" id="map-pill">Live</span></h2><p id="map-subtitle">People found, ground the drone has observed, the fire and its projected spread</p></div><button id="scenario-open" class="button compact"><svg><use href="#i-wind"/></svg>Conditions</button></div>
     <div class="map-frame">
      <div class="map-viewport" id="map-viewport">
       <div id="map" role="application" aria-label="Map of rescue leads, drone coverage, the detected fire and its projected spread"></div>
