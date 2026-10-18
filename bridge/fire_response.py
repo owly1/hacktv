@@ -22,7 +22,8 @@ from olympe.enums.gimbal import axis as GimbalAxis
 from olympe.messages.ardrone3.SpeedSettings import MaxVerticalSpeed
 from olympe.messages.ardrone3.SpeedSettingsState import MaxVerticalSpeedChanged
 from olympe.messages import camera as camera_messages
-from camera_search import CameraSearch, AcquisitionAim, image_bearing_pitch
+from camera_search import CameraSearch, AcquisitionAim, image_bearing_pitch, image_bearing_ray
+from continuous_orbit import Bearing
 from fire_detection import FIRE_MARKER_PAYLOAD
 from fire_tracking import FirePose, GroundTargetLock, orbit_fire
 from hover_checkout import HoverCheckout
@@ -52,6 +53,7 @@ class FireResponse(QRAutoPreset):
         self.preview_command_id=None
         self.camera_aim_sample=None
         self.orbit_target=None
+        self.orbit_bearing=None
         self.orbit_target_updated_at=float('-inf')
         self.target_vertical_anchor=None
         self.ground_target_lock=GroundTargetLock()
@@ -125,6 +127,7 @@ class FireResponse(QRAutoPreset):
         self.qr_scale_session=session;self.qr_scale_episode=episode
         self.target_vertical_anchor=None;self.ground_target_lock.clear()
         self.bearing_aim.reset()
+        self.orbit_bearing=None
         if self.adaptive_qr:self.target=None;self.camera_aim_sample=None
 
     def _qr_candidate(self,observation,pose,camera,captured_mono):
@@ -202,6 +205,7 @@ class FireResponse(QRAutoPreset):
         at=observation['at']/1000
         if self.projected_at==at: return
         self.projected_at=at
+        self.orbit_bearing=None
         capture_pose=None;vertical_residual=None
         try:
             if self.geometry is None: raise ValueError(self.geometry_error)
@@ -225,6 +229,15 @@ class FireResponse(QRAutoPreset):
                                          capture_pose['altitude']['altitude'])
             pose={'altitude_m':capture_pose['altitude']['altitude'],
                   'attitude_deg':{k:math.degrees(capture_pose['attitude'][k]) for k in ('roll','pitch','yaw')}}
+            if observation['source']=='qr-test' and self.geometry_snapshot is not None:
+                # Keep the independently calibrated pixel direction even if
+                # the following PnP/height consistency checks reject its depth.
+                ray=image_bearing_ray(observation,self.geometry_snapshot,camera)
+                yaw=capture_pose['attitude']['yaw'];c,s=math.cos(yaw),math.sin(yaw)
+                origin=self.geometry.models['qr-test'].origin(pose)
+                self.orbit_bearing=Bearing(captured_mono,observation['episode_id'],
+                    float(ray[0]),float(ray[1]),
+                    float(c*origin[0]-s*origin[1]),float(s*origin[0]+c*origin[1]))
             candidate=self._qr_candidate(observation,pose,camera,captured_mono)
             if candidate is not None and self.takeoff_used and self.target_vertical_anchor is not None:
                 vertical_residual=candidate.down_m-pose['altitude_m']-self.target_vertical_anchor
@@ -256,6 +269,7 @@ class FireResponse(QRAutoPreset):
                 'qr_scale':vars(self.qr_scale_fit) if self.qr_scale_fit is not None else None,
                 'position_uncertainty_m':self.target.position_uncertainty_m if self.target is not None else None,
                 'valid':self.target is not None,'reason':self.target_error,
+                'bearing_valid':self.orbit_bearing is not None,
                 'position':({'forward_m':self.target.forward_m,'right_m':self.target.right_m,'down_m':self.target.down_m}
                             if self.target is not None else None)})
 

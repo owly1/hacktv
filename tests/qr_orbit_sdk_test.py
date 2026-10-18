@@ -364,10 +364,12 @@ class AdapterTests(unittest.TestCase):
         driver, bridge, states, pending, now, advance = self.continuous_fake()
         limits=Limits(lap_seconds=15.,speed_mps=.6)
         check=Mock(); report=Mock(); remember=Mock(); target=object()
+        bridge.orbit_bearing=object()
         def run(received_target, received_limits, guarded, motion, command, reporting, **kwargs):
             self.assertIs(received_target,target);self.assertIs(received_limits,limits)
             self.assertIs(guarded,check);self.assertIs(reporting,report)
             self.assertIs(kwargs['remember'],remember)
+            self.assertIs(kwargs['get_bearing'](),bridge.orbit_bearing)
             measured=motion()
             self.assertEqual((measured.at,measured.yaw_rad,measured.vx,measured.vy,measured.vz,measured.altitude),
                              (9.9,1.25,.12,-.27,-.03,1.04))

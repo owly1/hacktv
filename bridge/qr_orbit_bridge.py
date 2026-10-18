@@ -211,7 +211,7 @@ class OlympeOrbitDriver:
                 'command_lease_seconds':.20, 'max_tilt_deg':10., 'max_yaw_deg_s':60., 'max_vertical_mps':.3})
             return run_continuous_orbit(target, limits, check, self._continuous_motion,
                 self._continuous_command, report, remember=remember, diagnostic=self._diagnostic,
-                clock=clock, sleep=sleep)
+                clock=clock, sleep=sleep,get_bearing=lambda:getattr(self.bridge,'orbit_bearing',None))
         finally:
             try:
                 self._neutralize_continuous_controls()
