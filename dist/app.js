@@ -98,7 +98,7 @@ function renderDetectionDetails() {
   $('detection-conditions').textContent = [
     det.area_ha != null ? `${det.area_ha} ha${det.area_source ? ' (estimated)' : ''}` : 'Area estimated by model',
     det.intensity, det.fuel, det.spread_m_per_min != null ? `${det.spread_m_per_min} m/min` : null,
-    `${state.scenario.wind} km/h toward ${M.compass(state.scenario.direction)}`,
+    `${Math.round(state.scenario.wind)} km/h toward ${M.compass(state.scenario.direction)}`,
     `${state.scenario.temp} °C`, `${state.scenario.rh}% RH`,
   ].filter(Boolean).join(' · ');
   $('detection-location').textContent = loc?.simulated
