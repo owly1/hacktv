@@ -67,6 +67,8 @@ export class AutonomousResponse {
     if (['contour_supported','contour_ready','airborne_search_supported'].some(key=>body[key]!=null && typeof body[key]!=='boolean')
         || (body.contour_reason!=null && (typeof body.contour_reason!=='string' || body.contour_reason.length>300)))
       throw new ApiError(400,'Invalid contour receiver readiness');
+    if (body.until_stop!=null && typeof body.until_stop!=='boolean') throw new ApiError(400,'Invalid until_stop');
+    if (body.until_stop && body.short_test) throw new ApiError(400,'Until-stop requires normal battery limits');
     const c=body.calibration;
     if (c!=null && (typeof c!=='object' || Array.isArray(c)
         || Object.keys(c).some(k=>!['qr_side_m','offset_body_m','image_size','rms_px','qr_verified','profile_verified'].includes(k))
@@ -84,7 +86,7 @@ export class AutonomousResponse {
     const contour=contourStatus(body.contour,this.session?.mission);
     this.receiver = {receiver_id: body.receiver_id, ready: body.ready, reason: body.reason,
       phase: String(body.phase ?? 'waiting').slice(0,40), at: this.now(), position: body.position ?? null,
-      camera_ready: body.camera_ready === true,short_test:body.short_test===true,
+      camera_ready: body.camera_ready === true,short_test:body.short_test===true,until_stop:body.until_stop===true,
       localization_sources:body.localization_sources??null,blocked_source:body.blocked_source??null,
       qr_scale_mode:body.qr_scale_mode??'measured',
       lap_seconds:body.lap_seconds===15?15:null,
@@ -292,7 +294,8 @@ export class AutonomousResponse {
       camera:!s && this.receiverFresh() && this.camera && fresh(this.camera.at,this.now(),5000)?this.camera:null,
       radius_m:1,height_m:1,
       lap_seconds:this.receiverFresh()?this.receiver.lap_seconds:null,
-      flight_seconds:this.receiverFresh()&&this.receiver.short_test?60:s?.mode==='contour'?null:300,
+      until_stop_supported:true,
+      flight_seconds:this.receiverFresh()&&this.receiver.short_test?60:(s?.mode==='contour'||this.receiverFresh()&&this.receiver.until_stop)?null:300,
       min_start_battery_pct:this.receiverFresh()&&this.receiver.short_test?30:40,
       min_flight_battery_pct:this.receiverFresh()&&this.receiver.short_test?25:40};
   }

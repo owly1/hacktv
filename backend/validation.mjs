@@ -245,6 +245,7 @@ const FIRE_FLIGHT_PATHS = new Map([
   ['qr-auto-preset', 'launch-heading'],
 ]);
 const FLIGHT_PHASES = new Set([
+  'dive', 'surveil', 'hovering',
   'preflight', 'takeoff', 'climb', 'recover', 'circle', 'search', 'holding', 'contour', 'return', 'landing', 'landed', 'aborted', 'error',
 ]);
 

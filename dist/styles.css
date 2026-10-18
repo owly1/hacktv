@@ -617,3 +617,12 @@ body.panel-fullscreen{overflow:hidden}
 .autonomy-land{border-color:var(--ember-ink);color:var(--ember-ink);background:var(--ember-pale)}
 .autonomy-panel[data-enabled=true]{border-color:var(--ember-ink);box-shadow:inset 4px 0 var(--ember-ink)}
 @media(max-width:800px){.autonomy-panel{align-items:stretch;flex-direction:column;gap:12px}.autonomy-actions .button{flex:1}}
+
+.dive-controls {padding:20px;border-top:1px solid #ddd4c6;display:grid;gap:10px}
+.dive-controls h3,.dive-controls p {margin:0}
+.dive-controls p,.dive-controls small {font-size:12px;line-height:1.5}
+.dive-controls input {width:100%;padding:10px;border:1px solid #cfc8b8;border-radius:6px;background:transparent;color:inherit}
+.dive-actions {display:flex;flex-wrap:wrap;gap:8px}
+.dive-actions button {flex:1;min-width:140px}
+.dive-controls button:disabled {opacity:.45;cursor:not-allowed}
+.dive-controls pre {white-space:pre-wrap;font-size:11px;margin:0}

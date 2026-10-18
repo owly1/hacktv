@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -18,7 +19,7 @@ import numpy as np
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT/'bridge'))
 from fire_detection import FireDetector, parse_marker, TINY_FIRE_MARKER_PAYLOAD
-from fire_monitor import Episodes, Monitor, detection_payload
+from fire_monitor import Episodes, Monitor, detection_payload, monitor_lock
 
 MARKER = 'EW1:Alpha|120|X|35|M|30|60|31|18|18'
 HIT = {'source': 'qr-test', 'label': 'fire', 'confidence': 1., 'bbox': [0., 0., 1., 1.],
@@ -26,6 +27,24 @@ HIT = {'source': 'qr-test', 'label': 'fire', 'confidence': 1., 'bbox': [0., 0., 
 
 
 class FireMonitorTests(unittest.TestCase):
+    def test_second_process_reports_duplicate_and_lock_is_reusable_after_owner_exits(self):
+        """Exercise OS locks in separate processes, including Windows locked-file open semantics."""
+        code = "from pathlib import Path\nimport sys\nfrom fire_monitor import monitor_lock\nwith monitor_lock(Path(sys.argv[1])):\n print('acquired')\n"
+        import os
+        environment = dict(os.environ)
+        environment['PYTHONPATH'] = os.pathsep.join(filter(None, [str(ROOT/'bridge'),environment.get('PYTHONPATH')]))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'monitor.lock'
+            with monitor_lock(path):
+                result = subprocess.run([sys.executable,'-c',code,str(path)],env=environment,capture_output=True,text=True,timeout=10)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('already running',result.stderr)
+                self.assertNotIn('Traceback',result.stderr)
+                self.assertEqual(path.stat().st_size,1)
+            result = subprocess.run([sys.executable,'-c',code,str(path)],env=environment,capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.stdout.strip(),'acquired')
+
     def test_slow_incident_storage_cannot_block_fresh_target_updates(self):
         detector=Mock(model_status='ready')
         detector.detect.return_value=HIT

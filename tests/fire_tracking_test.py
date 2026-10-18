@@ -112,6 +112,30 @@ class TrackingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             orbit_fire(Driver(),Limits(),sample,abort,lambda *x:None,'fire',started=0,min_battery_pct=25,flight_seconds=300)
 
+    def test_until_stop_passes_five_minutes_but_operator_battery_and_stale_guards_remain(self):
+        """Advance a fake orbit beyond the old timer, then interrupt through each hard guard."""
+        for fault,reason in [('operator','Operator'),('battery','battery'),('stale','stale')]:
+            with self.subTest(fault=fault):
+                now=[0.];battery=[80];stale=[False];abort=threading.Event();passed=[]
+                def sample():
+                    return (Vehicle(now[0]-2 if stale[0] else now[0],True,'hovering',battery[0],1,0,0),
+                            FireTarget(now[0],'fire',1,0,1.5,.12))
+                class Driver:
+                    supports_continuous_orbit=True
+                    def orbit_continuously(self,target,limits,check,report,remember,**kwargs):
+                        now[0]=301.;check();passed.append(now[0])
+                        if fault=='operator':abort.set()
+                        elif fault=='battery':battery[0]=39
+                        else:stale[0]=True
+                        check()
+                with self.assertRaisesRegex(InterruptedError,reason):
+                    orbit_fire(Driver(),Limits(lap_seconds=15),sample,abort,lambda *args:None,'fire',
+                               started=0,clock=lambda:now[0],flight_seconds=None,last_seen=lambda:now[0])
+                self.assertEqual(passed,[301.])
+        with self.assertRaisesRegex(ValueError,'Reduced battery'):
+            orbit_fire(None,Limits(),None,threading.Event(),None,'fire',started=0,
+                       min_battery_pct=25,flight_seconds=None)
+
     def test_transient_target_loss_holds_then_resumes_without_blind_moves(self):
         for fault in ('miss','outlier','stale','episode'):
             now=[0.];abort=threading.Event();moves=[];reports=[];recover_until=[0.]

@@ -3,6 +3,7 @@
 import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -261,6 +262,44 @@ class Monitor:
             time.sleep(max(.01, .2 - (time.monotonic() - started)))
 
 
+@contextmanager
+def monitor_lock(path):
+    """Hold one monitor per checkout without truncating a Windows-locked byte."""
+    try:
+        lock = path.open('a+b')
+    except PermissionError:
+        raise SystemExit('Cannot open the monitor lock: another detector may be running, or the checkout is not writable.') from None
+    with lock:
+        acquired = False
+        try:
+            lock.seek(0)
+            try:
+                if os.name == 'nt':
+                    import msvcrt
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise SystemExit('A fire monitor is already running for this checkout. Reuse its terminal; do not start another detector.') from None
+            acquired = True
+            # Lock first: opening with 'w' or writing a sentinel before taking
+            # the byte lock raises PermissionError when another monitor owns it.
+            lock.seek(0, os.SEEK_END)
+            if lock.tell() == 0:
+                lock.write(b'0'); lock.flush()
+            yield
+        finally:
+            if acquired:
+                lock.seek(0)
+                if os.name == 'nt':
+                    import msvcrt
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def main():
     """Load local credentials/options and start the laptop fire monitor."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -277,19 +316,7 @@ def main():
     url = urlparse(args.backend)
     if url.scheme != 'http' or url.hostname not in ('localhost', '127.0.0.1'):
         parser.error('Use the localhost backend')
-    with (Path(__file__).parents[1]/'.fire-monitor.local').open('w') as lock:
-        try:
-            if os.name == 'nt':
-                import msvcrt
-                lock.write('0')
-                lock.flush()
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            raise SystemExit('A fire monitor is already running for this checkout.')
+    with monitor_lock(Path(__file__).parents[1]/'.fire-monitor.local'):
         # Preserve the flight feed's fire-only selection and guarded warmup.
         # Observer smoke support must not change control-target selection.
         detector = FireDetector(args.model, detect_smoke=args.detect_smoke and not args.flight_targets)

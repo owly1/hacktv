@@ -28,12 +28,14 @@ async function dashboard() {
     history: {/** Keep browser navigation out of the isolated state tests. */ replaceState() {}},
     document: {getElementById: element, /* Return an empty node list for controls not needed by this fixture. */ querySelectorAll: () => []},
     L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, /* Preserve icon options without constructing a real map icon. */ divIcon: value => value},
-    window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
+    window: {addEventListener() {}}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
   });
-  for (const name of ['model.js', 'contour.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'app.js']) {
+  context.window.document=context.document;
+  for (const name of ['model.js', 'contour.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'dive.js', 'app.js']) {
     let source = await readFile(new URL(`../dist/${name}`, import.meta.url), 'utf8');
     if (name === 'app.js') source = source.replace(/\nboot\(\);\s*$/, '\n');
     vm.runInContext(source, context, {filename: name});
+    if(name==='dive.js')context.BoscoDive=context.window.BoscoDive;
   }
   vm.runInContext(`
     state.mode = 'demo'; state.demo.results = {}; state.demo.fires = window.EMBER_DEMO.cases;
