@@ -14,7 +14,7 @@ const LEAD_STATUS = {
   closed: {label: 'Closed', cls: 'st-closed'},
 };
 const CLOSE_OUTCOMES = [['found', 'Person found / reached'], ['not-a-person', 'Not a person'], ['duplicate', 'Duplicate of another lead'], ['handed-off', 'Handed off to another team']];
-const peopleState = {snap: null, listKey: '', covKey: '', demo: null, seen: new Set(), crops: new Map(), focus: null};
+const peopleState = {snap: null, listKey: '', covKey: '', demo: null, seen: new Set(), crops: new Map(), focus: null, chat: [], chatBusy: false};
 
 const TRAIL = {fire: {color: '#E8562A', label: 'camera on the fire'}, path: {color: '#D9921E', label: "over the fire's 60-min path"}, other: {color: '#8C8679', label: 'elsewhere'}};
 const CAMERA_HFOV = 69, CAMERA_VFOV = 2 * Math.atan(Math.tan(CAMERA_HFOV * Math.PI / 360) / (16 / 9)) * 180 / Math.PI;
@@ -109,6 +109,7 @@ function peopleInitMap() {
   try { $('responder-name').value = localStorage.getItem('bosco-responder') || ''; } catch {}
   $('responder-name').addEventListener('input', () => { try { localStorage.setItem('bosco-responder', $('responder-name').value.trim()); } catch {} });
   $('lead-list').addEventListener('click', onLeadAction);
+  $('chat-form').addEventListener('submit', sendChat);
 }
 
 // ------------------------------------------------------------------ data
@@ -544,4 +545,45 @@ function peopleBrief() {
     l.delayed.any ? `- Includes observations delivered up to ${l.delayed.max_delay_s} s late (link outage)` : null,
     `- ${l.acknowledged ? `Acknowledged by ${l.acknowledged.by} at ${l.acknowledged.at}` : 'NOT YET ACKNOWLEDGED'}`,
   ].filter(Boolean).join('\n')), ...camera.map(s => `### Camera person sighting (unlocated)\n- Last seen: ${s.observed_at}\n- ${s.sightings} delivered observations; no geographic pose available.\n- ${s.acknowledged ? 'Acknowledged by ' + s.acknowledged.by : 'NOT YET ACKNOWLEDGED'}`)].join('\n\n');
+}
+
+/** Render one chat turn into the log and keep the panel scrolled to the newest line. */
+function appendChat(role, text, provenance) {
+  const log = $('chat-log');
+  if (log.querySelector('.muted-text')) log.textContent = '';
+  const li = document.createElement('li');
+  li.className = role === 'user' ? 'chat-user' : `chat-model ${provenance === 'gemini' ? 'gemini' : ''}`;
+  const who = document.createElement('b');
+  who.textContent = role === 'user' ? 'You' : provenance === 'gemini' ? 'Gemini' : 'Numeric triage';
+  li.append(who, document.createTextNode(text.replace(/\*\*/g, '')));
+  log.appendChild(li);
+  log.scrollTop = log.scrollHeight;
+}
+
+/** Send the firefighter's question to the triage chat endpoint and render the grounded reply. */
+async function sendChat(e) {
+  e.preventDefault();
+  const input = $('chat-input'), text = input.value.trim();
+  if (!text || peopleState.chatBusy) return;
+  peopleState.chatBusy = true; $('chat-send').disabled = true;
+  input.value = '';
+  appendChat('user', text);
+  const thinking = document.createElement('li');
+  thinking.className = 'chat-thinking';
+  thinking.innerHTML = '<i></i><i></i><i></i>';
+  $('chat-log').appendChild(thinking);
+  $('chat-log').scrollTop = $('chat-log').scrollHeight;
+  try {
+    const res = await api('/api/rescue-chat', {method: 'POST', body: {message: text, history: peopleState.chat.slice(-8)}, timeout: 60000});
+    const {reply, provenance} = await res.json();
+    peopleState.chat.push({role: 'user', text}, {role: 'model', text: reply});
+    peopleState.chat = peopleState.chat.slice(-16);
+    appendChat('model', reply, provenance);
+    $('chat-source').textContent = provenance === 'gemini' ? 'gemini' : 'numeric';
+  } catch (err) {
+    appendChat('model', `Couldn't reach the triage model — ${err.message}`);
+  } finally {
+    thinking.remove();
+    peopleState.chatBusy = false; $('chat-send').disabled = false; input.focus();
+  }
 }
