@@ -52,6 +52,17 @@ h1 svg{width:.74em;height:.74em;margin:0 .02em 0 .04em;flex-shrink:0}
 .cover svg{width:160px;height:160px;animation:bx-settle .5s cubic-bezier(.2,.7,.2,1) both}
 @media(prefers-reduced-motion:reduce){.bx-orbit,.bx-fire,.bx-core,.bx-halo,.bx-ping,.bx-c{animation:none}}
 @media(max-width:560px){.stage{padding:48px 20px}.content{gap:40px}.title{gap:28px}}
+/* Exploded-view scroll sequence (reveal.js). --reveal-scroll is how far the visitor
+   scrolls while the frames play, in viewport heights: raise it for a slower reveal.
+   --reveal-backdrop is the studio grey along the top of the photos; the page fades
+   from its own background into it above the sequence. */
+:root{--reveal-backdrop:#C2C1C2}
+.reveal-fade{height:60vh;background:linear-gradient(to bottom,#14130F 0%,#1E1D1A 12%,#3C3B39 28%,#686767 46%,#939293 64%,#B3B2B3 80%,#BFBEBF 92%,var(--reveal-backdrop) 100%)}
+.reveal{--reveal-scroll:300;position:relative;background:var(--reveal-backdrop);height:calc((100 + var(--reveal-scroll)) * 1vh)}
+.reveal-sticky{position:sticky;top:0;height:100vh;overflow:hidden}
+.reveal canvas{display:block;width:100%;height:100%}
+@supports(height:1svh){.reveal-fade{height:60svh}.reveal{height:calc((100 + var(--reveal-scroll)) * 1svh)}.reveal-sticky{height:100svh}}
+@media(prefers-reduced-motion:reduce){.reveal{height:auto}.reveal-sticky{position:static;height:auto;aspect-ratio:16/9;max-height:100svh}}
 </style>
 </head>
 <body>
@@ -82,6 +93,13 @@ h1 svg{width:.74em;height:.74em;margin:0 .02em 0 .04em;flex-shrink:0}
  </main>
  <div class="cover" aria-hidden="true"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="#F3EFE6" stroke-width="6" stroke-dasharray="67.68 14" stroke-dashoffset="74.68"/><path d="M60 3v14M60 103v14M3 60h14M103 60h14" stroke="#F3EFE6" stroke-width="4" stroke-linecap="round"/><path d="M60 90 C44 90 36 78 38 66 C40 56 47 50 50 40 C54 46 57 51 58 56 C61 46 66 38 64 28 C76 38 84 52 82 68 C80 82 72 90 60 90Z" fill="#E8562A"/><path d="M61 86 C52 86 47 79 49 71 C51 63 58 60 62 50 C68 58 74 66 73 74 C72 81 67 86 61 86Z" fill="#FFB347"/><circle cx="23.2" cy="23.2" r="8" fill="#5CC8C0" stroke="#14130F" stroke-width="4"/></svg></div>
 </div>
+<div class="reveal-fade" aria-hidden="true"></div>
+<section class="reveal" id="reveal">
+ <div class="reveal-sticky">
+  <canvas role="img" aria-label="The BOSCO drone, a Parrot ANAFI, coming apart as you scroll: the BOSCO shell lifts away to show the flight computer and camera boards, the battery, the gimbal camera, the motors and the arms."></canvas>
+ </div>
+</section>
+<script src="reveal.js"></script>
 <script>
 // "Get started": recede the title, settle the lens mark, then open the dashboard
 // (whose own intro irises the lens open). Plain navigation with reduced motion

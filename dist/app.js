@@ -82,12 +82,12 @@ function renderHeading() {
     $('incident-eyebrow').textContent = 'LIVE MONITORING · ANAFI-01'; $('incident-dot').classList.remove('alert');
     $('incident-title').textContent = 'Monitoring for fire'; $('incident-tag').hidden = true;
     $('incident-sub').textContent = state.site.name;
-    if (!state.connected) { setBanner('warn', '<strong>Backend unreachable.</strong> Start it with <code>npm start</code>, then reload.'); setModePill('demo', 'Offline'); }
-    else if (telemetryAge > STALE_MS) { setBanner('info', '<strong>Waiting for the drone.</strong> Keep the observation receiver running; it reconnects when the drone returns.'); setModePill('demo', 'Waiting for drone'); }
+    if (!state.connected) { setBanner('warn', '<strong>Backend offline</strong> · run <code>npm start</code>'); setModePill('demo', 'Offline'); }
+    else if (telemetryAge > STALE_MS) { setBanner('info', '<strong>Waiting for the drone</strong> · keep the receiver running'); setModePill('demo', 'Waiting for drone'); }
     else {
       const v = state.status?.vision;
-      const vision = !v?.fresh ? 'Fire detector is offline; video reception is active.' : v.error ? 'Fire detector reported an error; check its terminal.' : v.camera_state !== 'live' ? 'Fire detector is waiting for fresh camera frames.' : v.model_status === 'ready' ? 'RGB fire/smoke classification and QR fire testing are active.' : 'QR fire testing is active; RGB fire model is unavailable.';
-      setBanner('info', `<strong>Live · monitoring.</strong> ${vision}`); setModePill('live-badge', 'Live · monitoring');
+      const vision = !v?.fresh ? 'fire detector offline' : v.error ? 'fire detector error' : v.camera_state !== 'live' ? 'waiting for camera frames' : v.model_status === 'ready' ? 'fire detection on' : 'QR fire test only';
+      setBanner('info', `<strong>Live</strong> · ${vision}`); setModePill('live-badge', 'Live · monitoring');
     }
   }
 }
@@ -104,13 +104,14 @@ function initMap() {
   }
   state.tiles.osm.addTo(map);
   for (const name of ['spread', 'wind', 'fire', 'drone', 'demo']) state.layers[name] = L.layerGroup().addTo(map);
-  state.layers.path = L.polyline([], {color: '#2F8F8A', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
+  state.layers.path = L.polyline([], {color: '#3A372E', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
   state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
   map.on('dragstart', () => setFollow(false));
   state.layers.trail = L.layerGroup().addTo(state.layers.drone); // drone trail, coloured by what it was doing about the fire
   peopleInitMap();
   window.addEventListener('resize', () => map.invalidateSize());
+  if (window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe($('map-viewport'));
 }
 
 /** Switch OSM/satellite layers and keep the control and attribution in sync. */
@@ -157,8 +158,8 @@ function setFollow(on) {
 /** Explain missing position or unavailable map tiles over the map. */
 function renderMapChip() {
   let title = '', text = '';
-  if ($('map-viewport').classList.contains('tiles-offline')) { title = 'Map tiles offline.'; text = 'Showing a grid. Areas viewed once while online stay cached.'; }
-  else if (state.mode === 'live' && !state.telemetry) { title = 'No drone position yet.'; text = 'The map follows ANAFI-01 once telemetry arrives.'; }
+  if ($('map-viewport').classList.contains('tiles-offline')) { title = 'Map tiles offline'; text = ''; }
+  else if (state.mode === 'live' && !state.telemetry) { title = 'No drone position yet'; text = ''; }
   $('map-empty').hidden = !title; $('map-empty-title').textContent = title; $('map-empty-text').textContent = text;
 }
 
@@ -216,7 +217,7 @@ function renderSpread() {
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
   $('area-context').textContent = t < .5 ? 'now' : `projected at +${Math.round(t)} min`;
   const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
-  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), M.destPoint(o[0], o[1], sc.direction, reach)], {color: '#4E6A70', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
+  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), M.destPoint(o[0], o[1], sc.direction, reach)], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
 }
 
 /** Draw only the positioned live fire, with its detection context. */
@@ -344,7 +345,7 @@ function drawWaiting(title, sub) {
 /** Mark stale live video without replacing it with replay imagery. */
 function videoWatchdog() {
   if (state.mode === 'demo' || Date.now() - state.video.lastAt < 3000) return;
-  drawWaiting(state.video.lastAt ? 'Video paused — reconnecting' : 'Waiting for live video', 'The bridge relays the ANAFI camera through the backend');
+  drawWaiting(state.video.lastAt ? 'Reconnecting…' : 'No video', '');
   $('camera-label').innerHTML = '<i></i> NO VIDEO'; $('video-fps').textContent = '—';
   $('video-status').textContent = state.video.lastAt ? `Last frame ${Math.round((Date.now() - state.video.lastAt) / 1000)} s ago` : 'Waiting for the bridge';
 }
@@ -376,6 +377,7 @@ function renderIncident() {
 /** Present the current structured scene assessment, uncertainty and derived-wind context. */
 function renderAnalysis() {
   const meta = state.analysisMeta, a = state.analysis;
+  $('analysis-panel').classList.toggle('has-analysis', !!a);
   let offline = null;
   if (meta && !meta.configured) offline = 'GEMINI_API_KEY is not set on the backend.';
   else if (meta?.error && (!a || meta.error.at > a.created_at)) offline = meta.error.message;
@@ -387,7 +389,9 @@ function renderAnalysis() {
   $('analysis-summary').textContent = a.summary;
   $('analysis-title').textContent = 'Spread outlook';
   $('analysis-detail').textContent = a.spread_outlook || (a.unknowns || []).join(' ');
-  $('analysis-observations').innerHTML = (a.observations || []).slice(0, 4).map(o => `<li>${escapeHTML(o)}</li>`).join('');
+  const obs = (a.observations || []).slice(0, 3);
+  $('analysis-observations').innerHTML = obs.map(o => `<li>${escapeHTML(o)}</li>`).join('');
+  $('analysis-more').hidden = !obs.length && !a.limitations && !(a.unknowns || []).length;
   const w = a.wind_estimate;
   const windLine = w ? `Wind est. ${w.speed_mps != null ? `≈${w.speed_mps} m/s` : 'unknown speed'}${w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}° ${M.compass(w.direction_deg)}` : ''} — ${w.method} (${w.confidence})` : null;
   $('analysis-limit').textContent = [windLine, (a.unknowns || [])[0], a.limitations].filter(Boolean).join(' · ');
@@ -689,10 +693,10 @@ async function toggleDemo() {
   state.mode = 'demo'; state.playing = false; setPlayButton();
   state.basemapBeforeDemo = state.basemap; setBasemap('sat'); await loadDemoVideos();
   $('demo-toggle').innerHTML = 'Exit replay <svg><use href="#i-close"/></svg>';
-  setModePill('demo', 'Replay'); setBanner('demo', '<strong>Incident replay.</strong> Historical fires replayed through the full ANAFI-01 → Gemini pipeline. Live data resumes when you exit.');
-  $('map-pill').textContent = 'Replay'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
+  setModePill('demo', 'Replay'); setBanner('demo', '<strong>Replay</strong> · historical fires, not live data');
+  $('map-pill').textContent = 'Replay';
   $('incident-eyebrow').textContent = 'INCIDENT REPLAY'; $('incident-title').textContent = 'Incident replay'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
-  $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'watching the camera feed';
+  $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'replay — live detection paused';
   const sel = $('demo-fire'); sel.hidden = false;
   /** Format the recorded fire's year for the replay selector. */
   const yr = f => escapeHTML(f.startDate.slice(0, 4));
@@ -721,19 +725,17 @@ function selectDemo(id) {
     const fire = state.demo.fires.find(f => f.id === scenarioId);
     state.demo.selected = {id: 'people', scenario: scenarioId, name: fire?.name ?? 'UTSC · Highland Creek ravine', lat: null, lon: null, areaHa: 3, directionDeg: fire?.directionDeg ?? 225};
     state.scenario = {...M.BASE, wind: fire?.drivers?.windKmh ?? 24, direction: fire?.directionDeg ?? 225}; state.minute = 20;
-    setBanner('demo', `<strong>Demo mode · simulated person search${fire ? ` at ${escapeHTML(fire.name)}` : ''}.</strong> The fire is searched first: the drone circles it outside the standoff with the camera on its edge, then sweeps its path, soonest-reached ground first. A hot rock never confirms, and a radio outage delays some alerts. ${fire ? 'Recorded location, wind and weather; spread speed scaled to a drone-sized area. ' : ''}Nothing here is live.`);
+    setBanner('demo', `<strong>Simulated search</strong> · ${fire ? escapeHTML(fire.name) : 'UTSC'} · not live data`);
     $('incident-eyebrow').textContent = 'DEMO · SIMULATED SEARCH'; $('incident-title').textContent = fire ? `Person search · ${fire.name}` : 'Person search replay';
-    $('incident-sub').textContent = fire ? `${fire.region} · ignition point of the ${fire.startDate.slice(0, 4)} fire · first minutes, simulated` : 'Simulated wildfire person search at UTSC · seeded, the same every run';
-    $('map-subtitle').textContent = 'Fire searched first, then its path: rescue leads, observed ground, next looks';
+    $('incident-sub').textContent = fire ? `${fire.region} · ${fire.startDate.slice(0, 4)} ignition point` : 'UTSC · Highland Creek ravine';
     $('map-location').textContent = fire ? fire.name : 'UTSC · Highland Creek ravine';
     showDemoResults();
     startPeopleDemo();
     if (fire) state.map.setView([fire.lat, fire.lon], 16); else state.map.setView([state.site.latitude - .0012, state.site.longitude + .0018], 17);
     renderSpread(); return;
   }
-  setBanner('demo', '<strong>Demo mode.</strong> Recorded historical fires from <code>examples/</code> and a replay of the ANAFI demo flight pattern. Live data resumes when you exit.');
+  setBanner('demo', '<strong>Demo</strong> · recorded burns, not live data');
   $('incident-eyebrow').textContent = 'DEMO · HISTORICAL CASES'; $('incident-title').textContent = 'Demo replay';
-  $('map-subtitle').textContent = 'Recorded fires replayed from ignition, plus the drone flight pattern';
   if (id === 'flight') {
     state.demo.selected = 'flight'; state.demo.started = performance.now();
     const s = [state.site.latitude, state.site.longitude], side = 2 * Math.sin(Math.PI / 8);
@@ -744,7 +746,7 @@ function selectDemo(id) {
       const [e, n] = local.at(-1); local.push([e + side * Math.sin(i * Math.PI / 4), n + side * Math.cos(i * Math.PI / 4)]);
     }
     state.demo.flightPts = pts; state.demo.flightLocal = local;
-    L.polyline(pts, {color: '#2F8F8A', weight: 2, dashArray: '4 5'}).addTo(state.demo.layer);
+    L.polyline(pts, {color: '#3A372E', weight: 2, dashArray: '4 5'}).addTo(state.demo.layer);
     state.demo.marker = droneMarker(s).addTo(state.demo.layer);
     // The printed test marker 2 m ahead of take-off, where the -45° camera centres it at the 2 m hover.
     const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'pad', lat: s[0], lon: s[1], windDeg: 0, marker: {e: 0, n: 2, size: .18, src: 'test-marker.png'}});
@@ -766,7 +768,7 @@ function selectDemo(id) {
     state.demo.started = performance.now(); state.demo.lastTrail = null; state.demo.inView = false;
     state.demo.located = false; state.demo.autoAsked = false; state.demo.sight = null; state.demo.lastSpread = 0;
     const start = simPose(f, 0); state.demo.pos = [start.lat, start.lon];
-    state.demo.trail = L.polyline([], {color: '#4fd1c5', weight: 2.5, opacity: .85}).addTo(state.demo.layer);
+    state.demo.trail = L.polyline([], {color: '#3A372E', weight: 2.5, opacity: .85}).addTo(state.demo.layer);
     state.demo.marker = droneMarker(state.demo.pos).addTo(state.demo.layer);
     const cam = camera(); if (cam) EmberCamera.setScene(cam, {kind: 'fire', lat: f.lat, lon: f.lon, windDeg: f.directionDeg, windKmh: f.drivers.windKmh});
     setDemoVideo(f);
@@ -788,9 +790,9 @@ function exitDemo() {
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.map.closePopup();
   setDemoVideo(null); setBasemap(state.basemapBeforeDemo ?? 'osm'); setFollow(false);
   $('demo-toggle').innerHTML = 'Replay <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
-  $('map-pill').textContent = 'Live'; $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
+  $('map-pill').textContent = 'Live';
   $('map-location').textContent = state.site.name; state.detectedScenario = null; state.scenario = {...M.BASE}; state.minute = 0; state.episodeSeen = null; state.centredOnDrone = false;
-  $('telemetry-tag').textContent = 'LIVE'; $('telemetry-note').textContent = 'Waiting for live telemetry'; $('camera-clock').textContent = '—'; $('video-status').textContent = 'Waiting for the bridge'; state.video.lastAt = 0;
+  $('telemetry-tag').textContent = 'LIVE'; $('telemetry-note').textContent = 'No telemetry yet'; $('camera-clock').textContent = '—'; $('video-status').textContent = 'No video'; state.video.lastAt = 0;
   $('battery-value').innerHTML = '—<span class="small-unit">%</span>'; $('battery-context').textContent = 'no telemetry yet'; $('drone-source').textContent = 'Waiting for drone';
   Object.assign(state, state.live ?? {}); resetAnalysisPanel(); resetPlanPanel(); renderAnalysis(); if (state.plan) renderPlan();
   state.windAuto = state.windManual = state.windDerived = null;
@@ -866,7 +868,7 @@ async function renderHistory() {
   if (!pts.length) { $('history-svg').innerHTML = '<line x1="0" y1="66" x2="300" y2="66" stroke="#CFC8B8" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>'; $('history-source').textContent += ' · no flight data in the last hour'; return; }
   const max = Math.max(1, ...pts.map(p => p.max_altitude_m ?? p.avg_altitude_m));
   const xy = pts.map((p, i) => `${pts.length === 1 ? 150 : i / (pts.length - 1) * 300},${66 - p.avg_altitude_m / max * 60}`);
-  $('history-svg').innerHTML = `<polyline points="${xy.join(' ')}" fill="none" stroke="#2F8F8A" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  $('history-svg').innerHTML = `<polyline points="${xy.join(' ')}" fill="none" stroke="#E8562A" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
   $('history-source').textContent += ` · peak ${max.toFixed(1)} m`;
 }
 
@@ -885,7 +887,7 @@ let pending = {...M.BASE};
 function bindUi() {
   for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => b.closest('dialog').close());
   for (const d of document.querySelectorAll('dialog')) d.addEventListener('click', e => { const r = d.getBoundingClientRect(); if (e.target === d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) d.close(); });
-  $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'Started from the conditions reported with the detected fire. Adjust them to see how the spread changes.' : 'These conditions drive the projected spread on the map.'; openDialog('scenario-dialog'); };
+  $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'From the detected fire.' : ''; openDialog('scenario-dialog'); };
   for (const [id, key] of [['wind-input', 'wind'], ['direction-input', 'direction'], ['dry-input', 'dryness'], ['temp-input', 'temp'], ['rh-input', 'rh']]) $(id).oninput = () => { pending[key] = +$(id).value; scenarioControls(pending); };
   $('reset-scenario').onclick = () => { pending = {...(state.detectedScenario || M.BASE)}; scenarioControls(pending); };
   $('apply-scenario').onclick = () => { state.scenario = {...pending}; state.windManual = state.analysis?.created_at ?? 'manual'; state.windDerived = null; markPlanDirty(); renderSpread(); refreshFireTiming(); $('scenario-dialog').close(); };
@@ -898,6 +900,7 @@ function bindUi() {
   $('zoom-in').onclick = () => state.map.zoomIn(); $('zoom-out').onclick = () => state.map.zoomOut(); $('zoom-reset').onclick = () => { setFollow(false); fitToFire(); };
   $('zoom-drone').onclick = () => setFollow(!state.follow); $('layer-sat').onchange = () => setBasemap($('layer-sat').checked ? 'sat' : 'osm');
   $('dismiss-fire').onclick = async () => { const inc = state.incident; if (!inc) return; try { await api('/api/incident/dismiss', {method: 'POST', body: {episode_id: inc.episode_id}}); toast('Marked as a false alarm.'); await pollIncident(); } catch (e) { toast(e.message); } };
+  $('analysis-summary').onclick = () => $('analysis-summary').classList.toggle('expanded');
   $('analyze').onclick = async () => {
     $('analyze').disabled = true; $('analysis-source').textContent = 'ANALYZING…';
     try {
@@ -959,15 +962,15 @@ function animate(now) {
 
 /** Initialize the dashboard, bootstrap local access and enter explicit replay only when requested. */
 async function boot() {
-  savePanelDefaults(); initMap(); bindUi(); drawWaiting('Waiting for live video', 'The bridge relays the ANAFI camera through the backend'); renderSpread(); renderMapChip();
+  savePanelDefaults(); initMap(); bindUi(); drawWaiting('No video', ''); renderSpread(); renderMapChip();
   // Opened straight from disk there is no backend to talk to: say so instead of asking for a token.
   if (location.protocol === 'file:') {
-    setBanner('warn', '<strong>Opened from a file.</strong> Live data needs the backend: run <code>npm start</code> and open <code>http://127.0.0.1:8787</code>.');
+    setBanner('warn', '<strong>Opened from a file</strong> · run <code>npm start</code>, then open <code>127.0.0.1:8787</code>');
     setModePill('demo', 'Not connected'); $('connection-result').textContent = 'Not connected: this page was opened from a file, not from the BOSCO backend.';
     requestAnimationFrame(animate); return;
   }
   try { const s = await (await fetch('/api/session')).json(); state.token = s.token || ''; } catch {}
-  if (!state.token) { setBanner('warn', '<strong>Enter the dashboard token.</strong> Open Integrations — the token is only provided automatically on this computer.'); setModePill('demo', 'Not connected'); openDialog('integrations-dialog'); }
+  if (!state.token) { setBanner('warn', '<strong>Dashboard token needed</strong> · open Integrations'); setModePill('demo', 'Not connected'); openDialog('integrations-dialog'); }
   else await connect();
   if (new URLSearchParams(location.search).has('demo')) toggleDemo();
   requestAnimationFrame(animate);
