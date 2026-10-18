@@ -180,7 +180,22 @@ body[data-mode=alert] .map-location .dot{color:var(--ember)}
 .leaflet-control-scale{margin-bottom:6px!important;margin-right:12px!important}
 .leaflet-control-scale-line{font-family:var(--mono);font-size:10px;background:#FFFFFFCC;border-color:var(--ink-2)}
 .drone-icon-wrap,.fire-pin-wrap{background:none;border:0}
-.drone-icon{width:30px;height:30px;border-radius:50%;background:var(--white);border:2.5px solid var(--teal);display:grid;place-items:center;color:var(--teal);font-size:12px;box-shadow:0 0 0 9px #2F8F8A24;transition:transform .4s}
+.drone-icon{position:relative;width:120px;height:120px;pointer-events:none}
+.drone-icon .drone-svg{position:absolute;inset:0;width:120px;height:120px;overflow:visible;filter:drop-shadow(var(--shadow-x,4px) var(--shadow-y,6px) 2px #0006)}
+.drone-cone{fill:#4fd1c5;fill-opacity:.32;stroke:#fff;stroke-opacity:.9;stroke-width:1}
+.drone-svg .halo{fill:#fff;fill-opacity:.88;stroke:#267980;stroke-width:1.5}
+.drone-svg .arm{stroke:#2f3a3d;stroke-width:3.2;stroke-linecap:round}
+.drone-svg .arm.front{stroke:#e66c43}
+.drone-svg .body{fill:#3b4649;stroke:#1d2527;stroke-width:1}
+.drone-svg .gimbal{fill:#111;stroke:#7fe3d8;stroke-width:1.2}
+.drone-svg .disc{fill:#c9d4d633;stroke:#e8f0f1aa;stroke-width:.6}
+.drone-svg .blade{stroke:#1d2527;stroke-width:1.6;stroke-linecap:round;transform-box:fill-box;transform-origin:center;animation:rotor .11s linear infinite}
+.drone-svg .blade.ccw{animation-direction:reverse}
+.drone-svg .led{fill:#59f28a}.drone-svg .led.rear{fill:#ff4d4d}
+.drone-alt{position:absolute;left:50%;top:88px;transform:translateX(-50%);background:#14202cdd;color:#e9f7f5;font:600 9px/1 Consolas,monospace;padding:2px 5px;border-radius:3px;white-space:nowrap}
+.drone-icon.landed .blade{animation:none}.drone-icon.landed .drone-cone{display:none}
+@keyframes rotor{to{transform:rotate(360deg)}}
+.map-zoom #zoom-drone.active{background:var(--surface);color:var(--teal)}
 .fire-pin{width:34px;height:34px;border-radius:50%;background:var(--white);border:2px solid var(--ember);display:grid;place-items:center;font-size:17px;box-shadow:0 0 0 8px #E8562A33;animation:fire-pulse 1.6s ease-in-out infinite}
 @keyframes fire-pulse{50%{box-shadow:0 0 0 15px #E8562A14}}
 
@@ -423,7 +438,7 @@ body.panel-fullscreen{overflow:hidden}
 }
 @media(prefers-reduced-motion:reduce){
  *{scroll-behavior:auto!important;transition:none!important}
- .fire-pin,.camera-overlay i.hot,.incident-dot.alert,.pill.alert-badge .dot,.panel.is-fullscreen,.fs-hint{animation:none}
+ .fire-pin,.drone-svg .blade,.camera-overlay i.hot,.incident-dot.alert,.pill.alert-badge .dot,.panel.is-fullscreen,.fs-hint{animation:none}
  .bx-intro{display:none}
 }
 @media print{

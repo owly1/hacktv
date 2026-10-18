@@ -36,6 +36,7 @@ const MAX_JSON_BODY = 8 * 1024 * 1024; // fits a 5 MB base64 snapshot envelope
 const GEMINI_MIN_INTERVAL_MS = 30_000;  // one started analysis per 30 s
 const PLAN_MIN_INTERVAL_MS = 10_000;
 const GEMINI_UPSTREAM_TIMEOUT_MS = 20_000;
+const GEMINI_PLAN_TIMEOUT_MS = 45_000;    // plans are long structured outputs
 const INCIDENT_ACTIVE_MS = 30 * 60_000;  // a fire stays on the map 30 min after its last sighting
 const VIDEO_BOUNDARY = 'emberframe';
 
@@ -50,8 +51,11 @@ export const DEFAULT_SITE = Object.freeze({
 // once while online keeps working on the drone's internet-less Wi-Fi. Only
 // tiles a viewer actually requests are fetched (no bulk prefetching), per
 // the OpenStreetMap tile usage policy.
+// sat (Esri World Imagery) backs Demo mode's satellite map and the simulated
+// drone camera; note its {y}/{x} order.
 const TILE_SOURCES = {
   osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  sat: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 };
 
 const MIME_TYPES = {
@@ -65,6 +69,8 @@ const MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.md': 'text/markdown; charset=utf-8',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
 };
 
 // ---------------------------------------------------------------- storage
@@ -556,6 +562,16 @@ export function validatePlanContent(parsed) {
   };
 }
 
+// Incident replays run the same analysis as a live detection: the dashboard
+// sends the incident record, the drone's current telemetry and camera frame.
+export const DEMO_CONTEXT = [
+  'This fire has just been detected by ANAFI-01. The incident record gives its location, the observed conditions and the drone\'s current telemetry and detection;',
+  'the attached image, when present, is the drone\'s current camera frame with its on-screen display.',
+  'Write the assessment for the incident commander exactly as for any live detection.',
+].join(' ');
+
+const plainObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? JSON.parse(JSON.stringify(v)) : null);
+
 // Default transport: real Gemini generateContent call. Takes the full request
 // body (contents + generationConfig + tools/toolConfig) and resolves to the
 // parsed API response. In tests an injected fake transport replaces this — a
@@ -574,11 +590,11 @@ function upstreamMessage(status, detail) {
 }
 
 export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500 }) {
-  async function callModel(name, requestBody) {
+  async function callModel(name, requestBody, timeoutMs) {
     const url =
       `https://generativelanguage.googleapis.com/v1beta/models/${name}:generateContent`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GEMINI_UPSTREAM_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetchImpl(url, {
         method: 'POST',
@@ -599,19 +615,19 @@ export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchI
     } catch (err) {
       if (err instanceof ApiError) throw err;
       if (err.name === 'AbortError') {
-        throw new ApiError(502, `Gemini upstream exceeded ${GEMINI_UPSTREAM_TIMEOUT_MS / 1000}s timeout`);
+        throw new ApiError(502, `Gemini upstream exceeded ${timeoutMs / 1000}s timeout`);
       }
       throw new ApiError(502, `Gemini request failed (no internet connection?): ${err.message}`);
     } finally {
       clearTimeout(timer);
     }
   }
-  return async function geminiTransport(requestBody) {
+  return async function geminiTransport(requestBody, { timeoutMs = GEMINI_UPSTREAM_TIMEOUT_MS } = {}) {
     let lastError;
     for (const name of [model, ...fallbackModels]) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          return await callModel(name, requestBody);
+          return await callModel(name, requestBody, timeoutMs);
         } catch (err) {
           lastError = err;
           if (!err.retryable) throw err;
@@ -732,6 +748,7 @@ export function createApp({
     videoClients: new Set(),
     lastGeminiStart: -Infinity,
     lastPlanStart: -Infinity,
+    lastDemoStart: -Infinity,
     gemini: { lastError: null, lastErrorAt: null, lastOkAt: null, pending: false },
     flightEvents: [],
     autoTimer: null,
@@ -1284,7 +1301,7 @@ export function createApp({
         const apiResponse = await geminiTransport({
           contents: [{ role: 'user', parts }],
           generationConfig: { responseMimeType: 'application/json', responseSchema: PLAN_SCHEMA },
-        });
+        }, { timeoutMs: GEMINI_PLAN_TIMEOUT_MS });
         content = validatePlanContent(parseGeminiJson(apiResponse));
         recordGeminiResult(null);
       } catch (err) {
@@ -1321,6 +1338,64 @@ export function createApp({
       return;
     }
 
+    // Demo cases: live Gemini calls on a recorded historical fire whose drone
+    // data is simulated. The case comes from the dashboard's hardcoded set;
+    // results are returned, never stored, so they cannot mix with real flights.
+    if (req.method === 'POST' && (pathname === '/api/demo/analyze' || pathname === '/api/demo/plan')) {
+      requireAuth(req, 'dashboard');
+      const body = await readJson(req);
+      const demoCase = plainObject(body.case);
+      if (!demoCase || typeof demoCase.name !== 'string') throw new ApiError(400, 'case is required');
+      if (!geminiTransport) throw new ApiError(503, 'Gemini is not configured on this backend');
+      const nowMs = now();
+      if (nowMs - state.lastDemoStart < PLAN_MIN_INTERVAL_MS) {
+        throw new ApiError(429, 'Gemini requests are limited to one per 10 seconds');
+      }
+      state.lastDemoStart = nowMs;
+      const isPlan = pathname === '/api/demo/plan';
+      const scenario = plainObject(body.scenario);
+      const parts = [
+        { text: isPlan ? PLAN_INSTRUCTIONS : ANALYSIS_INSTRUCTIONS },
+        { text: DEMO_CONTEXT },
+        { text: `Incident record: ${JSON.stringify(demoCase)}` },
+        { text: `Scenario conditions: ${JSON.stringify(scenario)}` },
+      ];
+      // The drone camera frame, as a base64 JPEG (≤ 2 MB).
+      const image = typeof body.image === 'string' && /^[A-Za-z0-9+/=]+$/.test(body.image) && body.image.length <= 2_800_000 ? body.image : null;
+      if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
+      if (isPlan) {
+        const objective = typeof body.objective === 'string' ? body.objective.slice(0, 80) : 'initial-attack';
+        const notes = typeof body.notes === 'string' ? body.notes.slice(0, 1500) : '';
+        parts.push(
+          { text: `Plan objective: ${objective}.${notes ? ` Incident commander notes: ${notes}` : ''}` },
+          { text: `Projected spread: ${JSON.stringify(plainObject(body.projection))}.` },
+          { text: `Latest Gemini scene analysis: ${JSON.stringify(plainObject(body.analysis))}.` },
+        );
+      }
+      let content;
+      try {
+        const apiResponse = await geminiTransport({
+          contents: [{ role: 'user', parts }],
+          generationConfig: { responseMimeType: 'application/json', responseSchema: isPlan ? PLAN_SCHEMA : GEMINI_RESPONSE_SCHEMA },
+        }, { timeoutMs: isPlan ? GEMINI_PLAN_TIMEOUT_MS : GEMINI_UPSTREAM_TIMEOUT_MS });
+        content = isPlan ? validatePlanContent(parseGeminiJson(apiResponse)) : validateAnalysisContent(parseGeminiJson(apiResponse));
+        recordGeminiResult(null);
+      } catch (err) {
+        recordGeminiResult(err);
+        throw err;
+      }
+      sendJson(res, 200, {
+        id: crypto.randomUUID(),
+        created_at: new Date(nowMs).toISOString(),
+        model: geminiModel,
+        case_id: typeof demoCase.id === 'string' ? demoCase.id : null,
+        provenance: 'gemini-demo',
+        ...(isPlan ? { objective: body.objective ?? 'initial-attack', scenario, projection: plainObject(body.projection) } : { trigger: body.trigger === 'auto-detection' ? 'auto-detection' : 'manual', evidence_kind: image ? 'rgb-snapshot' : 'telemetry' }),
+        ...content,
+      });
+      return;
+    }
+
     throw new ApiError(404, 'route not found');
   }
 
@@ -1352,7 +1427,7 @@ export function createApp({
         await handleApi(req, res, url);
         return;
       }
-      const tile = /^\/tiles\/(osm)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(pathname);
+      const tile = /^\/tiles\/(osm|sat)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(pathname);
       if (req.method === 'GET' && tile) {
         await handleTile(res, tile[1], tile[2], tile[3], tile[4]);
         return;
