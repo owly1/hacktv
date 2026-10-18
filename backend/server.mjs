@@ -20,6 +20,7 @@ import {validateCameraSighting, recordCameraSighting} from './person-sightings.m
 import SITE_LANDMARKS from './site-landmarks.json' with { type: 'json' };
 import { PersonSearchSim, scenarioFromExample } from './people-sim.mjs';
 import { AutonomousResponse } from './autonomy.mjs';
+import {DiveRuntime} from './dive-runtime.mjs';
 import {
   ApiError,
   MAX_FRAME_BYTES,
@@ -1018,6 +1019,7 @@ export function createApp({
   tileFetch = fetch,
   autoAnalyze = false,
   personSearch = {},
+  divePersonDetector = null,
 }) {
   if (!ingestToken || !dashboardToken || ingestToken === dashboardToken) {
     throw new Error('INGEST_TOKEN and DASHBOARD_TOKEN must be non-empty and different');
@@ -1041,6 +1043,16 @@ export function createApp({
     demoSims: new Map(), // scenario id -> PersonSearchSim
   };
   const autonomy = new AutonomousResponse(now);
+  const dive = new DiveRuntime({now, detector:divePersonDetector});
+  /** Keep dive authorization tied to the original QR flight and actual live evidence. */
+  async function diveContext() {
+    const telemetry=await storage.latestTelemetry();
+    const age=telemetry?now()-Date.parse(telemetry.observed_at):Infinity;
+    const videoAge=state.latestFrame?now()-state.latestFrame.capturedAtMs:Infinity;
+    const a=autonomy.snapshot();
+    return {telemetry_fresh:age>=0&&age<3000,video_fresh:videoAge>=0&&videoAge<3000,
+      flight_authorized:!!a.enabled&&a.mode==='circle'&&!!a.mission,person_detection:dive.health()};
+  }
   const peopleFile = dataDir ? path.join(dataDir, 'people', 'state.json') : null;
   let people = new PersonSearch(personSearch);
   // Leads survive a backend restart: they are written to data/people/state.json.
@@ -1420,6 +1432,7 @@ export function createApp({
   function acceptCameraFrame(jpeg, capturedAtMs, detections = '[]') {
     const frame = { jpeg, capturedAtMs, detections };
     state.latestFrame = frame;
+    void dive.frame(jpeg,capturedAtMs);
     state.latestSnapshot = { jpeg, capturedAtMs };
     state.frameTimes.push(now());
     broadcastFrame(frame);
@@ -1465,6 +1478,30 @@ export function createApp({
   async function handleApi(req, res, url) {
     const pathname = url.pathname;
 
+    if (req.method==='GET' && pathname==='/api/dive') {
+      requireAuth(req,'dashboard'); sendJson(res,200,{workflow:'qr-circle-dive-v1',...dive.control.snapshot(await diveContext())});return;
+    }
+    if (req.method==='POST' && pathname==='/api/dive/land') {
+      requireAuth(req,'dashboard'); autonomy.control({action:'land'});sendJson(res,200,dive.control.land());return;
+    }
+    if (req.method==='POST' && pathname==='/api/ingest/dive/status') {
+      requireAuth(req,'ingest'); const body=await readJson(req);dive.control.status(body);
+      sendJson(res,200,dive.control.control(body.receiver_id,body.command_id,await diveContext()));return;
+    }
+    if (req.method==='POST' && pathname==='/api/commands') {
+      requireAuth(req,'dashboard');sendJson(res,200,dive.control.enqueue(await readJson(req),await diveContext()));return;
+    }
+    if (req.method==='GET' && pathname==='/api/commands') {
+      requireAuth(req,'dashboard');sendJson(res,200,{commands:dive.control.snapshot(await diveContext()).commands});return;
+    }
+    if (req.method==='GET' && pathname==='/api/commands/next') {
+      requireAuth(req,'ingest');sendJson(res,200,{command:dive.control.next(url.searchParams.get('receiver_id'))});return;
+    }
+    const diveAction=/^\/api\/commands\/([0-9a-f-]{36})\/(heartbeat|ack)$/.exec(pathname);
+    if(req.method==='POST'&&diveAction){
+      const [,id,action]=diveAction;requireAuth(req,action==='heartbeat'?'dashboard':'ingest');
+      const body=await readJson(req);sendJson(res,200,action==='heartbeat'?dive.control.heartbeat(id,body.session_id):dive.control.ack(id,body));return;
+    }
     if (pathname === '/api/autonomy') {
       requireAuth(req, 'dashboard');
       if (req.method === 'GET') { sendJson(res,200,autonomy.snapshot()); return; }
@@ -2186,6 +2223,7 @@ async function main() {
   };
 
   const handler = createApp({
+    divePersonDetector: process.env.BOSCO_DIVE_PERSON_CV==='1'?'worker':null,
     personSearch,
     ingestToken,
     dashboardToken,

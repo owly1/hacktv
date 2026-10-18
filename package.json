@@ -10,12 +10,18 @@
     "live-demo": "node scripts/demo.mjs --live",
     "vision": "node --env-file=.env scripts/vision.mjs --detect-smoke",
     "db:init": "node --env-file=.env backend/db-init.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "qr-dive": "node scripts/qr-dive-demo.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "optionalDependencies": {
     "pg": "^8.13.0"
+  },
+  "dependencies": {
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
+    "jpeg-js": "^0.4.4"
   }
 }

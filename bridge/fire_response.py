@@ -89,7 +89,9 @@ class FireResponse(QRAutoPreset):
         # Reception-only construction defers recording, but also omits the
         # movement/landing driver. Install it before any session can be armed.
         self.driver=OlympeOrbitDriver(self)
-        self.flight_seconds=60 if getattr(args,'short_test',False) else 300
+        if getattr(args,'until_stop',False) and getattr(args,'short_test',False):
+            raise ValueError('Until-stop requires normal battery limits')
+        self.flight_seconds=None if getattr(args,'until_stop',False) else 60 if getattr(args,'short_test',False) else 300
         if getattr(args,'lap_seconds',None)==15:
             self.limits=replace(self.limits,speed_mps=.6,lap_seconds=15.)
         self.receiver_id=secrets.token_hex(16)
@@ -693,6 +695,7 @@ class FireResponse(QRAutoPreset):
                     'receiver_id':self.receiver_id,'ready':not reason and not self.takeoff_used,
                     'aircraft_connected':bool(self.connected and self._aircraft_link()),
                     'short_test':bool(getattr(self.args,'short_test',False)),
+                    'until_stop':bool(getattr(self.args,'until_stop',False)),
                     'qr_scale_mode':'adaptive' if self.adaptive_qr and not self._is_contour() else 'measured',
                     'camera_search_supported':self._search_bounds() is not None,
                     'contour_supported':True,'airborne_search_supported':True,'contour_profile':OUTDOOR_PROFILE,
@@ -1035,7 +1038,9 @@ def main():
     parser=argument_parser(); parser.description=__doc__
     parser.add_argument('--camera-calibration',default='camera.local.json')
     parser.add_argument('--short-test',action='store_true',help='60-second flight cap, minimum 30%% to start, landing below 25%%')
+    parser.add_argument('--until-stop',action='store_true',help='Circle until LAND/X or a flight guard; normal battery limits')
     args=parser.parse_args()
+    if args.until_stop and args.short_test:parser.error('--until-stop requires normal battery limits')
     if args.controller!='direct' or args.demo_flight or args.gimbal_pitch is not None or not args.backend:
         parser.error('Use direct control and a backend; no other flight/gimbal mode')
     token=os.environ.get('INGEST_TOKEN')

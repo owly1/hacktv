@@ -219,14 +219,15 @@ class GroundFirePose:
 def orbit_fire(driver, limits, sample, abort, report, episode, *, started,
                clock=time.monotonic, sleep=time.sleep,min_battery_pct=40,flight_seconds=300,
                last_seen=None,remember=None):
-    """Acquire the target; continuously align and orbit on capable hardware."""
-    if min_battery_pct not in (25,40) or flight_seconds not in (60,300):
-        raise ValueError('Use the normal or bounded short-test flight limits')
+    """Orbit with operator/vehicle guards; None removes only the mission timer."""
+    if min_battery_pct not in (25,40) or flight_seconds not in (None,60,300):
+        raise ValueError('Use normal, bounded short-test, or operator-stop flight limits')
     if min_battery_pct==25 and flight_seconds!=60:raise ValueError('Reduced battery threshold requires the short-test time limit')
     continuous = bool(limits.lap_seconds and getattr(driver,'supports_continuous_orbit',False) is True)
     def check():
         if abort.is_set(): raise InterruptedError('Operator requested landing')
-        if clock()-started>=flight_seconds: raise InterruptedError(f'{flight_seconds}-second response limit reached')
+        if flight_seconds is not None and clock()-started>=flight_seconds:
+            raise InterruptedError(f'{flight_seconds}-second response limit reached')
         if last_seen is not None and not continuous:
             seen=last_seen()
             if seen is None or not math.isfinite(seen) or not 0<=clock()-seen<15:

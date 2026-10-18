@@ -1,5 +1,32 @@
 # Bridge → backend contract
 
+## Opt-in QR circle/person-search control
+
+The experimental `qr_dive_response.py` receiver shares one aircraft/SDK owner
+with the QR circle. It requires the original enabled circular mission plus
+a separate five-second browser-owned search lease; neither API takes off on
+startup. `npm run qr-dive` enables real backend person inference in a separate
+worker (`BOSCO_DIVE_PERSON_CV=1`); ordinary startup leaves it disabled.
+
+- Dashboard `GET /api/dive`: workflow `qr-circle-dive-v1`, measured receiver
+  phase/readiness, detector health and command outcomes/camera observations.
+- Dashboard `POST /api/commands`: `type: dive-surveillance`, unique `request_id`,
+  `target_altitude_m` (0.3–2 m above takeoff), `sweep_deg` (45–360). The returned
+  command `id` and `session_id` must be confirmed/renewed through dashboard
+  `POST /api/commands/:id/heartbeat` before delivery is permitted.
+- Ingest `POST /api/ingest/dive/status`: receiver identity, readiness/reason,
+  phase and active `command_id`; returns search permission, detector capture
+  evidence and any urgent `stop_id`. Ingest `GET /api/commands/next?receiver_id=...`
+  delivers only to that receiver. Ingest `POST /api/commands/:id/ack` records
+  `in_progress`, `done`, `aborted` or `failed` with measured outcome notes.
+- Dashboard `POST /api/dive/land` cancels the search and ends the original
+  flight session. A request is not proof of touchdown. Search phases add
+  `dive`, `surveil`, `hovering` to flight-event reporting.
+
+Readiness requires current video/telemetry, receiver contact and completed
+real person inference. Observations can repeat a person; no unique identity,
+geographic fix or hardware validation is implied. See [the setup guide](QR_CIRCLE_DIVE.md).
+
 Contract: `emberwatch.v1`. Ingest requests use `Authorization: Bearer
 <INGEST_TOKEN>`; reads/actions use the distinct dashboard token. The local-only
 `GET /api/session` bootstraps browser access. All timestamps include an ISO

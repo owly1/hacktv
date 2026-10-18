@@ -51,6 +51,7 @@ async function api(path, {method = 'GET', body, timeout = 12000} = {}) {
 const getJson = async (path, opts) => (await api(path, opts)).json();
 
 let autonomousSession = null;
+let diveDashboard = null;
 let autonomyRevision = 0, autonomyActionPending = false;
 let autonomyConnectionError = false;
 /** Treat aircraft emergency telemetry as authoritative over reported mission completion. */
@@ -140,7 +141,7 @@ function renderAutonomy() {
   $('autonomy-enable').textContent=enabled&&!contour?'BOSCO active':'Start BOSCO';
   $('autonomy-contour-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported||!a?.receiver?.airborne_search_supported||!a?.receiver?.contour_supported||!a?.receiver?.contour_ready||a.receiver.contour_profile!==OUTDOOR_CONTOUR_PROFILE;
   $('autonomy-contour-enable').textContent=enabled&&contour?'Contour flight active':'Take off & search · 1 m';
-  $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.lap_seconds===15?'15 s target per lap · ':''}${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
+  $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.lap_seconds===15?'15 s target per lap · ':''}${a?.flight_seconds===null?'until X / LAND or a flight guard':a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
   if(contour&&enabled) $('autonomy-limits').textContent=`1 m above takeoff · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'flies until LAND; safety stops still apply'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open; control, GPS and flight protections remain active. Wind gaps use the labeled fallback and do not end the flight.`;
   $('contour-readiness').textContent=state.mode!=='live'?'Contour flight is available in Live. The tiny-fire preview works in either mode.':
     enabled&&contour?'1 m QR search → +5-minute GPS contour around a 50 m initial fire. Received wind updates the forecast; wind gaps retain the last measured value or the labeled scenario assumption.':
@@ -1240,6 +1241,7 @@ async function toggleDemo() {
   if (state.mode === 'demo') { exitDemo(); return; }
   state.demo.fires = window.EMBER_DEMO?.cases ?? [];
   if (!state.demo.fires.length) { toast('Incident replays failed to load (demo-cases.js).'); return; }
+  if (diveDashboard && (diveDashboard.owner || autonomousSession)) await diveDashboard.land();
   state.mode = 'demo'; state.playing = false; setPlayButton();
   $('detection-details').hidden = true;
   state.basemapBeforeDemo = state.basemap; setBasemap('sat'); await loadDemoVideos();
@@ -1528,7 +1530,9 @@ async function connect() {
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
   $('autonomy-enable').onclick=()=>setAutonomy('enable',{camera_search:true});
   $('autonomy-contour-enable').onclick=()=>setAutonomy('enable',{camera_search:true,mode:'contour'});
-  $('autonomy-land').onclick=()=>setAutonomy('land');
+  diveDashboard=new BoscoDive({getJson,mode:()=>state.mode,toast});diveDashboard.bind();
+  every(500,'dive',()=>diveDashboard.refresh());
+  $('autonomy-land').onclick=()=>{diveDashboard.owner=null;return setAutonomy('land');};
   $('camera-level').onclick=()=>setAutonomy('camera',{pitch_deg:0});
   $('camera-shallow').onclick=()=>setAutonomy('camera',{pitch_deg:-30});
   $('camera-down').onclick=()=>setAutonomy('camera',{pitch_deg:-45});

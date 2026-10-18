@@ -6,6 +6,9 @@ Person search adds rescue leads, location uncertainty, and coverage views.
 
 ## Start here
 
+- Experimental QR circle → D person search → return/circle: [setup and controls](docs/QR_CIRCLE_DIVE.md).
+  Uses one separately enabled aircraft receiver; see the guide before running it.
+
 - New teammate: [codebase tour](explain_max.md).
 - AI assistant: [shared context](TEAM_AI_CONTEXT.md).
 - Architecture: [system flow](docs/SYSTEM_FLOW.md).

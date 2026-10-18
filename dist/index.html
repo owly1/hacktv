@@ -17,7 +17,8 @@
   <link rel="stylesheet" href="bosco/dashboard.css">
   <script defer src="bosco/mark.js"></script>
   <script defer src="bosco/transition.js"></script>
-  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="contour.js"></script><script defer src="site-fuels.js"></script><script defer src="fleet.js"></script><script defer src="demo-cases.js"></script><script defer src="sim-camera.js"></script><script defer src="demo-scout.js"></script><script defer src="people.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script><script defer src="bosco.js"></script><script defer src="bosco/dashboard.js"></script>
+  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="contour.js"></script><script defer src="site-fuels.js"></script><script defer src="fleet.js"></script><script defer src="demo-cases.js"></script><script defer src="sim-camera.js"></script><script defer src="demo-scout.js"></script><script defer src="people.js"></script><script defer src="dive.js"></script>
+<script defer src="app.js"></script><script defer src="fullscreen.js"></script><script defer src="bosco.js"></script><script defer src="bosco/dashboard.js"></script>
 </head>
 <body class="connected-dashboard" data-mode="idle">
 <svg class="sprite" aria-hidden="true"><defs>
@@ -85,8 +86,22 @@
     <p class="microcopy" id="autonomy-limits">1 m radius · about 1 m above launch. Keep this live page open. LAND, disconnect or power-off ends the session.</p>
     <p class="microcopy" id="autonomy-calibration">Waiting for the receiver's measured camera configuration.</p>
     <div class="camera-preview"><span>Camera only · no takeoff</span><button class="button compact" id="camera-level" disabled>Level</button><button class="button compact" id="camera-shallow" disabled>Down 30°</button><button class="button compact" id="camera-down" disabled>Down 45°</button><button class="button compact" id="camera-steep" disabled>Down 70°</button><span id="camera-pitch-status"></span></div></div>
-   <div class="autonomy-actions"><button class="button primary" id="autonomy-enable" disabled title="Start the existing circular fire response">Start BOSCO</button><button class="button contour-start" id="autonomy-contour-enable" aria-describedby="contour-readiness" disabled title="Take off, scan Marker 2 at 1 m, then follow the 50 m outdoor forecast using GPS and the labeled wind source">Take off &amp; search · 1 m</button><button class="button autonomy-land" id="autonomy-land">LAND &amp; stop BOSCO</button><button class="button compact" id="contour-preview-open">Preview tiny contour · no flight</button><a class="button compact" href="/tiny-marker.pdf" target="_blank" rel="noopener">Marker 2 PDF ↗</a></div>
+   <div class="autonomy-actions"><button class="button primary" id="autonomy-enable" disabled title="Start the existing circular fire response">Start BOSCO</button><button class="button contour-start" id="autonomy-contour-enable" aria-describedby="contour-readiness" disabled title="Take off, scan Marker 2 at 1 m, then follow the 50 m outdoor forecast using GPS and the labeled wind source">Take off &amp; search · 1 m</button><button class="button autonomy-land" id="autonomy-land">X · LAND &amp; stop BOSCO</button><button class="button compact" id="contour-preview-open">Preview tiny contour · no flight</button><a class="button compact" href="/tiny-marker.pdf" target="_blank" rel="noopener">Marker 2 PDF ↗</a></div>
   </section>
+  <section class="dive-controls" aria-labelledby="dive-heading">
+<h3 id="dive-heading">Person-search descent</h3>
+<small>Experimental flight runtime · combined maneuver awaits hardware validation.</small>
+<p>QR starts takeoff and circling. D pauses the circle, descends and scans 360° for people, then returns to the starting height and reacquires the QR to resume circling.</p>
+<label for="dive-height">Search height above takeoff (m)</label>
+<input id="dive-height" type="number" min="0.3" max="2" step="0.1" value="0.4">
+<small>Height is relative to takeoff, not measured ground clearance.</small>
+<div class="dive-actions"><button class="button primary" id="dive-start" disabled>D · Dive &amp; search</button><button class="button" id="dive-land">X · LAND / STOP</button></div>
+<p id="dive-status" role="status" aria-live="polite">Checking receiver…</p>
+<p id="dive-detector">Person detection: waiting</p>
+<p id="dive-progress" role="status">No search requested</p>
+<p id="dive-people">Camera observations will appear here.</p>
+<pre id="dive-sightings" aria-label="Recent person sightings"></pre>
+</section>
   <section class="pi-architecture" aria-label="Raspberry Pi architecture and demo scope">
    <div class="pi-route"><span><svg aria-hidden="true"><use href="#i-drone"/></svg><b>ANAFI-01</b><small id="pi-drone-status">One demo aircraft</small></span><i aria-hidden="true">↔</i><span class="pi-hub"><b>Raspberry Pi server</b><small>Aircraft link · shared data hub</small></span><i aria-hidden="true">↔</i><span><b>BOSCO workspace</b><small>Camera · telemetry · fire model</small></span></div>
    <p><strong>Designed to grow into a fleet.</strong> This demo runs one live drone. More aircraft and live fleet coordination are future extensions; the four-drone Replay is a separate demonstration.</p>

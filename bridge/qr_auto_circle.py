@@ -201,6 +201,12 @@ class QRAutoCircle(HoverCheckout):
                         continue
                     if not pending.success():
                         raise RuntimeError('camera rejected tracking target')
+                pause = getattr(self,'camera_pause',None)
+                if pause is not None and pause.is_set():
+                    self.camera_paused.set()
+                    self.camera_stop.wait(.02)
+                    continue
+                if hasattr(self,'camera_paused'):self.camera_paused.clear()
                 pitch = self._camera_pitch()
                 if pitch is None:
                     self.camera_stop.wait(getattr(self,'camera_period',.2))
