@@ -380,20 +380,26 @@ test('BOSCO sends search and flight authorization together and disables its star
   assert.equal(element('autonomy-state').textContent,'SEARCHING');
 });
 
-test('contour has its own GPS readiness gate and explicit mode without changing the circle action',async()=>{
+test('contour requires airborne-search capability and accurate GPS without changing the circle action',async()=>{
   const {context,run,element}=await dashboard(); const calls=[];
   context.fetch=async(url,options)=>{
     const body=JSON.parse(options.body); calls.push(body);
     return {ok:true,json:async()=>({enabled:true,mode:body.mode??'circle',session_id:'contour-session',
-      receiver:{ready:true,camera_ready:true,camera_search_supported:true,contour_supported:true,contour_ready:true,phase:'contour'},mission:{id:'contour-1'}})};
+      receiver:{ready:true,camera_ready:true,camera_search_supported:true,airborne_search_supported:true,contour_supported:true,contour_ready:true,phase:'contour'},mission:{id:'contour-1'}})};
   };
   run(`state.mode='live';state.autonomy={enabled:false,receiver:{ready:true,camera_ready:true,camera_search_supported:true,
-    contour_supported:true,contour_ready:false,contour_reason:'GPS accuracy is insufficient'}};renderAutonomy()`);
+    airborne_search_supported:true,contour_supported:true,contour_ready:false,contour_reason:'GPS accuracy is insufficient'}};renderAutonomy()`);
   assert.equal(element('autonomy-enable').disabled,false,'existing circle remains available');
   assert.equal(element('autonomy-contour-enable').disabled,true);
   assert.match(element('contour-readiness').textContent,/GPS accuracy is insufficient/);
   run('state.autonomy.receiver.contour_ready=true;renderAutonomy()');
   assert.equal(element('autonomy-contour-enable').disabled,false);
+  assert.equal(element('autonomy-contour-enable').textContent,'Take off & search · 1 m');
+  run('state.autonomy.receiver.airborne_search_supported=false;renderAutonomy()');
+  assert.equal(element('autonomy-contour-enable').disabled,true,'an older contour receiver cannot start airborne search');
+  assert.match(element('contour-readiness').textContent,/updated Pi receiver/);
+  assert.equal(element('autonomy-enable').disabled,false,'an older receiver still supports the original circle');
+  run('state.autonomy.receiver.airborne_search_supported=true;renderAutonomy()');
   await run("setAutonomy('enable',{camera_search:true,mode:'contour'})");
   assert.deepEqual(calls[0],{action:'enable',camera_search:true,mode:'contour'});
   assert.equal(element('autonomy-contour-enable').disabled,true);
@@ -402,6 +408,69 @@ test('contour has its own GPS readiness gate and explicit mode without changing 
   assert.match(element('autonomy-detail').textContent,/fixed initial fire area/);
   run("state.mode='demo';state.autonomy.enabled=false;renderAutonomy()");
   assert.equal(element('autonomy-contour-enable').disabled,true);
+});
+
+test('airborne contour reports the one real aircraft from search through encoded-weather reading and GPS flight',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,mode:'contour',flight_seconds:null,mission:null,
+    search:{id:'search-1',receiver_id:'pi-1',claimed_at:1000000,height_m:1},
+    receiver:{phase:'waiting',search_state:'off'}};renderAutonomy()`);
+  assert.equal(element('autonomy-state').textContent,'STARTING','a claim alone does not prove airborne motion');
+  assert.match(element('autonomy-detail').textContent,/checking takeoff readiness/);
+  run("state.autonomy.receiver.phase='takeoff';renderAutonomy()");
+  assert.equal(element('autonomy-state').textContent,'TAKING OFF');
+  assert.match(element('autonomy-detail').textContent,/1 m above takeoff/);
+  assert.equal(element('contour-progress').hidden,false);
+  assert.match(element('autonomy-limits').textContent,/until LAND; safety stops/);
+  assert.doesNotMatch(element('autonomy-limits').textContent,/5 minutes|300|60 seconds/);
+  run("state.autonomy.receiver.phase='search';state.autonomy.receiver.search_state='airborne-search';renderAutonomy()");
+  assert.equal(element('autonomy-state').textContent,'SEARCHING');
+  assert.equal(element('contour-mission-status').textContent,'1 drone scanning for fires');
+  assert.equal(element('pi-drone-status').textContent,'1 drone scanning for fires');
+  assert.match(element('autonomy-detail').textContent,/Moving through the QR search pattern/);
+  assert.match(element('contour-conditions').textContent,/after Marker 2 is decoded/);
+  assert.doesNotMatch(element('contour-conditions').textContent,/0\.2 km\/h/,'the QR scenario is not shown as a measurement before decode');
+  run("state.autonomy.receiver.search_state='acquiring';state.autonomy.receiver.phase='holding';renderAutonomy()");
+  assert.equal(element('autonomy-state').textContent,'READING MARKER');
+  assert.match(element('autonomy-detail').textContent,/Holding position/);
+  assert.match(element('autonomy-detail').textContent,/encoded wind/);
+  run(`state.autonomy.mission={id:'contour-1',contour:{details:BoscoContour.TINY}};
+    state.autonomy.receiver.phase='contour';state.autonomy.receiver.search_state='tracking';renderAutonomy()`);
+  assert.equal(element('autonomy-state').textContent,'GPS CONTOUR');
+  assert.equal(element('contour-mission-status').textContent,'1 drone following the fire contour');
+  assert.match(element('contour-conditions').textContent,/Encoded QR scenario · 0\.2 km\/h wind toward 60° · 22°C · 45% humidity · 0\.01 m\/min spread/);
+  assert.match(element('contour-conditions').textContent,/not measured weather/);
+  run("state.autonomy.receiver.search_state='holding';state.autonomy.receiver.phase='holding';state.autonomy.receiver.reason='Search boundary reached';renderAutonomy()");
+  assert.equal(element('autonomy-state').textContent,'HOLDING');
+  assert.match(element('autonomy-detail').textContent,/Search boundary reached/);
+  run('state.autonomy.flight_seconds=60;renderAutonomy()');
+  assert.match(element('autonomy-limits').textContent,/SHORT TEST: 60 seconds/);
+  assert.doesNotMatch(element('autonomy-limits').textContent,/until LAND/);
+  run("state.autonomy.enabled=false;renderAutonomy()");
+  assert.equal(element('contour-progress').hidden,true);
+  assert.equal(element('pi-drone-status').textContent,'One demo aircraft');
+});
+
+test('airborne contour status does not promise a scan during control loss, emergency or replay',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,mode:'contour',search:{id:'search-1'},receiver:{phase:'search',search_state:'airborne-search'}};
+    autonomyConnectionError=true;renderAutonomy()`);
+  assert.equal(element('autonomy-state').textContent,'CONNECTION LOST');
+  assert.match(element('contour-mission-status').textContent,/control connection interrupted/);
+  run("autonomyConnectionError=false;state.telemetry={state:'emergency'};renderAutonomy()");
+  assert.equal(element('autonomy-state').textContent,'EMERGENCY');
+  assert.match(element('contour-mission-status').textContent,/emergency reported/);
+  run("state.mode='demo';state.telemetry=null;renderAutonomy()");
+  assert.equal(element('contour-progress').hidden,true);
+  assert.equal(element('pi-drone-status').textContent,'One demo aircraft');
+});
+
+test('the live page exposes Marker 2 as a PDF alongside the printable marker and keeps takeoff explicit',async()=>{
+  const html=await readFile(new URL('../dist/index.html',import.meta.url),'utf8');
+  assert.match(html,/href="\/tiny-marker\.pdf"[^>]*>Marker 2 PDF/);
+  assert.match(html,/href="tiny-marker\.html"[^>]*>Printable Tiny QR/);
+  assert.match(html,/id="autonomy-contour-enable"[^>]*>Take off &amp; search · 1 m/);
+  assert.match(html,/id="contour-progress" role="status" hidden/);
 });
 
 test('contour forecast keeps its GPS anchor, conditions and real clock separate from explorer and replay',async()=>{
@@ -555,6 +624,19 @@ test('adaptive scale displays automatic acquisition and only calls current measu
   assert.match(element('autonomy-calibration').textContent,/Metric target scale verified from current observations/);
 });
 
+test('contour honors the receiver measured QR scale while the circle can use adaptive acquisition',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,mode:'contour',flight_seconds:null,
+    receiver:{qr_scale_mode:'measured',phase:'search',search_state:'airborne-search',
+      localization_sources:['qr-test'],calibration:{qr_side_m:.18,offset_body_m:[.08,0,0],image_size:[1280,720],
+      rms_px:.344,qr_verified:true,profile_verified:null}}};renderAutonomy()`);
+  assert.match(element('autonomy-calibration').textContent,/Configured QR black square: 18 cm/);
+  assert.match(element('autonomy-calibration').textContent,/QR location verified/);
+  assert.doesNotMatch(element('autonomy-calibration').textContent,/automatic|vertical acquisition/);
+  assert.match(element('autonomy-limits').textContent,/Location verified for QR markers/);
+  assert.doesNotMatch(element('autonomy-limits').textContent,/awaits automatic metric scale/);
+});
+
 test('live controls bind alongside fleet dashboard polling without starting aircraft on connection', async () => {
   const {context, run, element} = await dashboard();
   const calls = [], polls = [];
@@ -581,6 +663,11 @@ test('live controls bind alongside fleet dashboard polling without starting airc
   }
   await element('autonomy-enable').onclick();
   assert.deepEqual(calls.at(-1).body, {action: 'enable', camera_search: true});
+  await element('autonomy-land').onclick();
+  assert.deepEqual(calls.at(-1).body, {action: 'land'});
+  assert.equal(run('autonomousSession'), null);
+  await element('autonomy-contour-enable').onclick();
+  assert.deepEqual(calls.at(-1).body, {action: 'enable', camera_search: true, mode: 'contour'});
   await element('autonomy-land').onclick();
   assert.deepEqual(calls.at(-1).body, {action: 'land'});
   assert.equal(run('autonomousSession'), null);

@@ -1,14 +1,16 @@
 # Tiny fire forecast contour
 
 The Live dashboard has two distinct actions. **Start BOSCO** retains the
-existing measured one-metre circular response. **Start contour response**
-selects the Tiny fire's five-minute forecast course. LAND stops either mode.
+existing measured one-metre circular response. **Take off & search · 1 m**
+launches one drone to find Marker 2, then follow its five-minute forecast course.
+LAND stops either mode.
 Switching modes requires ending the current session and deliberately starting
 a new one. Observation startup and Replay never authorize flight.
 
 ## Marker and preview
 
-Open `/tiny-marker.html` to print the second marker at 100% scale. Its black
+Open [Marker 2 PDF](../dist/tiny-marker.pdf) (served at `/tiny-marker.pdf`) or
+`/tiny-marker.html` to print the second marker at 100% scale. Its black
 square is 18 cm across; its printed size must match the independently verified
 camera calibration. The original `/test-marker.html` and Alpha PNG are retained.
 
@@ -31,17 +33,24 @@ precision requirement.
 
 ## Flight behavior
 
-1. A fresh compatible receiver must report contour readiness before the separate
-   action enables the session. The usual owning dashboard heartbeat is required.
-2. Five fresh decoded Tiny observations over at least 0.8 seconds must match an
-   accepted Tiny incident and a stable, physically verified metric location.
-3. The receiver combines that initial camera location with synchronized aircraft
-   GPS and heading to freeze the general fire-area anchor. It uses no configured
-   site point, home fallback or assumed GPS.
-4. After claim, the marker is no longer tracked for navigation. The aircraft
-   takes off to the existing approximately 1 m launch-relative height, then
-   follows GPS waypoints on the evolving forecast. It uses the same sole SDK
-   owner, command acknowledgements and landing path as the existing runtime.
+1. A fresh receiver must advertise airborne search support and contour readiness.
+   The action enables the session, and its owning dashboard heartbeat acknowledges
+   it. The receiver claims a search flight before any QR is visible.
+2. The aircraft takes off, corrects measured height to 1 m above launch, then
+   actively searches a bounded GPS pattern with its camera. One real aircraft
+   owns this search; the dashboard reports its actual search/acquisition stage.
+3. When the Tiny marker appears, the aircraft holds horizontal position to gather
+   stable metric observations. Five fresh decoded Tiny observations over at
+   least 0.8 seconds must match an accepted Tiny incident and independently
+   verified camera calibration. The QR supplies 0.2 km/h wind, temperature,
+   humidity and spread; these are **encoded scenario values**, not a wind sensor
+   measurement. Any aircraft wind estimate keeps its separate source label.
+4. The receiver combines the camera location with synchronized aircraft GPS and
+   heading to freeze the general fire-area anchor. It retains the original
+   launch GPS for its flight envelope, without site/home/assumed coordinates.
+5. It transitions directly into GPS waypoints on the evolving forecast. Once
+   anchored, the QR is no longer tracked for navigation. The same sole SDK owner
+   controls takeoff, search, contour and landing.
 
 `bridge/fire_contour.py` matches the 72-vertex wind/ellipse/wobble geometry in
 `dist/model.js` with uniform fuel. The horizon is five minutes plus real elapsed
@@ -61,12 +70,18 @@ received GPS, heading, movement results and the launch envelope.
 - Actual SDK location events must be no more than 1.5 seconds old. Reported
   horizontal accuracy, computed from latitude/longitude accuracy components,
   must be positive and at most **0.5 m**. Unknown accuracy is not sufficient.
-- The initial fire anchor must be within 3 m of the launch position. The entire
+- Search follows a repeating local pattern with waypoints at ±0.8 m north/east
+  of launch, at up to 0.1 m/s, inside a 2 m launch envelope. Initial measured
+  height correction reaches 1 m within 5 cm before horizontal search. A marker
+  that cannot be localized gets a bounded acquisition hold, then search resumes.
+- The initial fire anchor must be within 3 m of the original launch position. The entire
   modeled course must stay within 4 m of that anchor, and received position
   must stay within 6 m of launch. GPS jumps and failed movement progress abort.
-- The full mission uses the existing battery and duration limits: normally
-  40% start/in-flight minimum and 300 seconds; the explicit short test uses
-  30% to start, 25% in flight and 60 seconds. Height is above launch, not ground.
+- Normal contour search/patrol has no automatic duration stop: it continues
+  until LAND or a protection fault, with a 40% start/in-flight battery minimum.
+  The explicit short test uses
+  30% to start, 25% in flight and 60 seconds including search. Circle retains its
+  existing 300-second limit. Height is above launch, not ground.
 - LAND, expired dashboard/receiver contact, stale sensors, poor GPS, aircraft
   disconnection and command failures request landing. QR disappearance after
   anchoring does not independently stop the GPS course.
@@ -97,5 +112,6 @@ independent of physical flight.
 Run `npm test` and `.venv/bin/python -m unittest discover -s tests -p '*_test.py'`.
 The new pure geometry tests compare every Python vertex against the browser
 model, exercise growth/pacing and verify GPS/motion aborts with fake drivers.
-SDK tests mock aircraft and skip when Olympe is absent. See the branch handoff
-in [FIRE_CONTOUR_HANDOFF.md](FIRE_CONTOUR_HANDOFF.md) for completed checks.
+SDK tests mock aircraft and skip when Olympe is absent. See the current
+[airborne search handoff](AIRBORNE_CONTOUR_HANDOFF.md) and the original
+[contour implementation handoff](FIRE_CONTOUR_HANDOFF.md) for completed checks.

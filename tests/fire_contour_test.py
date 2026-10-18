@@ -71,7 +71,7 @@ console.log(JSON.stringify([0,5,6,10].map(t=>m.footprint([43.78,-79.19],t,m.scen
                     replace(fix, accuracy_m=float('nan')), replace(fix, latitude=500)):
             self.assertIsNotNone(gps_reason(bad, 10.1))
 
-    def harness(self, *, fault=None, move_limit=12):
+    def harness(self, *, fault=None, move_limit=12, flight_seconds=None):
         """Exercise asynchronous movement watchdogs using measured-feedback test doubles."""
         details = parse_marker(TINY_FIRE_MARKER_PAYLOAD)
         state = {'time': 10., 'position': geographic_offset(self.origin, -.9, 0), 'yaw': 0.,
@@ -121,7 +121,7 @@ console.log(JSON.stringify([0,5,6,10].map(t=>m.footprint([43.78,-79.19],t,m.scen
                 return offset
 
         return lambda:run_contour(Driver(), limits, plan, sample, abort, lambda *_:None,
-                                  started=10., clock=clock, sleep=sleep), state
+                                  started=10., flight_seconds=flight_seconds, clock=clock, sleep=sleep), state
 
     def test_follows_non_circular_growth_without_visual_samples_and_stops_on_abort(self):
         """Verify actual path commands, bounded speed and termination without any QR stream."""
@@ -151,10 +151,10 @@ console.log(JSON.stringify([0,5,6,10].map(t=>m.footprint([43.78,-79.19],t,m.scen
             with self.subTest(fault=fault), self.assertRaisesRegex(InterruptedError, message):run()
             self.assertEqual(len(state['moves']), 1)
 
-    def test_full_mission_deadline_still_terminates_a_healthy_contour(self):
-        """Complete multiple real-time contour laps with no QR stream, then honor the cap."""
-        run, state = self.harness(move_limit=10000)
-        with self.assertRaisesRegex(InterruptedError, '300-second contour response limit'):
+    def test_operator_ended_mission_continues_past_five_minutes_without_qr(self):
+        """Complete multiple real-time contour laps until an explicit LAND, beyond the old cap."""
+        run, state = self.harness(move_limit=1200)
+        with self.assertRaisesRegex(InterruptedError, 'Operator requested landing'):
             run()
         self.assertGreaterEqual(state['time'], 310.)
         angles = []
@@ -166,6 +166,18 @@ console.log(JSON.stringify([0,5,6,10].map(t=>m.footprint([43.78,-79.19],t,m.scen
             angles.append(math.atan2(position[1], position[0]))
         winding = sum((b-a+math.pi) % (2*math.pi)-math.pi for a, b in zip(angles, angles[1:]))
         self.assertGreater(winding, 4*math.pi)
+
+    def test_explicit_short_test_still_lands_at_sixty_seconds(self):
+        """The operator-ended default does not remove the deliberately selected short test."""
+        run, state = self.harness(move_limit=10000, flight_seconds=60)
+        with self.assertRaisesRegex(InterruptedError, '60-second contour response limit'):
+            run()
+        self.assertGreaterEqual(state['time'], 70.)
+
+    def test_operator_ended_contour_cannot_outgrow_the_demo_envelope(self):
+        """An unlimited duration still rejects an excessively grown real-time forecast."""
+        with self.assertRaisesRegex(ValueError, '4 m demo radius'):
+            validate_scenario(self.details, minutes=400, flight_seconds=None)
 
     def test_polyline_interpolation_closes_and_stays_on_model_edges(self):
         """Do not substitute an ellipse/circle or disconnect the final segment."""

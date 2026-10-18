@@ -65,9 +65,9 @@ th,td{{padding:2px 10px;border-bottom:1px solid #e4e8eb}} th{{color:#7b858b;font
 .tips p{{font-size:11px}}
 @media print{{body{{padding:0}}.noprint{{display:none}}.sheet{{break-inside:avoid}}}}
 </style></head><body><div class="sheet">
-<h1>Emberwatch {a.name} fire test marker</h1>
+<h1>{'Marker 2 · Tiny contour fire' if tiny else f'Emberwatch {a.name} fire test marker'}</h1>
 <p>{'Small contour demo · 1 m² fire · 0.2 km/h wind · 1 cm/min spread' if tiny else 'Original circular demo · 120 ha fire · 35 m/min spread'}</p>
-<p class="noprint"><a href="{'test-marker.html' if tiny else 'tiny-marker.html'}">{'Original Alpha marker' if tiny else 'Tiny fire marker for contour demo'}</a></p>
+<p class="noprint">{'<a href="tiny-marker.pdf">Download Marker 2 PDF</a> · ' if tiny else ''}<a href="{'test-marker.html' if tiny else 'tiny-marker.html'}">{'Original Alpha marker' if tiny else 'Tiny fire marker for contour demo'}</a></p>
 <div class="frame"><img class="code" src="{stem}.png" alt="Emberwatch {a.name} QR test marker"></div>
 <table>{rows}</table>
 <div class="tips"><p><b>Print at 100% scale</b> (no "fit to page"); the code must measure {a.size_cm:g} cm per side —

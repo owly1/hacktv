@@ -64,7 +64,7 @@ export class AutonomousResponse {
       throw new ApiError(400,'Invalid blocked fire source');
     if (body.qr_scale_mode!=null && !['measured','adaptive'].includes(body.qr_scale_mode))
       throw new ApiError(400,'Invalid QR scale mode');
-    if (['contour_supported','contour_ready'].some(key=>body[key]!=null && typeof body[key]!=='boolean')
+    if (['contour_supported','contour_ready','airborne_search_supported'].some(key=>body[key]!=null && typeof body[key]!=='boolean')
         || (body.contour_reason!=null && (typeof body.contour_reason!=='string' || body.contour_reason.length>300)))
       throw new ApiError(400,'Invalid contour receiver readiness');
     const c=body.calibration;
@@ -91,12 +91,13 @@ export class AutonomousResponse {
       calibration:c?{...c,offset_body_m:[...c.offset_body_m],image_size:[...c.image_size]}:null,
       camera_search_supported:body.camera_search_supported===true,
       contour_supported:body.contour_supported===true,contour_ready:body.contour_ready===true,
+      airborne_search_supported:body.airborne_search_supported===true,
       contour_reason:body.contour_reason??'This receiver does not support GPS contour flight',
       contour,
-      search_state:['scanning','acquiring','tracking','error'].includes(body.search_state)?body.search_state:'off'};
-    if (this.session && (body.aircraft_connected===false || (!this.session.mission && !body.ready)))
+      search_state:['scanning','airborne-search','acquiring','tracking','holding','error'].includes(body.search_state)?body.search_state:'off'};
+    if (this.session && (body.aircraft_connected===false || (!this.session.mission && !this.session.search && !body.ready)))
       this.disable('Aircraft disconnected or preflight no longer ready; start BOSCO again when ready');
-    if (this.session && (this.receiver.phase==='error' || this.receiver.search_state==='error' || (this.session.mission && this.receiver.phase==='landed')))
+    if (this.session && (this.receiver.phase==='error' || this.receiver.search_state==='error' || ((this.session.mission || this.session.search) && this.receiver.phase==='landed')))
       this.disable('Response stopped; enable a new session when ready');
     this.tick(); return this.snapshot();
   }
@@ -117,13 +118,16 @@ export class AutonomousResponse {
       if (!this.receiverFresh() || !this.receiver.ready) throw new ApiError(409,this.receiver?.reason || 'Response receiver is offline');
       if (mode==='contour' && (!this.receiver.contour_supported || !this.receiver.contour_ready))
         throw new ApiError(409,this.receiver.contour_reason || 'GPS contour flight is not ready');
+      if (mode==='contour' && !this.receiver.airborne_search_supported)
+        throw new ApiError(409,'Update the receiver to support airborne contour search');
       if (body.camera_search && (!this.receiver.camera_ready || !this.receiver.camera_search_supported))
         throw new ApiError(409,'Automatic camera search is not ready on this receiver');
-      this.session = {id: crypto.randomUUID(), enabled_at: this.now(), heartbeat: this.now(), mission: null,
+      this.session = {id: crypto.randomUUID(), enabled_at: this.now(), heartbeat: this.now(), mission: null, search: null,
         heartbeat_confirmed:false,camera_search:body.camera_search===true,mode};
       this.target = null; this.camera = null;
       this.consumed.clear(); // A deliberate new session authorizes one new response, including to the same QR.
-      this.reason = body.camera_search?'BOSCO is searching; a confirmed fire will trigger takeoff':'Waiting for a newly confirmed fire';
+      this.reason = mode==='contour'?'Takeoff authorized for one drone to search at 1 m':
+        body.camera_search?'BOSCO is searching; a confirmed fire will trigger takeoff':'Waiting for a newly confirmed fire';
     } else if (body?.action === 'heartbeat') {
       if (!this.session || body.session_id !== this.session.id) throw new ApiError(409,'Session expired');
       this.session.heartbeat = this.now();
@@ -214,11 +218,16 @@ export class AutonomousResponse {
     return {...t,incident_id:accepted.id};
   }
   claim(body) {
-    this.tick(); const t=this.candidate(), s=this.session;
+    this.tick(); const s=this.session;
+    if (body?.stage!=null && !['search','fire'].includes(body.stage))
+      throw new ApiError(400,'Select search or fire claim stage');
+    if (body?.stage==='search') return this.claimSearch(body);
+    const t=this.candidate();
     if (!s || body?.session_id!==s.id || body?.receiver_id!==this.receiver?.receiver_id || !t
         || body.episode_id!==t.episode_id) throw new ApiError(409,'No fresh unconsumed fire is authorized');
-    if (s.mode==='contour' && !s.mission && (!this.receiver.contour_supported || !this.receiver.contour_ready))
-      throw new ApiError(409,this.receiver.contour_reason || 'GPS contour flight is not ready');
+    if (s.mode==='contour' && (!this.receiver.contour_supported || !this.receiver.airborne_search_supported
+        || s.search?.receiver_id!==body.receiver_id))
+      throw new ApiError(409,'Claim the airborne search before its contour fire');
     if (s.mission) {
       // A reply can disappear after committing a claim. Return that same
       // authorization to its owner; never mint another mission on retry.
@@ -234,16 +243,32 @@ export class AutonomousResponse {
       receiver_id:body.receiver_id,claimed_at:this.now(),target_at:t.at,qr_seed_at:t.qr_decoded_at??t.at,last_visual_at:t.at}; this.consumed.add(t.episode_id);
     this.reason='Responding to confirmed fire'; return this.snapshot();
   }
+  /** Grant one receiver takeoff/search ownership after the controlling page acknowledges enable. */
+  claimSearch(body) {
+    const s=this.session,r=this.receiver;
+    if (!s || s.mode!=='contour' || !s.heartbeat_confirmed || body.session_id!==s.id
+        || !this.receiverFresh() || body.receiver_id!==r.receiver_id
+        || !r.contour_supported || !r.airborne_search_supported)
+      throw new ApiError(409,'No airborne search is authorized');
+    // Retrying a lost reply must retain the same flight, even after takeoff.
+    if (s.search?.receiver_id===body.receiver_id) return this.snapshot();
+    if (!r.ready || !r.contour_ready || s.mission)
+      throw new ApiError(409,r.contour_reason || 'GPS contour search is not ready');
+    s.search={id:crypto.randomUUID(),receiver_id:body.receiver_id,claimed_at:this.now(),height_m:1};
+    this.reason='One drone taking off to search for Marker 2 at 1 m';
+    return this.snapshot();
+  }
   waitingReason() {
     const s=this.session,t=this.target;
     if (!s || s.mission) return null;
     if (!s.heartbeat_confirmed) return 'Waiting for the controlling dashboard to acknowledge this session';
+    if (s.mode==='contour' && !s.search) return 'Checking GPS and takeoff readiness for one drone to search at 1 m';
     if (!t || !fresh(t.at,this.now(),1000)) return 'Searching for a fresh fire observation';
     if (s.mode==='contour' && (t.source!=='qr-test' || t.qr_text!==TINY_FIRE_MARKER_PAYLOAD))
       return 'Contour mode requires the Tiny 1 m² fire marker; Alpha remains available with circular response';
-    if (s.mode==='contour' && !this.receiver?.contour_ready)
+    if (s.mode==='contour' && !s.search && !this.receiver?.contour_ready)
       return this.receiver?.contour_reason || 'Waiting for accurate GPS for contour flight';
-    if (t.qr_tracking!=='decoded') return 'Waiting for an exact QR decode before takeoff';
+    if (t.qr_tracking!=='decoded') return s.search?'Waiting for an exact QR decode to anchor the contour':'Waiting for an exact QR decode before takeoff';
     if (t.first<s.enabled_at) return 'Waiting for fresh observations captured after this session started';
     if (t.hits<5 || t.at-t.first<800) return `Confirming fire: ${Math.min(t.hits,5)}/5 fresh observations over at least 0.8 seconds`;
     const accepted=this.accepted.get(t.episode_id);
@@ -251,11 +276,12 @@ export class AutonomousResponse {
       return 'Fire detected; waiting for its incident record to be accepted';
     if (s.mode==='contour' && accepted.qr_text!==t.qr_text)
       return 'Waiting for the matching Tiny fire incident record';
-    return 'Fire confirmed; checking measured position and takeoff readiness';
+    return s.search?'Marker 2 confirmed; reading scenario weather and measuring the fire location':
+      'Fire confirmed; checking measured position and takeoff readiness';
   }
   snapshot() {
     this.tick(); const s=this.session;
-    return {enabled:!!s,session_id:s?.id??null,mission:s?.mission??null,reason:this.reason,
+    return {enabled:!!s,session_id:s?.id??null,mission:s?.mission??null,search:s?.search??null,reason:this.reason,
       mode:s?.mode??'circle',
       fire_presence:s?.mission?{episode_id:s.mission.episode_id,last_seen_at:s.mission.last_visual_at,
         expires_at:s.mission.last_visual_at+15000,present:fresh(s.mission.last_visual_at,this.now(),15000)}:null,
@@ -266,7 +292,7 @@ export class AutonomousResponse {
       camera:!s && this.receiverFresh() && this.camera && fresh(this.camera.at,this.now(),5000)?this.camera:null,
       radius_m:1,height_m:1,
       lap_seconds:this.receiverFresh()?this.receiver.lap_seconds:null,
-      flight_seconds:this.receiverFresh()&&this.receiver.short_test?60:300,
+      flight_seconds:this.receiverFresh()&&this.receiver.short_test?60:s?.mode==='contour'?null:300,
       min_start_battery_pct:this.receiverFresh()&&this.receiver.short_test?30:40,
       min_flight_battery_pct:this.receiverFresh()&&this.receiver.short_test?25:40};
   }

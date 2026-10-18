@@ -36,8 +36,11 @@ page's flight session; **LAND / STOP** ends it. Use
 [Mac setup](docs/MAC_SETUP.md) for calibration, launch-relative height and
 the continuous QR orbit. Replay never enables aircraft control.
 
-The separate **Start contour response** action follows the Tiny fire's growing
-five-minute forecast outline using a fixed GPS anchor. **Start BOSCO** retains
+The separate **Take off & search · 1 m** action launches one drone into a bounded
+GPS search at 1 m above takeoff. When it identifies Marker 2, it reads the Tiny
+scenario's weather, freezes a measured fire-area GPS anchor, and follows the
+growing five-minute forecast outline until LAND or a flight protection stops it.
+**Start BOSCO** retains
 the original circular response. Use **Preview tiny contour** to inspect the
 shape and motion without an aircraft. The small physical course requires GPS
 accuracy of 0.5 m or better; missing/ordinary coarse GPS blocks contour flight.
@@ -147,6 +150,8 @@ dashboard startup and observation do not start a flight.
 
 Print the selected fire QR from <http://127.0.0.1:8787/test-marker.html>.
 Print the second, 1 m² fire QR from <http://127.0.0.1:8787/tiny-marker.html>.
+The labelled [Marker 2 PDF](dist/tiny-marker.pdf) is also available at
+<http://127.0.0.1:8787/tiny-marker.pdf>; print at actual size for an 18 cm QR square.
 Only the two exact payloads in `bridge/orbit-marker.txt` and
 `bridge/tiny-marker.txt` are accepted as test fires. The original automatic
 preset/circle entry points retain their original Alpha marker selection.

@@ -56,27 +56,46 @@ let autonomyConnectionError = false;
 function aircraftEmergency() {
   return ['emergency','emergency_landing'].includes(state.telemetry?.state);
 }
+/** Describe the one aircraft's reported airborne-search stage without inventing a fire or flight. */
+function contourFlightStatus(a) {
+  const phase=a.receiver?.phase, search=a.receiver?.search_state;
+  if(phase==='landing') return {state:'LANDING',summary:'1 drone landing',detail:a.receiver.reason||'Landing requested.'};
+  if(phase==='takeoff'||phase==='climb') return {state:'TAKING OFF',summary:'1 drone taking off to search for fires',detail:'Climbing to 1 m above takeoff before moving through the QR search pattern.'};
+  if(search==='acquiring') return {state:'READING MARKER',summary:'1 drone reading the QR fire scenario',detail:'Holding position to read the encoded wind and fire conditions, then anchoring the +5-minute contour with measured GPS.'};
+  if(search==='holding'||phase==='holding') return {state:'HOLDING',summary:'1 drone holding position',detail:a.receiver.reason||'Search is paused; use LAND to end the flight.'};
+  if(a.mission&&(phase==='contour'||search==='tracking')) return {state:'GPS CONTOUR',summary:'1 drone following the fire contour',detail:`GPS contour response · ${a.receiver.reason||phase} · fixed initial fire area; continuing QR tracking is not required.`};
+  if(a.mission) return {state:'READING MARKER',summary:'1 drone reading the QR fire scenario',detail:'Reading the encoded wind and fire conditions, then anchoring the +5-minute contour with measured GPS.'};
+  if(phase==='search'||search==='airborne-search') return {state:'SEARCHING',summary:'1 drone scanning for fires',detail:'Moving through the QR search pattern at 1 m above takeoff. Marker 2 (Tiny) supplies the fire scenario for the GPS contour.'};
+  return {state:'STARTING',summary:'1 drone preparing to search for fires',detail:a.search?'Airborne search claimed; checking takeoff readiness.':'Waiting for the receiver to claim the airborne search and take off to 1 m.'};
+}
 /** Show live receiver readiness, measured position and this page's available flight controls. */
 function renderAutonomy() {
   const a=state.autonomy, enabled=!!a?.enabled;
   const search=a?.receiver?.search_state;
   const phase=a?.receiver?.phase, emergency=aircraftEmergency();
   const contour=a?.mode==='contour';
+  const progress=state.mode==='live'&&enabled&&contour?contourFlightStatus(a):null;
   const adaptiveScale=a?.receiver?.qr_scale_mode==='adaptive';
   const currentMetricScale=a?.receiver?.position?.source==='measured-qr-3d';
-  const acquiring=!!a?.mission&&!['takeoff','climb','recover','circle','contour','return','landing'].includes(phase);
-  $('autonomy-state').textContent=emergency?'EMERGENCY':autonomyConnectionError?'CONNECTION LOST':enabled?(acquiring?'ACQUIRING':phase==='recover'?'REACQUIRING':search==='scanning'?'SEARCHING':search==='acquiring'?'FIRE FOUND':a?.mission?(contour?'GPS CONTOUR':'TRACKING'):'ENABLED'):'OFF';
+  const acquiring=!contour&&!!a?.mission&&!['takeoff','climb','recover','circle','contour','return','landing'].includes(phase);
+  $('autonomy-state').textContent=emergency?'EMERGENCY':autonomyConnectionError?'CONNECTION LOST':progress?progress.state:enabled?(acquiring?'ACQUIRING':phase==='recover'?'REACQUIRING':search==='scanning'?'SEARCHING':search==='acquiring'?'FIRE FOUND':a?.mission?'TRACKING':'ENABLED'):'OFF';
   $('autonomy-state').className='pill '+(enabled?'soft-orange':'muted');
   $('autonomy-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported;
   $('autonomy-enable').textContent=enabled&&!contour?'BOSCO active':'Start BOSCO';
-  $('autonomy-contour-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported||!a?.receiver?.contour_supported||!a?.receiver?.contour_ready;
-  $('autonomy-contour-enable').textContent=enabled&&contour?'Contour active':'Start contour response';
+  $('autonomy-contour-enable').disabled=autonomyActionPending||autonomyConnectionError||emergency||state.mode!=='live'||enabled||!a?.receiver?.ready||!a?.receiver?.camera_ready||!a?.receiver?.camera_search_supported||!a?.receiver?.airborne_search_supported||!a?.receiver?.contour_supported||!a?.receiver?.contour_ready;
+  $('autonomy-contour-enable').textContent=enabled&&contour?'Contour flight active':'Take off & search · 1 m';
   $('autonomy-limits').textContent=`1 m radius · about 1 m above launch · ${a?.lap_seconds===15?'15 s target per lap · ':''}${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
-  if(contour&&enabled) $('autonomy-limits').textContent=`Tiny fire · GPS path on the +5-minute forecast · about 1 m above launch · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'up to 5 minutes'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open.`;
+  if(contour&&enabled) $('autonomy-limits').textContent=`1 m above takeoff · ${a?.flight_seconds===60?'SHORT TEST: 60 seconds':'flies until LAND; safety stops still apply'} · start ≥${a?.min_start_battery_pct??40}% battery, land below ${a?.min_flight_battery_pct??40}%. Keep this live page open; loss of control or required sensors ends the flight.`;
   $('contour-readiness').textContent=state.mode!=='live'?'Contour flight is available in Live. The tiny-fire preview works in either mode.':
-    enabled&&contour?'GPS follows the growing +5-minute contour around the initial marker area. The fire grows in real time; explorer and replay speeds do not change the flight.':
-    a?.receiver?.contour_ready?'Contour ready · Tiny marker only · measured GPS accuracy ≤0.5 m.':
+    enabled&&contour?'Airborne search → read QR scenario → follow the growing +5-minute GPS contour. Flight uses real elapsed time.':
+    a?.receiver&&!a.receiver.airborne_search_supported?'Airborne contour search requires an updated Pi receiver.':
+    a?.receiver?.contour_ready?'Ready to take off and search at 1 m · Tiny marker only · measured GPS accuracy ≤0.5 m.':
     a?.receiver?.contour_reason||'Contour awaits a compatible receiver and fresh GPS with accuracy ≤0.5 m. Preview the tiny fire below.';
+  $('contour-progress').hidden=!progress;
+  $('contour-mission-status').textContent=emergency?'1 drone · emergency reported':autonomyConnectionError?'1 drone · control connection interrupted':progress?.summary||'';
+  $('pi-drone-status').textContent=progress?$('contour-mission-status').textContent:'One demo aircraft';
+  const conditions=a?.mission?.contour?.details;
+  $('contour-conditions').textContent=progress&&conditions?`Encoded QR scenario · ${conditions.wind_kmh} km/h wind toward ${conditions.wind_dir_deg}° · ${conditions.temp_c}°C · ${conditions.rh_pct}% humidity · ${conditions.spread_m_per_min} m/min spread. These are marker inputs, not measured weather.`:'QR scenario conditions appear after Marker 2 is decoded; onboard wind estimates remain separate in telemetry.';
   if (a?.receiver?.localization_sources) {
     const sources=a.receiver.localization_sources;
     if (adaptiveScale&&!currentMetricScale&&sources.includes('qr-test')) {
@@ -101,9 +120,9 @@ function renderAutonomy() {
     !a.receiver?'Waiting for the Pi/aircraft receiver. Connect and power both devices.':
     a.receiver.blocked_source?`${a.receiver.blocked_source==='yolo'?'RGB fire':'QR marker'} detected; automatic flight unavailable: ${a.receiver.reason}`:
     enabled&&phase==='recover'?`Holding position and reacquiring the fire · ${a.receiver.reason}`:
+    progress?`${progress.summary} · ${progress.detail}`:
     enabled&&acquiring?`Fire response claimed; checking takeoff readiness · ${a.receiver.reason}`:
     enabled&&!a.mission?`${a.waiting_reason||a.reason}${position?` · Measured location: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right`:''}`:
-    enabled&&contour?`GPS contour response · ${a.receiver.reason||phase} · fixed initial fire area; continuing QR tracking is not required.`:
     enabled?(position?`Tracking fire: ${position.forward_m.toFixed(2)} m forward, ${position.right_m.toFixed(2)} m right${Number.isFinite(position.down_m)?`, ${position.down_m.toFixed(2)} m below drone`:''} · ${phase}`:
       a.mission?`Locating fire · ${a.receiver.reason}`:a.waiting_reason||a.reason):
       a.receiver.ready&&!a.receiver.camera_search_supported?'Waiting for automatic camera search capability.':a.receiver.reason||a.reason;
@@ -155,7 +174,7 @@ async function setAutonomy(action,extra={}) {
     state.autonomy=response;
     autonomyConnectionError=false;
     autonomousSession=action==='enable'?state.autonomy.session_id:null;
-    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?(extra.mode==='contour'?'Contour response enabled: find the Tiny marker, then follow the GPS forecast.':'BOSCO active: camera search and automatic fire response enabled.'):'Landing requested; BOSCO stopped.');
+    toast(action==='camera'?'Camera tilt requested. Flight remains OFF.':action==='enable'?(extra.mode==='contour'?'Takeoff and search requested: fly at 1 m, find Marker 2, then follow its GPS contour until LAND or a safety stop.':'BOSCO active: camera search and automatic fire response enabled.'):'Landing requested; BOSCO stopped.');
   } catch(error) {toast(error.message);}
   finally {if(revision===autonomyRevision){autonomyActionPending=false;renderAutonomy();}}
 }

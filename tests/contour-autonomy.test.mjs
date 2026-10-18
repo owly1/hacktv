@@ -9,7 +9,7 @@ function harness() {
   let now=1_000_000;
   const a=new AutonomousResponse(()=>now);
   const status={receiver_id:'contour-receiver',ready:true,reason:'Ready',phase:'waiting',
-    contour_supported:true,contour_ready:true,contour_reason:'GPS ready'};
+    contour_supported:true,contour_ready:true,airborne_search_supported:true,contour_reason:'GPS ready'};
   const receiver=(extra={})=>a.status({...status,...extra});
   receiver();
   const advance=ms=>{now+=ms;receiver();};
@@ -18,11 +18,13 @@ function harness() {
     hit:{source:'qr-test',label:'fire',confidence:1,bbox:[.3,.3,.5,.5],qr_text:payload,...extra}});
   const confirm=(payload=TINY_FIRE_MARKER_PAYLOAD,details=TINY_FIRE_MARKER_DETAILS)=>{
     a.control({action:'heartbeat',session_id:a.snapshot().session_id});
+    if (a.snapshot().mode==='contour' && !a.snapshot().search) search();
     for (let i=0;i<6;i++) {advance(200);frame(payload);}
     a.incident({episode_id:'tiny-episode',source:'qr-test',label:'fire',id:'tiny-incident',details});
   };
   const claim=()=>a.claim({receiver_id:status.receiver_id,session_id:a.snapshot().session_id,episode_id:'tiny-episode'});
-  return {a,receiver,advance,frame,confirm,claim};
+  const search=(extra={})=>a.claim({stage:'search',receiver_id:status.receiver_id,session_id:a.snapshot().session_id,...extra});
+  return {a,receiver,advance,frame,confirm,claim,search};
 }
 
 test('legacy enable remains circle; contour requires explicit ready capability and rejects unknown modes',()=>{
@@ -69,15 +71,64 @@ test('large Alpha scenario stays circular and cannot claim a contour flight',()=
   assert.equal(a.snapshot().radius_m,1);
 });
 
-test('GPS readiness is rechecked at claim; airborne permission still expires on lost heartbeat',()=>{
-  const {a,confirm,claim,receiver,advance}=harness();
-  a.control({action:'enable',mode:'contour'});confirm();
+test('GPS readiness is rechecked before search; airborne permission still expires on lost heartbeat',()=>{
+  const {a,confirm,claim,receiver,advance,search}=harness();
+  const s=a.control({action:'enable',mode:'contour'});
+  a.control({action:'heartbeat',session_id:s.session_id});
   receiver({contour_ready:false,contour_reason:'GPS accuracy unavailable'});
-  assert.throws(claim,/GPS accuracy/);
-  receiver();claim();
+  assert.throws(search,/GPS accuracy/);
+  receiver();confirm();claim();
   for(let i=0;i<5;i++) advance(1000);
   assert.equal(a.snapshot().enabled,false);
   assert.equal(a.snapshot().mission,null);
+});
+
+test('contour takeoff requires new capability, acknowledged enable and exact receiver ownership',()=>{
+  const {a,receiver,search}=harness();
+  receiver({airborne_search_supported:false});
+  assert.throws(()=>a.control({action:'enable',mode:'contour'}),/airborne contour search/);
+  receiver();
+  const s=a.control({action:'enable',mode:'contour'});
+  assert.equal(s.mission,null);
+  assert.equal(s.flight_seconds,null,'contour has no normal automatic landing timer');
+  assert.throws(search,/authorized/,'a lost enable reply cannot launch an aircraft');
+  a.control({action:'heartbeat',session_id:s.session_id});
+  assert.throws(()=>search({receiver_id:'other-receiver'}),/authorized/);
+  const first=search();
+  assert.equal(first.search.height_m,1);
+  assert.equal(first.mission,null,'search does not invent a fire');
+  const inAir=receiver({ready:false,contour_ready:false,phase:'search',search_state:'airborne-search'});
+  assert.equal(inAir.enabled,true);
+  assert.equal(inAir.receiver.search_state,'airborne-search');
+  assert.equal(search().search.id,first.search.id,'lost claim replies never authorize a second takeoff');
+  a.control({action:'land'});
+  assert.equal(a.snapshot().search,null);
+  assert.throws(search,/authorized/);
+});
+
+test('only contour search can hand off to an in-flight exact-marker mission',()=>{
+  const {a,receiver,confirm,claim,search}=harness();
+  a.control({action:'enable'});
+  a.control({action:'heartbeat',session_id:a.snapshot().session_id});
+  assert.throws(search,/authorized/,'circle keeps its fire-triggered takeoff');
+  assert.equal(a.snapshot().flight_seconds,300);
+  a.control({action:'land'});
+  a.control({action:'enable',mode:'contour'});confirm();
+  receiver({ready:false,contour_ready:false,phase:'holding',search_state:'acquiring'});
+  assert.equal(claim().mission.mode,'contour');
+  receiver({ready:false,phase:'landed'});
+  assert.equal(a.snapshot().enabled,false);
+});
+
+test('search authorization retains short-test deadline and expires without receiver or dashboard',()=>{
+  const {a,receiver,search,advance}=harness();
+  receiver({short_test:true});
+  const s=a.control({action:'enable',mode:'contour'});
+  assert.equal(s.flight_seconds,60);
+  a.control({action:'heartbeat',session_id:s.session_id});search();
+  advance(3000);
+  assert.equal(a.snapshot().enabled,false);
+  assert.throws(search,/authorized/);
 });
 
 test('marker switching resets confirmation and cannot renew an existing marker mission',()=>{

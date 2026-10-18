@@ -102,17 +102,17 @@ def nearest_fraction(points, position):
     return best[1]
 
 
-def validate_scenario(details, *, minutes=5., flight_seconds=300):
-    """Reject nonphysical or oversized full-mission contours before takeoff."""
+def validate_scenario(details, *, minutes=5., flight_seconds=None):
+    """Reject nonphysical forecasts; open-ended flights recheck size on every cycle."""
     for key in ('area_ha', 'spread_m_per_min', 'wind_kmh', 'wind_dir_deg', 'temp_c', 'rh_pct'):
         if not finite(details.get(key)):
             raise ValueError('Contour scenario has missing or invalid '+key)
     if not (details['area_ha'] > 0 and details['spread_m_per_min'] >= 0
             and 0 <= details['wind_kmh'] <= 60 and 0 <= details['wind_dir_deg'] <= 360):
         raise ValueError('Contour scenario is outside the supported physical range')
-    if not finite(minutes) or minutes < 5 or flight_seconds not in (60, 300):
-        raise ValueError('Contour requires the five-minute horizon and bounded mission duration')
-    end = footprint(details, minutes+flight_seconds/60.)
+    if not finite(minutes) or minutes < 5 or flight_seconds not in (None, 60, 300):
+        raise ValueError('Contour requires the five-minute horizon and supported mission duration')
+    end = footprint(details, minutes+(flight_seconds or 0)/60.)
     if max(math.hypot(*point) for point in end) > MAX_CONTOUR_RADIUS_M:
         raise ValueError('Forecast contour exceeds the 4 m demo radius; use the Tiny marker')
 
@@ -167,7 +167,7 @@ class ContourPlan:
 
 
 def run_contour(driver, limits, plan, sample, abort, report, *, started,
-                flight_seconds=300, min_battery_pct=40, clock=time.monotonic, sleep=time.sleep):
+                flight_seconds=None, min_battery_pct=40, clock=time.monotonic, sleep=time.sleep):
     """Follow growing GPS waypoints with bounded SDK moves and per-command watchdogs.
 
     `sample` owns live session/heartbeat checks and returns vehicle, GPS and yaw.
@@ -185,7 +185,7 @@ def run_contour(driver, limits, plan, sample, abort, report, *, started,
         now = clock()
         if abort.is_set():
             raise InterruptedError('Operator requested landing')
-        if now-started >= flight_seconds:
+        if flight_seconds is not None and now-started >= flight_seconds:
             raise InterruptedError(f'{flight_seconds}-second contour response limit reached')
         vehicle, fix, yaw = sample()
         reason = vehicle_reason(vehicle, limits, now, min_battery_pct=min_battery_pct) or gps_reason(fix, now)
@@ -216,6 +216,11 @@ def run_contour(driver, limits, plan, sample, abort, report, *, started,
         vehicle, fix, yaw = check()
         now = clock()
         minutes = plan.minutes(now)
+        # An operator-ended flight must still never outgrow its safe footprint.
+        try:
+            validate_scenario(plan.details, minutes=minutes, flight_seconds=None)
+        except ValueError as error:
+            raise InterruptedError(str(error)) from error
         points = footprint(plan.details, minutes)
         speed = patrol_speed(plan.details, minutes)
         position = local_offset(plan.anchor, (fix.latitude, fix.longitude))
@@ -227,7 +232,11 @@ def run_contour(driver, limits, plan, sample, abort, report, *, started,
         north, east = (target[index]-position[index] for index in range(2))
         distance = math.hypot(north, east)
         if distance <= .04:
-            sleep(.1)
+            down = max(-.1, min(.1, vehicle.altitude_m-limits.height_m))
+            if abs(down) > .05:
+                driver.move((0., 0., down, 0.), .1, check)
+            else:
+                sleep(.1)
             continue
         step = min(.2, distance)
         north, east = north*step/distance, east*step/distance

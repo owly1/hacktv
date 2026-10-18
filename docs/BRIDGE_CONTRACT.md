@@ -112,7 +112,7 @@ Ordinary camera/person ingest and Replay do not enable this runtime.
 
 Enable requires a fresh ready receiver and returns `session_id`. An owning
 `{action: "heartbeat", session_id}` must acknowledge that exact session before
-any target can authorize takeoff. The dashboard lease expires after five seconds;
+any target or contour search can authorize takeoff. The dashboard lease expires after five seconds;
 receiver contact expires after three seconds. Reconnection never restores an
 expired session. LAND/disable can be requested by any dashboard-authenticated
 page. Receiver replacement, disconnection, errors and completed landing revoke
@@ -182,11 +182,24 @@ backend acceptance does not itself execute an aircraft command.
 `{action: "enable", mode: "contour", camera_search: true}` explicitly selects
 the new GPS contour mode. Omitted `mode` or `mode: "circle"` retains the existing
 circular flight. Mode is fixed for the session; heartbeat cannot change it.
-The receiver must advertise `contour_supported: true`, `contour_ready: true`
+The receiver must advertise `contour_supported: true`, `contour_ready: true`,
+`airborne_search_supported: true`
 and an explanatory `contour_reason`. Legacy receivers cannot enable contour.
 The receiver's default `ready` and circular preflight are unchanged.
 
-Contour claims require the exact Tiny marker and its matching accepted incident.
+After the dashboard acknowledges enable, the receiver first sends
+`{stage: "search", receiver_id, session_id}` to the claim endpoint, without
+requiring a visible fire. This returns `search: {id, receiver_id, claimed_at,
+height_m: 1}` and authorizes one takeoff and a bounded airborne GPS search.
+Retries retain the same search ID. `mission` remains null until a fire is found;
+reporting `ready: false` while airborne does not revoke this owner's search.
+Search states include `airborne-search`, `acquiring`, `tracking` and `holding`.
+Flight event phases also accept `search` and `holding`.
+
+The subsequent fire claim retains `{receiver_id, session_id, episode_id}`
+(optionally `stage: "fire"`). It requires the same search owner, the exact Tiny
+marker and its matching accepted incident. The receiver pauses horizontal
+search and independently acquires a stable metric location before claiming.
 Claims add `mission.mode`, `mission.qr_text`, and
 `mission.contour: {forecast_minutes: 5, started_at, details}`. `started_at` is
 server epoch milliseconds at claim; `details` is the complete pinned Tiny
@@ -205,7 +218,10 @@ The exact uniform-fuel 72-vertex wind/wobble outline is computed at five minutes
 plus real elapsed mission time. Its outward growth follows the encoded model;
 bounded tangential patrol speed is separately derived from head spread rate.
 After anchoring, QR visibility is not a control requirement. GPS, sensor and
-control watchdogs remain mandatory. See [physical gates](FIRE_CONTOUR_MODE.md).
+control watchdogs remain mandatory. Normal contour sessions report
+`flight_seconds: null`: LAND ends normal operation, with protective landing on
+battery, control, sensor or motion faults. Explicit short tests retain 60 seconds.
+Circle retains its 300-second limit. See [physical gates](FIRE_CONTOUR_MODE.md).
 No fleet ingest, fleet command endpoint or second physical drone is added.
 
 ## Person observation
