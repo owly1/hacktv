@@ -19,6 +19,7 @@ import { PersonSearch, validatePersonObservation, describeLeadsForPlan, MAX_CROP
 import {validateCameraSighting, recordCameraSighting} from './person-sightings.mjs';
 import SITE_LANDMARKS from './site-landmarks.json' with { type: 'json' };
 import { PersonSearchSim, scenarioFromExample } from './people-sim.mjs';
+import { AutonomousResponse } from './autonomy.mjs';
 import {
   ApiError,
   MAX_FRAME_BYTES,
@@ -1028,6 +1029,7 @@ export function createApp({
     unlocatedPeople: new Map(),
     demoSims: new Map(), // scenario id -> PersonSearchSim
   };
+  const autonomy = new AutonomousResponse(now);
   const peopleFile = dataDir ? path.join(dataDir, 'people', 'state.json') : null;
   let people = new PersonSearch(personSearch);
   // Leads survive a backend restart: they are written to data/people/state.json.
@@ -1452,6 +1454,27 @@ export function createApp({
   async function handleApi(req, res, url) {
     const pathname = url.pathname;
 
+    if (pathname === '/api/autonomy') {
+      requireAuth(req, 'dashboard');
+      if (req.method === 'GET') { sendJson(res,200,autonomy.snapshot()); return; }
+      if (req.method === 'POST') { sendJson(res,200,autonomy.control(await readJson(req))); return; }
+    }
+    if (pathname.startsWith('/api/ingest/autonomy')) {
+      requireAuth(req, 'ingest');
+      if (req.method === 'GET' && pathname === '/api/ingest/autonomy') {
+        sendJson(res,200,autonomy.snapshot()); return;
+      }
+      if (req.method === 'POST' && pathname === '/api/ingest/autonomy/status') {
+        sendJson(res,200,autonomy.status(await readJson(req))); return;
+      }
+      if (req.method === 'POST' && pathname === '/api/ingest/autonomy/target') {
+        autonomy.observe(await readJson(req)); sendJson(res,200,{accepted:true}); return;
+      }
+      if (req.method === 'POST' && pathname === '/api/ingest/autonomy/claim') {
+        sendJson(res,200,autonomy.claim(await readJson(req))); return;
+      }
+    }
+
     // The dashboard served from this machine fetches its session token here,
     // so localhost opens straight into live mode with no token pasting.
     if (req.method === 'GET' && pathname === '/api/session') {
@@ -1684,6 +1707,7 @@ export function createApp({
         id, ...detection, status: 'active', image_path: await saveDetectionImage(id, image),
       };
       await storage.insertDetection(record);
+      autonomy.incident(record);
       if (isNewEpisode) scheduleAutoAnalysis(record, image);
       sendJson(res, 200, { accepted: true, id, new_episode: isNewEpisode });
       return;

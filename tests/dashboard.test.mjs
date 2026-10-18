@@ -344,3 +344,237 @@ test('located detections appear as person markers at their coordinates on the fi
   run("state.mode='live'; renderPeopleMap({leads:[],unlocated_sightings:[{track_id:'unlocated'}],coverage:{cells:[]}})");
   assert.equal(markers.length,0,'camera-only sightings do not receive invented locations');
 });
+
+test('autonomous response needs readiness and its owning live page; replay sends LAND', async () => {
+  const {context,run,element}=await dashboard(); const calls=[];
+  context.fetch=async(url,options)=>{
+    const body=options.body?JSON.parse(options.body):null;calls.push(body);
+    return {ok:true,json:async()=>({enabled:body?.action==='enable',session_id:'test-session',
+      receiver:{ready:true,reason:'Ready'}})};
+  };
+  run("state.mode='live';state.autonomy={enabled:false,receiver:{ready:false}};renderAutonomy()");
+  assert.equal(element('autonomy-enable').disabled,true);
+  run('Object.assign(state.autonomy.receiver,{ready:true,camera_ready:true,camera_search_supported:true});renderAutonomy()');
+  assert.equal(element('autonomy-enable').disabled,false);
+  await run("setAutonomy('enable')");
+  assert.equal(run('autonomousSession'),'test-session');
+  run("state.mode='demo'");await run('pollAutonomy()');
+  assert.ok(calls.some(body=>body?.action==='land'));
+  assert.equal(run('autonomousSession'),null);
+  const before=calls.length;await run("setAutonomy('enable')");assert.equal(calls.length,before);
+});
+
+test('BOSCO sends search and flight authorization together and disables its start button while active',async()=>{
+  const {context,run,element}=await dashboard();const calls=[];
+  context.fetch=async(url,options)=>{
+    calls.push(JSON.parse(options.body));
+    return {ok:true,json:async()=>({enabled:true,camera_search:true,session_id:'bosco-session',
+      receiver:{ready:true,camera_ready:true,camera_search_supported:true,search_state:'scanning'}})};
+  };
+  run("state.mode='live';state.autonomy={enabled:false,receiver:{ready:true,camera_ready:true,camera_search_supported:true}};renderAutonomy()");
+  assert.equal(element('autonomy-enable').textContent,'Start BOSCO');
+  await run("setAutonomy('enable',{camera_search:true})");
+  assert.deepEqual(calls[0],{action:'enable',camera_search:true});
+  assert.equal(run('autonomousSession'),'bosco-session');
+  assert.equal(element('autonomy-enable').disabled,true);
+  assert.equal(element('autonomy-state').textContent,'SEARCHING');
+});
+
+test('a delayed poll cannot erase a newly enabled flight session',async()=>{
+  const {context,run}=await dashboard();let finish;
+  context.fetch=async(url,options)=>{
+    if(!options.body)return new Promise(resolve=>{finish=resolve;});
+    return {ok:true,json:async()=>({enabled:true,session_id:'new-session',receiver:{ready:true}})};
+  };
+  run("state.mode='live'");const polling=run('pollAutonomy()');
+  await run("setAutonomy('enable')");
+  finish({ok:true,json:async()=>({enabled:false,receiver:{ready:true}})});await polling;
+  assert.equal(run('autonomousSession'),'new-session');assert.equal(run('state.autonomy.enabled'),true);
+});
+
+test('camera tilt stays available with missing flight calibration but never in an enabled session',async()=>{
+  const {context,run,element}=await dashboard();const calls=[];
+  context.fetch=async(url,options)=>{calls.push(JSON.parse(options.body));return {ok:true,json:async()=>({enabled:false,receiver:{ready:false,camera_ready:true}})};};
+  run("state.mode='live';state.autonomy={enabled:false,receiver:{ready:false,camera_ready:true}};renderAutonomy()");
+  assert.equal(element('autonomy-enable').disabled,true);assert.equal(element('camera-down').disabled,false);
+  assert.equal(element('camera-shallow').disabled,false);
+  await run("setAutonomy('camera',{pitch_deg:-45})");
+  assert.equal(calls[0].action,'camera');assert.equal(calls[0].pitch_deg,-45);
+  assert.equal(run('autonomousSession'),null);
+  run('state.autonomy.enabled=true;renderAutonomy()');assert.equal(element('camera-down').disabled,true);
+  assert.equal(element('camera-shallow').disabled,true);
+  await run("setAutonomy('camera',{pitch_deg:-45})");assert.equal(calls.length,1);
+});
+
+test('one dropped heartbeat reply retries the same session instead of causing a watchdog landing',async()=>{
+  const {context,run,element}=await dashboard();const calls=[];
+  run("state.mode='live';autonomousSession='active-session';state.autonomy={enabled:true,session_id:'active-session',receiver:{ready:false},mission:{id:'flying'}}");
+  context.fetch=async(url,options)=>{calls.push(JSON.parse(options.body));throw new Error('temporary timeout');};
+  await run('pollAutonomy()');
+  assert.equal(run('autonomousSession'),'active-session');
+  assert.equal(element('autonomy-state').textContent,'CONNECTION LOST');
+  context.fetch=async(url,options)=>{
+    calls.push(JSON.parse(options.body));
+    return {ok:true,json:async()=>({enabled:true,session_id:'active-session',mission:{id:'flying'},receiver:{phase:'recover'}})};
+  };
+  await run('pollAutonomy()');
+  assert.deepEqual(calls,[{action:'heartbeat',session_id:'active-session'},{action:'heartbeat',session_id:'active-session'}]);
+  assert.equal(element('autonomy-state').textContent,'REACQUIRING');
+  assert.match(element('autonomy-detail').textContent,/Holding position/);
+});
+
+test('authoritative expiry clears heartbeat ownership and failed LAND cannot keep renewing it',async()=>{
+  const {context,run}=await dashboard();
+  run("state.mode='live';autonomousSession='expired-session'");
+  context.fetch=async()=>({ok:false,status:409,json:async()=>({error:'Session expired'})});
+  await run('pollAutonomy()');assert.equal(run('autonomousSession'),null);
+  run("autonomousSession='still-active';state.autonomy={enabled:true}");
+  context.fetch=async()=>{throw new Error('offline');};
+  await run("setAutonomy('land')");assert.equal(run('autonomousSession'),null);
+});
+
+test('emergency telemetry overrides even a newer incorrect landed event',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.telemetry={state:'emergency',observed_at:new Date(Date.now()-300).toISOString()};
+    state.flight.events=[{phase:'landed',at:new Date().toISOString(),message:'aircraft confirmed landed'}];
+    state.autonomy={enabled:false,receiver:{ready:true,camera_ready:true,camera_search_supported:true}};
+    renderFlight();renderAutonomy();`);
+  assert.match(element('flight-phase').textContent,/emergency · landing not confirmed/);
+  assert.equal(element('flight-bar').style.width,'0%');
+  assert.equal(element('autonomy-state').textContent,'EMERGENCY');
+  assert.equal(element('autonomy-enable').disabled,true);
+  run("state.telemetry.state='hovering';renderFlight()");
+  assert.match(element('flight-phase').textContent,/Landing unconfirmed/);
+  run("state.telemetry.state='landed';renderFlight()");
+  assert.match(element('flight-phase').textContent,/Flight pattern · landed/);
+});
+
+test('QR readiness does not imply RGB localization readiness',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,receiver:{ready:true,localization_sources:['qr-test'],
+    blocked_source:'yolo',reason:'Ground-plane geometry needs physical verification'}};renderAutonomy()`);
+  assert.match(element('autonomy-limits').textContent,/Location verified for QR markers\./);
+  assert.match(element('autonomy-detail').textContent,/RGB fire detected; automatic flight unavailable/);
+  assert.match(element('autonomy-detail').textContent,/physical verification/);
+});
+
+test('preflight displays configured scale and scope without claiming camera-profile verification',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,waiting_reason:'Fire detected; waiting for its incident record to be accepted',
+    receiver:{ready:true,position:{forward_m:.7,right_m:.05},calibration:{qr_side_m:.12,offset_body_m:[.08,0,0],
+      image_size:[1280,720],rms_px:.344,qr_verified:true,profile_verified:null}}};renderAutonomy()`);
+  assert.match(element('autonomy-calibration').textContent,/12 cm/);
+  assert.match(element('autonomy-calibration').textContent,/8 \/ 0 \/ 0 cm/);
+  assert.match(element('autonomy-calibration').textContent,/1280 × 720/);
+  assert.match(element('autonomy-calibration').textContent,/Grounded QR location verified/);
+  assert.match(element('autonomy-calibration').textContent,/Historical camera zoom\/crop match is unknown/);
+  assert.match(element('autonomy-detail').textContent,/incident record/);
+});
+
+test('a claimed grounded mission is acquiring and expiry remains visible when the receiver is ready again',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,mission:{id:'claimed'},receiver:{ready:true,phase:'preflight',reason:'Checking position'}};renderAutonomy()`);
+  assert.equal(element('autonomy-state').textContent,'ACQUIRING');
+  assert.match(element('autonomy-detail').textContent,/checking takeoff readiness/);
+  run(`state.autonomy={enabled:false,reason:'Control connection expired; landing requested',receiver:{ready:true,reason:'Ready for a new session'}};renderAutonomy()`);
+  assert.match(element('autonomy-detail').textContent,/Control connection expired/);
+  assert.match(element('autonomy-detail').textContent,/Ready to search/);
+});
+
+test('adaptive scale displays automatic acquisition and only calls current measured geometry verified',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:false,receiver:{ready:true,qr_scale_mode:'adaptive',
+    localization_sources:['qr-test'],calibration:{qr_side_m:.12,offset_body_m:[.08,0,0],image_size:[1280,720],
+    rms_px:.344,qr_verified:true,profile_verified:null}}};renderAutonomy()`);
+  assert.match(element('autonomy-calibration').textContent,/QR size estimated automatically during vertical acquisition/);
+  assert.doesNotMatch(element('autonomy-calibration').textContent,/12 cm|Configured QR black square/);
+  assert.match(element('autonomy-calibration').textContent,/8 \/ 0 \/ 0 cm/);
+  assert.match(element('autonomy-calibration').textContent,/1280 × 720/);
+  assert.match(element('autonomy-calibration').textContent,/not yet verified/);
+  assert.doesNotMatch(element('autonomy-limits').textContent,/Location verified for QR/);
+  run("state.autonomy.receiver.position={source:'measured-qr-3d',forward_m:1,right_m:0};renderAutonomy()");
+  assert.match(element('autonomy-calibration').textContent,/Metric target scale verified from current observations/);
+});
+
+test('live controls bind alongside fleet dashboard polling without starting aircraft on connection', async () => {
+  const {context, run, element} = await dashboard();
+  const calls = [], polls = [];
+  context.setInterval = () => 0;
+  context.trackPoll = (ms, name) => polls.push({ms, name});
+  context.fetch = async (url, options) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({url, body});
+    return {ok: true, json: async () => url === '/api/status' ? {contract: 'emberwatch.v1'} : {
+      enabled: body?.action === 'enable', session_id: 'owned-live-session',
+      receiver: {ready: true, camera_ready: true, camera_search_supported: true},
+    }};
+  };
+  run("state.mode = 'live'; every = (ms, name) => trackPoll(ms, name); streamVideo = () => {};");
+  await run('connect()');
+  assert.deepEqual(calls.map(call => call.url), ['/api/status']);
+  assert.deepEqual(polls.find(poll => poll.name === 'autonomy'), {ms: 250, name: 'autonomy'});
+  for (const name of ['people', 'telemetry', 'incident', 'flight', 'status']) {
+    assert.ok(polls.some(poll => poll.name === name), `${name} continues polling`);
+  }
+  for (const [id, pitch] of [['camera-level', 0], ['camera-shallow', -30], ['camera-down', -45], ['camera-steep', -70]]) {
+    await element(id).onclick();
+    assert.deepEqual(calls.at(-1).body, {action: 'camera', pitch_deg: pitch});
+  }
+  await element('autonomy-enable').onclick();
+  assert.deepEqual(calls.at(-1).body, {action: 'enable', camera_search: true});
+  await element('autonomy-land').onclick();
+  assert.deepEqual(calls.at(-1).body, {action: 'land'});
+  assert.equal(run('autonomousSession'), null);
+});
+
+test('an observing dashboard cannot inherit heartbeat ownership from the status response', async () => {
+  const {context, run} = await dashboard();
+  const calls = [];
+  context.fetch = async (url, options) => {
+    calls.push({url, method: options.method, body: options.body});
+    return {ok: true, json: async () => ({enabled: true, session_id: 'other-browser-session', receiver: {ready: true}})};
+  };
+  run("state.mode = 'live'");
+  await run('pollAutonomy()');
+  await run('pollAutonomy()');
+  assert.equal(run('autonomousSession'), null);
+  assert.ok(calls.every(call => call.method === 'GET' && call.body === undefined));
+});
+
+test('tracked fire status preserves person overlays and original camera capture freshness', async () => {
+  const {context, run, element} = await dashboard();
+  const labels = [], boxes = [];
+  const drawing = {
+    /** Accept a decoded camera image without drawing actual pixels in this fixture. */
+    drawImage() {},
+    /** Record the evidence boxes drawn on the shared camera. */
+    strokeRect(...box) { boxes.push(box); },
+    /** Record label and colour so person evidence cannot become a fire overlay. */
+    fillText(label) { labels.push({label, color: this.fillStyle}); },
+  };
+  element('camera').getContext = () => drawing;
+  context.Blob = Blob;
+  context.createImageBitmap = async () => ({width: 1280, height: 720, close() {}});
+  const at = Date.now() - 400;
+  context.frame = {jpeg: new Uint8Array([1]), captured: new Date(at).toISOString(), detections: [
+    {label: 'person', source: 'yolo-person', confidence: .9, bbox: [.6, .2, .7, .5]},
+    {label: 'fire', source: 'qr-test', confidence: .99, bbox: [.2, .3, .4, .6]},
+  ]};
+  context.tracked = {episode_id: 'live-qr', label: 'fire', source: 'qr-test', confidence: .99,
+    bbox: [.2, .3, .4, .6], at, first: at - 1000, hits: 6};
+  run("state.mode = 'live'; state.autonomy = {observed_target: tracked, receiver: {position: {episode_id: 'live-qr'}}}");
+  await run('drawFrame(frame)');
+  assert.equal(boxes.length, 2);
+  assert.deepEqual(labels, [{label: 'PERSON 90%', color: '#5CC8C0'}, {label: 'FIRE · LOCATED 99%', color: '#E8562A'}]);
+  assert.equal(run('state.video.lastAt'), at, 'overlay never refreshes the source capture time');
+  await run('drawFrame(frame)');
+  assert.equal(run('state.video.times.length'), 1, 'redrawing one capture cannot invent camera FPS');
+  labels.length = 0;
+  run('state.autonomy.observed_target.at -= 1000');
+  await run('drawFrame(frame)');
+  assert.deepEqual(labels.map(entry => entry.label), ['PERSON 90%', 'FIRE · QR scenario 99%'], 'stale tracking never attaches to a different frame');
+  labels.length = 0;
+  run('frame.detections = [frame.detections[0]]');
+  await run('drawFrame(frame)');
+  assert.doesNotMatch(element('camera-label').innerHTML, /FIRE IN VIEW/);
+});

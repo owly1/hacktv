@@ -605,3 +605,15 @@ body.panel-fullscreen{overflow:hidden}
  .guide-page table,.guide-card,.flow-image{break-inside:avoid}
  .guide-page pre{background:white;color:var(--ink);border:1px solid var(--line)}
 }
+
+/* Live flight controls inherit the connected dashboard theme. */
+.autonomy-panel{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 22px;margin:0;border:1px solid var(--line-2);border-radius:16px;background:var(--surface)}
+.autonomy-panel h2{font-size:16px;margin:0 0 7px;display:flex;gap:12px;align-items:center}
+.autonomy-panel p{margin:4px 0;color:var(--ink-2);font-size:13px}
+.autonomy-panel .microcopy{color:var(--muted);font-size:12px}
+.autonomy-actions{display:flex;gap:10px;flex-shrink:0}
+.camera-preview{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--muted)}
+.camera-preview .button{font-size:12px;min-height:36px}
+.autonomy-land{border-color:var(--ember-ink);color:var(--ember-ink);background:var(--ember-pale)}
+.autonomy-panel[data-enabled=true]{border-color:var(--ember-ink);box-shadow:inset 4px 0 var(--ember-ink)}
+@media(max-width:800px){.autonomy-panel{align-items:stretch;flex-direction:column;gap:12px}.autonomy-actions .button{flex:1}}

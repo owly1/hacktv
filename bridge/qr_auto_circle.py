@@ -202,13 +202,22 @@ class QRAutoCircle(HoverCheckout):
                     if not pending.success():
                         raise RuntimeError('camera rejected tracking target')
                 pitch = self._camera_pitch()
+                if pitch is None:
+                    self.camera_stop.wait(getattr(self,'camera_period',.2))
+                    continue
+                if not math.isfinite(pitch) or not -90<=pitch<=90:
+                    raise RuntimeError('invalid camera tracking target')
                 pending = self.drone(gimbal.set_target(
                     gimbal_id=0, control_mode='position',
                     yaw_frame_of_reference='none', yaw=0.,
                     pitch_frame_of_reference='absolute', pitch=pitch,
                     roll_frame_of_reference='none', roll=0., _no_expect=True))
                 sent_at = time.monotonic()
-                self.camera_stop.wait(.2)
+                if sent_at-getattr(self,'last_camera_diagnostic',float('-inf'))>=.25:
+                    self.last_camera_diagnostic=sent_at
+                    self.publisher.diagnostic('camera_tracking',{'requested_pitch_deg':pitch,
+                        'actual_pitch_deg':self._gimbal_pitch(),'phase':self.flight_phase})
+                self.camera_stop.wait(getattr(self,'camera_period',.2))
         except Exception as error:
             self.report('aborted', f'camera tracking failed: {error}')
             self._request_landing(force=False)

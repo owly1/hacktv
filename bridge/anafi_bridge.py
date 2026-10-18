@@ -438,7 +438,7 @@ class AnafiBridge:
         self.lock = threading.Lock()
         self.telemetry = None  # latest sample in the ingest-contract shape; None when not connected
         self.fps = 0.0
-        self.latest_bgr = None  # (image, capture time) — shared with the video and detector threads
+        self.latest_bgr = None  # (image, SDK callback receipt time), before queue/conversion delay
         self.status = ("Starting ...", "")
         self.warned_format = False
         # indoor position: metres north/east of --home from commanded moves
@@ -465,14 +465,14 @@ class AnafiBridge:
             return None
 
     def _gimbal_pitch(self):
-        """Read the camera's current absolute pitch in degrees when available."""
         s = self._state(gimbal.attitude)
-        if s is None:
+        if not isinstance(s, dict):
             return None
         if 0 in s and isinstance(s[0], dict):  # multi-instance message, keyed by gimbal_id
             s = s[0]
         try:
-            return float(s["pitch_absolute"])
+            pitch = float(s["pitch_absolute"])
+            return pitch if math.isfinite(pitch) else None
         except (KeyError, TypeError, ValueError):
             return None
 
@@ -921,30 +921,44 @@ class AnafiBridge:
             self._land()
 
     def _land(self):
-        """Send the older bridge's controlled-landing request when a drone object exists."""
         if self.drone is None:
             return
         self.flight_phase = "landing"
         self.publisher.flight("landing")
+        # The legacy terminal demo must use the same evidence requirements as
+        # BOSCO; a completed wait or sent Landing command is not a landing.
+        from qr_orbit_bridge import SensorAges, OlympeOrbitDriver
+        listener = SensorAges(self.drone, self.publisher)
+        previous = getattr(self, 'sensor_ages', None)
+        self.sensor_ages = listener
+        confirmed = False
         try:
-            self.drone(Landing() >> FlyingStateChanged(state="landed", _timeout=30)).wait()
+            listener.subscribe()
+            confirmed = OlympeOrbitDriver(self).land()
         except Exception as e:
             print(f"[!] Landing command error: {e!r}")
-        self.flight_phase = "landed"
-        self.publisher.flight("landed")
+        finally:
+            try:
+                listener.unsubscribe()
+            except Exception:
+                pass
+            self.sensor_ages = previous
+        self.flight_phase = "landed" if confirmed else "error"
+        self.publisher.flight(self.flight_phase, "aircraft confirmed landed" if confirmed else
+                              "LANDING UNCONFIRMED: inspect aircraft state; pilot intervention required")
 
     # ---------- Olympe streaming callbacks (run in Olympe's thread) ----------
 
     def _yuv_frame_cb(self, yuv_frame):
-        """Retain a decoded SDK frame for the bounded processing queue."""
+        received_at = time.time()
         yuv_frame.ref()
         if self.frame_queue.full():
             try:
-                self.frame_queue.get_nowait().unref()  # drop the oldest frame
+                self.frame_queue.get_nowait()[0].unref()  # drop the oldest frame
             except queue.Empty:
                 pass
         try:
-            self.frame_queue.put_nowait(yuv_frame)
+            self.frame_queue.put_nowait((yuv_frame, received_at))
         except queue.Full:
             yuv_frame.unref()
 
@@ -954,10 +968,9 @@ class AnafiBridge:
         return True
 
     def _drain_queue(self):
-        """Unreference every retained frame still waiting in the queue."""
         while True:
             try:
-                self.frame_queue.get_nowait().unref()
+                self.frame_queue.get_nowait()[0].unref()
             except queue.Empty:
                 break
 
@@ -1143,7 +1156,6 @@ class AnafiBridge:
             self.abort_flight.set()
 
     def run(self):
-        """Start workers and receive/display frames, then release resources during shutdown."""
         workers = [self._connection_loop, self._telemetry_loop, self._video_loop, self._detect_loop]
         if self.args.demo_flight:
             workers.append(self._demo_flight)
@@ -1159,7 +1171,7 @@ class AnafiBridge:
         try:
             while self.running:
                 try:
-                    yuv_frame = self.frame_queue.get(timeout=0.1)
+                    yuv_frame, received_at = self.frame_queue.get(timeout=0.1)
                 except queue.Empty:
                     # Show status until video arrives (or after it stops for a moment)
                     if show and (not self.connected or time.time() - last_shown > 1.0):
@@ -1170,11 +1182,12 @@ class AnafiBridge:
                     finally:
                         yuv_frame.unref()
                     if img is not None:
-                        now = self.last_frame_time = last_shown = time.time()
+                        now = last_shown = time.time()
+                        self.last_frame_time = received_at
                         frames += 1
                         if now - t0 >= 1.0:
                             self.fps, frames, t0 = frames / (now - t0), 0, now
-                        self.latest_bgr = (img, now)  # clean frame, before the overlay
+                        self.latest_bgr = (img, received_at)  # Queue delay must not make an old image fresh.
                         if show:
                             view = img.copy()
                             self._draw_overlay(view)

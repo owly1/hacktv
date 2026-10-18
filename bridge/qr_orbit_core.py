@@ -14,11 +14,12 @@ class Limits:
     segments: int = 12
     arm_seconds: float = 20.0
     mission_seconds: float = 75.0
+    lap_seconds: float | None = None
 
     def __post_init__(self):
-        """Reject radius, height, speed and timing settings outside this experiment's bounds."""
+        if self.lap_seconds not in (None,15.):raise ValueError('Supported timed lap is 15 seconds')
         for value, low, high in ((self.radius_m, .75, 1.5), (self.height_m, .8, 1.5),
-                                 (self.speed_mps, .1, .3), (self.arm_seconds, 5, 30),
+                                 (self.speed_mps, .1, .6 if self.lap_seconds else .3), (self.arm_seconds, 5, 30),
                                  (self.mission_seconds, 30, 90)):
             if not math.isfinite(value) or not low <= value <= high:
                 raise ValueError("Orbit settings exceed the bounded demonstration envelope")
@@ -49,8 +50,38 @@ class Marker:
     reprojection_px: float
 
 
-def vehicle_reason(v, limits, now, starting=False):
-    """Return why the sampled aircraft is outside its state, freshness or motion limits."""
+class LandingConfirmation:
+    """A landed event is necessary, but is not proof of a settled landing.
+
+    A later emergency latches failure for this connection. The landing surface
+    need not be at takeoff altitude, but current attitude/speed must show a
+    stationary, upright aircraft for a continuous half second.
+    """
+    def __init__(self):
+        self.since = None
+        self.fault = None
+
+    def observe(self, *, now, requested_at, state, state_at, emergency_at,
+                connected, sensors_at, roll, pitch, speed):
+        if state == 'emergency' or (emergency_at is not None and math.isfinite(emergency_at)):
+            self.fault = 'Aircraft entered emergency state; landing is not confirmed'
+        if self.fault:
+            self.since = None
+            return False
+        numbers = (state_at, sensors_at, roll, pitch, speed)
+        valid = (requested_at is not None and connected and state == 'landed'
+                 and all(isinstance(v, (int,float)) and math.isfinite(v) for v in numbers)
+                 and requested_at <= state_at <= sensors_at <= now and 0 <= now-sensors_at <= 1
+                 and max(abs(roll), abs(pitch)) <= 20 and 0 <= speed <= .1)
+        if not valid:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = sensors_at
+        return sensors_at-self.since >= .5
+
+
+def vehicle_reason(v, limits, now, starting=False,*,min_battery_pct=40):
     if v is None or not v.connected or not 0 <= now - v.at <= 1.0:
         return "aircraft link or received sensor samples are stale"
     if v.controller_source_ok is not True:
@@ -58,19 +89,18 @@ def vehicle_reason(v, limits, now, starting=False):
     values = (v.battery_pct, v.altitude_m, v.speed_mps, v.tilt_deg)
     if any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in values):
         return "required aircraft state is unknown"
-    if v.battery_pct < 40:
-        return "battery below 40%"
+    if v.battery_pct < min_battery_pct:
+        return f"battery below {min_battery_pct}%"
     if v.state not in (("hovering",) if starting else ("hovering", "flying")):
         return "a pilot-established hover is required" if starting else "unexpected flight state"
     if abs(v.altitude_m - limits.height_m) > .2:
         return "height outside the planned hover band"
-    if v.speed_mps > (.15 if starting else .45) or abs(v.tilt_deg) > (5 if starting else 12):
+    if v.speed_mps > (.15 if starting else .75 if limits.lap_seconds else .45) or abs(v.tilt_deg) > (5 if starting else 12):
         return "aircraft is moving or tilted beyond the limit"
     return None
 
 
 def marker_reason(m, expected, limits, now):
-    """Return why the selected measured floor-marker pose is unusable for a centred orbit."""
     if m is None or m.text != expected or not 0 <= now - m.at <= .8:
         return "the selected QR marker is missing or stale"
     numbers = (m.forward_m, m.right_m, m.down_m, m.floor_tilt_deg, m.reprojection_px)
@@ -90,7 +120,6 @@ class Trigger:
     consumes this instance; restart and explicitly arm again for another attempt.
     """
     def __init__(self, expected, limits):
-        """Configure one-use recognition for the selected marker and bounded flight limits."""
         if expected != FIRE_MARKER_PAYLOAD:
             raise ValueError(f"Only the fire marker {FIRE_MARKER_PAYLOAD} can be selected")
         self.expected, self.limits = expected, limits
@@ -101,17 +130,14 @@ class Trigger:
         self.reason = "pilot has not armed the orbit"
 
     def arm(self, now):
-        """Open one timed recognition window only when the required aircraft state is valid."""
         if self.state != "disarmed":
             raise ValueError("This arming session is already consumed; restart to try again")
         self.state, self.arm_at, self.reason = "armed", now, "waiting for the selected QR marker"
 
     def cancel(self, reason="operator cancelled"):
-        """Consume/disarm recognition so cancelled input cannot later start a mission."""
         self.state, self.reason = "cancelled", reason
 
     def observe(self, marker, vehicle, now, rehearsal=False):
-        """Confirm fresh, consistent selected-marker samples while the arming window remains valid."""
         if self.state != "armed":
             return False
         if now - self.arm_at >= self.limits.arm_seconds:
@@ -162,7 +188,6 @@ def fly_once(driver, limits, expected, sample, abort, report, clock=time.monoton
     started = clock()
 
     def check():
-        """Recheck cancellation, elapsed time, aircraft health and measured marker validity during flight."""
         if abort.is_set():
             raise InterruptedError("operator requested landing")
         if clock() - started > limits.mission_seconds:

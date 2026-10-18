@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import unittest
+from unittest.mock import Mock, patch
 from urllib.request import Request, urlopen
 
 import cv2
@@ -24,6 +26,115 @@ HIT = {'source': 'qr-test', 'label': 'fire', 'confidence': 1., 'bbox': [0., 0., 
 
 
 class FireMonitorTests(unittest.TestCase):
+    def test_slow_incident_storage_cannot_block_fresh_target_updates(self):
+        detector=Mock(model_status='ready')
+        detector.detect.return_value=HIT
+        monitor=Monitor('http://127.0.0.1:1','dashboard','ingest',detector)
+        image=np.zeros((40,40,3),np.uint8)
+        _, encoded=cv2.imencode('.jpg',image)
+        captured=[100.]
+        class Response(io.BytesIO):
+            @property
+            def headers(self):
+                from fire_monitor import iso
+                return {'X-Captured-At':iso(captured[0])}
+        monitor.get=Mock(side_effect=lambda path:Response(encoded.tobytes()))
+        posts=[]
+        monitor.post=lambda path,body,**kwargs:posts.append((path,body))
+        started=threading.Event();release=threading.Event()
+        def slow_incident(hit,jpeg,at,episode,frame_shape):
+            started.set();release.wait(2)
+            return episode,hit['source'],at,at+.01
+        monitor._publish_incident=slow_incident
+        try:
+            with patch('fire_monitor.time.time',side_effect=lambda:captured[0]+.01):
+                for at in [100,100.2,100.4]:
+                    captured[0]=at;monitor.step()
+                self.assertTrue(started.wait(1))
+                for at in [100.6,100.8,101.]:
+                    captured[0]=at;monitor.step()
+            self.assertFalse(monitor.incident_pending.done())
+            self.assertEqual(len(posts),6)
+            self.assertTrue(all(path=='/api/ingest/autonomy/target' for path,_ in posts))
+            self.assertEqual(len({body['captured_at'] for _,body in posts}),6)
+            self.assertTrue(all(body['hit']['qr_text']==MARKER for _,body in posts))
+        finally:
+            release.set();monitor.close()
+
+    def test_flight_feed_disables_observer_inference_and_overlay_work(self):
+        """An injected person model cannot delay the explicitly selected flight feed."""
+        detector = Mock(model_status='ready')
+        detector.detect.return_value = HIT
+        people = Mock(model_status='ready')
+        people.detect.side_effect = AssertionError('Person inference reached flight feed')
+        monitor = Monitor('http://127.0.0.1:1', 'dashboard', 'ingest', detector, people, observer=False)
+        encoded = cv2.imencode('.jpg', np.zeros((40, 60, 3), np.uint8))[1]
+        class Response(io.BytesIO):
+            headers = {'X-Captured-At': '1970-01-01T00:01:40+00:00'}
+        monitor.get = Mock(return_value=Response(encoded.tobytes()))
+        monitor.post = Mock()
+        try:
+            with patch('fire_monitor.time.time', return_value=100.01):
+                monitor.step()
+            people.detect.assert_not_called()
+            self.assertEqual(monitor.health['people_model_status'], 'disabled')
+            self.assertEqual(monitor.post.call_count, 1)
+            self.assertEqual(monitor.post.call_args.args[0], '/api/ingest/autonomy/target')
+            self.assertEqual(monitor.post.call_args.kwargs, {'timeout': .5})
+            detector.detect.assert_called_once()
+            self.assertEqual(detector.detect.call_args.kwargs, {'captured_at': 100.})
+        finally:
+            monitor.close()
+
+    def test_observer_template_and_aged_frames_publish_people_without_flight_targets(self):
+        """Observer freshness and tracked QR overlays never depend on an armed flight session."""
+        detector = Mock(model_status='ready')
+        detector.detect.return_value = {**HIT, 'qr_tracking': 'visual-template', 'qr_decoded_at': 90000}
+        person_hit = {'source': 'yolo', 'label': 'person', 'confidence': .9, 'bbox': [.1, .1, .3, .6]}
+        people = Mock(model_status='ready', name='fake-person-model')
+        people.detect.return_value = [person_hit]
+        monitor = Monitor('http://127.0.0.1:1', 'dashboard', 'ingest', detector, people, observer=True)
+        encoded = cv2.imencode('.jpg', np.zeros((40, 60, 3), np.uint8))[1]
+        captured = [98.2]
+        class Response(io.BytesIO):
+            @property
+            def headers(self):
+                from fire_monitor import iso
+                return {'X-Captured-At': iso(captured[0])}
+        monitor.get = Mock(side_effect=lambda path: Response(encoded.tobytes()) if path == '/api/snapshot'
+                           else io.BytesIO(b'{"age_ms":null,"sample":null}'))
+        posts = []
+        def post(path, body, **kwargs):
+            if path == '/api/ingest/autonomy/target':
+                raise AssertionError('Observer attempted flight target publication')
+            posts.append((path, body))
+        monitor.post = post
+        try:
+            with patch('fire_monitor.time.time', side_effect=lambda: captured[0] + 1.8):
+                for at in [98.2, 98.4, 98.6]:
+                    captured[0] = at
+                    monitor.step()
+            overlays = [body for path, body in posts if path == '/api/ingest/overlays']
+            sightings = [body for path, body in posts if path == '/api/ingest/person/sighting']
+            self.assertEqual(len(overlays), 3)
+            self.assertTrue(all(len(body['detections']) == 2 for body in overlays))
+            self.assertEqual(len(sightings), 1)
+            self.assertIsNone(sightings[0]['drone'])
+            self.assertEqual(people.detect.call_count, 3)
+            self.assertIsNone(monitor.incident_pending)
+        finally:
+            monitor.close()
+
+    def test_optical_tracking_cannot_create_an_incident_or_refresh_decode_confirmation(self):
+        for method in ('optical-flow','visual-template'):
+            e=Episodes();tracked={**HIT,'qr_tracking':method}
+            for at in [100,100.2,100.4,100.6]:self.assertIsNone(e.observe(tracked,at,at+.01))
+            self.assertIsNone(e.episode);self.assertEqual(e.hits,0)
+            for at in [101,101.2,101.4]:episode=e.observe(HIT,at,at+.01)
+            self.assertTrue(episode);e.acknowledged(101.4)
+            self.assertIsNone(e.observe(tracked,107,107.01))
+            self.assertEqual(e.episode,episode);self.assertEqual(e.last_post,101.4)
+
     def test_repository_marker_classifies_as_fire_even_without_quiet_zone(self):
         """Verify repository marker classifies as fire even without quiet zone."""
         detector = FireDetector('', .5, use_yolo=False)
@@ -153,6 +264,8 @@ const server=http.createServer(app); server.listen(0,'127.0.0.1',()=>console.log
                     self.assertEqual(response.status, 204)
                 with contextlib.redirect_stdout(io.StringIO()):
                     monitor.step()
+            monitor.incident_pending.result(timeout=3)
+            monitor._finish_incident()
             with monitor.get('/api/incident') as response:
                 incident = json.load(response)['incident']
             self.assertTrue(incident['active'])
@@ -166,6 +279,7 @@ const server=http.createServer(app); server.listen(0,'127.0.0.1',()=>console.log
             with monitor.get('/api/status') as response:
                 self.assertFalse(json.load(response)['gemini']['automatic_analysis'])
         finally:
+            if 'monitor' in locals():monitor.close()
             server.terminate()
             server.communicate(timeout=5)
 

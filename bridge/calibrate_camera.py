@@ -166,6 +166,9 @@ def fit(args):
     if output.exists():
         raise ValueError("camera.local.json already exists; use a new session folder")
     pattern = session_pattern(args.directory, args.columns, args.rows)
+    metadata_path = args.directory/'session.json'
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    square_mm = metadata.get('square_mm',args.square_mm)
     views, size = [], None
     for path in sorted(args.directory.glob("view-*.png")):
         image = cv2.imread(str(path))
@@ -178,11 +181,11 @@ def fit(args):
         corners = board_corners(image, pattern)
         if corners is not None:
             views.append(corners)
-    k, dist, rms, per_view = fit_views(views, size, args.square_mm/1000, pattern)
+    k, dist, rms, per_view = fit_views(views, size, square_mm/1000, pattern)
     result = {"measured_and_verified": False, "image_size": list(size), "camera_matrix": k.tolist(),
               "distortion_coefficients": dist.reshape(-1).tolist(), "camera_offset_body_m": [None, None, None],
               "qr_black_square_side_m": args.qr_side_cm/100, "rms_px": rms, "per_view_rms_px": per_view,
-              "board_squares": [pattern[0]+1, pattern[1]+1], "views": len(views), "created_at": datetime.now(timezone.utc).isoformat(),
+              "board_squares": [pattern[0]+1, pattern[1]+1], "square_mm": square_mm, "views": len(views), "created_at": datetime.now(timezone.utc).isoformat(),
               "notes": "Estimated intrinsics only. Measure the camera offset, validate independent QR target poses and gimbal axes, then record verification. Native resolution, crop and zoom must match the orbit stream."}
     output.write_text(json.dumps(result, indent=2)+"\n", encoding="utf-8")
     print(f"Saved {output}; RMS {rms:.3f} px from {len(views)} views.")

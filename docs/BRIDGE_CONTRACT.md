@@ -4,7 +4,8 @@ Contract: `emberwatch.v1`. Ingest requests use `Authorization: Bearer
 <INGEST_TOKEN>`; reads/actions use the distinct dashboard token. The local-only
 `GET /api/session` bootstraps browser access. All timestamps include an ISO
 8601 timezone; normal ingest accepts ±30 seconds, except delayed person data.
-Source of truth: `backend/validation.mjs`, `backend/people.mjs`, `backend/server.mjs`.
+Source of truth: `backend/validation.mjs`, `backend/people.mjs`,
+`backend/autonomy.mjs`, `backend/server.mjs`.
 
 ## Ingest routes
 
@@ -89,6 +90,87 @@ can instead label a configured QR scenario site as
 `qr-scenario-site-not-measured`; RGB positions can remain unknown. Directions
 are degrees clockwise from north, pointing **toward** wind/spread travel.
 
+## Session-controlled autonomous fire response
+
+`fire_response.py` is a separately enabled flight runtime. Its backend session
+starts OFF and is never restored from disk. The browser grants/revokes permission;
+localization, aircraft commands, motion guards and landing remain in the receiver.
+Ordinary camera/person ingest and Replay do not enable this runtime.
+
+| Endpoint | Authentication / behavior |
+|---|---|
+| `GET /api/autonomy` | Dashboard token; current session, receiver and target state |
+| `POST /api/autonomy` | Dashboard token; `action: enable`, `land`, `disable`, `heartbeat`, or `camera` |
+| `GET /api/ingest/autonomy` | Ingest token; the receiver reads the same control snapshot |
+| `POST /api/ingest/autonomy/status` | Ingest token; receiver readiness, phase and optional measured position/calibration |
+| `POST /api/ingest/autonomy/target` | Ingest token; a timestamped confirmed fire rectangle, or null hit |
+| `POST /api/ingest/autonomy/claim` | Ingest token; atomically claim a confirmed incident for the current receiver/session |
+
+Enable requires a fresh ready receiver and returns `session_id`. An owning
+`{action: "heartbeat", session_id}` must acknowledge that exact session before
+any target can authorize takeoff. The dashboard lease expires after five seconds;
+receiver contact expires after three seconds. Reconnection never restores an
+expired session. LAND/disable can be requested by any dashboard-authenticated
+page. Receiver replacement, disconnection, errors and completed landing revoke
+permission. Claims retried by the same receiver for the same fresh matching
+mission return the existing mission rather than authorizing a second flight.
+A deliberate new session can authorize another response to the same marker.
+
+Status requires `receiver_id` (8–80 letters/digits/underscore/hyphen), `ready`
+and `reason`; it may report `aircraft_connected`, `phase`, `camera_ready`,
+`camera_search_supported`, `search_state`, `short_test`, `lap_seconds: 15`,
+`localization_sources`, `blocked_source`, and `qr_scale_mode: measured|adaptive`.
+`position` uses heading-relative `forward_m`, `right_m`, `down_m`, `width_m` in
+metres. Optional `calibration` contains `qr_side_m`, `offset_body_m`, `image_size`,
+`rms_px`, `qr_verified`, `profile_verified`; adaptive mode permits unknown
+`qr_side_m: null`. Unknown scale is not a verified metric position.
+
+Target bodies contain `captured_at`, integer `width`/`height`, `episode_id`, and
+`hit: {source, label, confidence, bbox, qr_text?, qr_corners?, ...}` or `hit: null`.
+Capture times must strictly increase and be less than 1.5 seconds old; a candidate
+must be less than one second old. The source is `yolo` or `qr-test`, the label is
+`fire`, confidence is at least 0.65, and boxes are ordered normalized coordinates.
+QR identity must exactly match the approved payload. Corners are four finite
+TL/TR/BR/BL pixel pairs inside that frame. Before the first claim, five consistent
+decoded observations spanning at least 800 ms after Enable must match an accepted
+`/api/ingest/detection` incident from the last seven seconds. Overlay boxes,
+vision health and person sightings cannot substitute for that accepted incident.
+The claim body is `{receiver_id, session_id, episode_id}`.
+
+`qr_tracking` can be `decoded`, `optical-flow`, or `visual-template`. Flow requires
+current corners and a decode within about 2.5 seconds. Template tracking is
+limited to an already claimed matching QR mission and requires its recent decode
+seed plus the checked template/data/module/coverage evidence. Neither tracking
+method can supply the initial decoded confirmations. `fire_presence` exposes
+`last_seen_at`, `expires_at` and a 15-second `present` indicator; this is observation
+metadata, not a timeout that revokes an existing mission by itself. Fresh exact
+decodes can restore sightings after a longer gap. Permission still depends on
+control connectivity and the receiver's independent flight guards.
+
+`{action: "enable", camera_search: true}` requests the receiver's supported camera
+search before takeoff. `{action: "camera", pitch_deg: 0|-30|-45|-55|-70}` is a
+receiver-bound preview request, valid for five seconds only while autonomy is OFF
+and `camera_ready` is true. The receiver rechecks stationary grounded conditions
+and sends only a gimbal command; camera preview does not authorize flight.
+
+QR flight uses calibrated image/camera geometry and either verified measured QR
+size or adaptive scale acquired from measured vertical motion. The receiver
+requires a fresh metric location and settled aircraft before horizontal control.
+It locks the physical 3D target, aims the body/camera toward it, corrects radius,
+and follows the one-metre ring. Missing visual frames do not require abandoning
+that locked location while measured motion and flight guards remain valid.
+Recovery continues while independent measured radial motion and geometric error
+show progress; pose corrections alone cannot renew the stall check. A 15-second
+lap is the commanded profile, not a claim that every real lap meets that time.
+RGB flight requires the separately verified launch ground plane. Simulated map
+coordinates are never flight geometry; indoor geographic location can remain null.
+
+Snapshot limits are normally a one-metre radius/height, 40% minimum start/flight
+battery and a 300-second session flight limit. Explicit short-test mode uses 30%
+to start, 25% in flight and 60 seconds. Altitude is relative to takeoff, not terrain
+clearance. The receiver enforces its own battery, sensor, motion and control guards;
+backend acceptance does not itself execute an aircraft command.
+
 ## Person observation
 
 Required: `observed_at`, `provenance: "live"`, `sensor: "visible"|"thermal"`,
@@ -117,7 +199,7 @@ disconnected or waiting. A 200 response or retained picture is not a live link.
 Vision health uses `model_status=ready|missing|error|disabled` and
 `camera_state=live|waiting|stale`, with optional frame/detection times, source and error.
 
-Flight phases are `preflight`, `takeoff`, `climb`, `circle`, `return`, `landing`,
+Flight phases are `preflight`, `takeoff`, `climb`, `recover`, `circle`, `return`, `landing`,
 `landed`, `aborted`, `error`. They report events, not commands. The backend,
 dashboard and Gemini cannot pilot. Explicit terminal runtimes own execution;
 automatic observation recovery never restarts a flight session.
