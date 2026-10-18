@@ -90,19 +90,19 @@ function contourWindEvidence(plan, now=Date.now()) {
   const ageSeconds=Math.max(0,(now-at)/1000,Number.isFinite(w.age_s)?w.age_s:0);
   const current=plan.wind_status!=='stale'&&freshWind(w,now);
   return {status:current?'measured':'stale',speedKmh,direction,ageSeconds,
-    label:current?`FC wind estimate ${Number(speedKmh.toFixed(1))} km/h ${toward}`:
-      `Last measured wind · ${Math.round(ageSeconds)} s old · degraded · ${Number(speedKmh.toFixed(1))} km/h ${toward}`};
+    label:current?`FC wind estimate ${speedKmh.toFixed(1)} km/h ${toward}`:
+      `Last measured wind · ${Math.round(ageSeconds)} s old · degraded · ${speedKmh.toFixed(1)} km/h ${toward}`};
 }
 /** Keep live wind provenance visible while preserving the replay's scenario readout. */
 function renderWindMetric(now=Date.now()) {
   if(state.mode==='demo') {
-    $('wind-value').textContent=Math.round(state.windShown??state.scenario.wind);
+    $('wind-value').textContent=(state.windShown??state.scenario.wind).toFixed(1);
     $('wind-context').textContent=`toward ${M.compass(state.scenario.direction)} · replay scenario`;
     return;
   }
   const w=liveWindReading(now);
   const modelWind=outdoorContourActive()?contourWindEvidence(state.autonomy?.receiver?.contour,now):null;
-  $('wind-value').textContent=w?Number(w.speedKmh.toFixed(1)):'—';
+  $('wind-value').textContent=w?w.speedKmh.toFixed(1):'—';
   $('wind-context').textContent=w?`FC estimate · ${w.direction===null?'calm':`toward ${M.compass(w.direction)}`} · ${w.ageSeconds.toFixed(1)} s old`:
     modelWind?`Live wind unavailable · flight model: ${modelWind.label}`:'Unavailable · awaiting fresh onboard wind';
 }
@@ -290,7 +290,7 @@ function renderDetectionDetails() {
   $('detection-conditions').textContent = [
     det.area_ha != null ? `${det.area_ha} ha${det.area_source ? ' (estimated)' : ''}` : 'Area estimated by model',
     det.intensity, det.fuel, det.spread_m_per_min != null ? `${det.spread_m_per_min} m/min` : null,
-    `${Math.round(state.scenario.wind)} km/h toward ${M.compass(state.scenario.direction)} (${d.source==='qr-test'?'QR scenario':'model input'})`,
+    `${state.scenario.wind.toFixed(1)} km/h toward ${M.compass(state.scenario.direction)} (${d.source==='qr-test'?'QR scenario':'model input'})`,
     `${state.scenario.temp} °C`, `${state.scenario.rh}% RH`,
   ].filter(Boolean).join(' · ');
   $('detection-location').textContent = loc?.simulated
@@ -642,7 +642,7 @@ function renderSpread() {
   $('area-context').textContent = state.minute < .5 ? (age > .1 ? `now · burning ~${Math.round(age)} min` : 'now') : `projected at +${Math.round(state.minute)} min`;
   const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
   const windHead = M.destPoint(o[0], o[1], sc.direction, reach);
-  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`${state.mode==='live'?'Model input':'Replay scenario'} wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
+  L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`${state.mode==='live'?'Model input':'Replay scenario'} wind ${sc.wind.toFixed(1)} km/h toward ${M.compass(sc.direction)}`);
   L.marker(windHead, {icon: L.divIcon({className: 'wind-arrow', html: `<div style="transform:rotate(${Math.round(sc.direction)}deg)">▲</div>`, iconSize: [14, 14], iconAnchor: [7, 7]}), interactive: false}).addTo(state.layers.wind);
 }
 
@@ -1463,7 +1463,7 @@ async function renderHistory() {
 function setPlayButton() { $('play').innerHTML = `<svg aria-hidden="true"><use href="#${state.playing ? 'i-pause' : 'i-play'}"/></svg>`; $('play').setAttribute('aria-label', state.playing ? 'Pause spread projection' : 'Play spread projection'); }
 /** Populate the condition dialog from the supplied spread inputs. */
 function scenarioControls(sc) {
-  for (const [id, key, out] of [['wind-input', 'wind', 'wind-output'], ['dry-input', 'dryness', 'dry-output'], ['temp-input', 'temp', 'temp-output'], ['rh-input', 'rh', 'rh-output']]) { $(id).value = sc[key]; $(out).textContent = Math.round(sc[key]); }
+  for (const [id, key, out] of [['wind-input', 'wind', 'wind-output'], ['dry-input', 'dryness', 'dry-output'], ['temp-input', 'temp', 'temp-output'], ['rh-input', 'rh', 'rh-output']]) { $(id).value = sc[key]; $(out).textContent = key === 'wind' ? sc[key].toFixed(1) : Math.round(sc[key]); }
   $('direction-input').value = sc.direction; $('direction-output').textContent = `${Math.round(sc.direction)}° · ${M.compass(sc.direction)}`;
 }
 let pending = {...M.BASE};

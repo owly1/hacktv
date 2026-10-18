@@ -237,7 +237,7 @@ test('confirmed live QR populates conditions and an interactive projection using
   const nowArea = run('projection().area_ha');
   run('state.minute = 60; renderSpread()');
   assert.ok(run('projection().area_ha') > nowArea);
-  assert.match(element('detection-conditions').textContent, /120 ha.*35 m\/min.*30 km\/h/);
+  assert.match(element('detection-conditions').textContent, /120 ha.*35 m\/min.*30\.0 km\/h/);
   assert.match(element('detection-location').textContent, /not measured/);
   run('state.scenario.wind = 60; renderSpread()');
   assert.ok(run('projection().spread_rate_m_per_min') > 35);
@@ -523,7 +523,7 @@ test('Live wind never substitutes defaults, QR inputs, nulls or stale controller
   context.sample={provenance:'live',observed_at:new Date().toISOString(),extra:{fc_wind_available:true,
     fc_wind_speed_mps:2,fc_wind_direction_deg:90,fc_wind_observed_at:new Date().toISOString(),fc_wind_age_s:0}};
   run('state.telemetry=sample;renderWindMetric()');
-  assert.equal(element('wind-value').textContent,7.2);
+  assert.equal(element('wind-value').textContent,'7.2');
   assert.match(element('wind-context').textContent,/FC estimate · toward E/);
   assert.equal(run('state.scenario.wind'),18,'measurement display does not overwrite model inputs');
   for(const speed of [null,'2',-1,61]) {
@@ -538,14 +538,14 @@ test('Live wind never substitutes defaults, QR inputs, nulls or stale controller
   run('state.telemetry.extra.fc_wind_available=true;state.telemetry.extra.fc_wind_direction_deg=null;renderWindMetric()');
   assert.equal(element('wind-value').textContent,'—','non-calm wind requires direction');
   run('state.telemetry.extra.fc_wind_speed_mps=0;renderWindMetric()');
-  assert.equal(element('wind-value').textContent,0);
+  assert.equal(element('wind-value').textContent,'0.0');
   assert.match(element('wind-context').textContent,/calm/);
   run("state.telemetry.extra.fc_wind_observed_at=new Date(Date.now()-6000).toISOString();state.telemetry.observed_at=new Date().toISOString();renderWindMetric();animate(300)");
   assert.equal(element('wind-value').textContent,'—','a newer telemetry wrapper cannot refresh an old wind event');
   run("state.telemetry.extra.fc_wind_observed_at=new Date().toISOString();state.telemetry.extra.fc_wind_age_s=6;renderWindMetric()");
   assert.equal(element('wind-value').textContent,'—','monotonic sensor age also invalidates a stale cache');
   run("state.mode='demo';state.scenario.wind=24;state.windShown=null;renderWindMetric()");
-  assert.equal(element('wind-value').textContent,24);
+  assert.equal(element('wind-value').textContent,'24.0');
   assert.match(element('wind-context').textContent,/replay scenario/);
 });
 

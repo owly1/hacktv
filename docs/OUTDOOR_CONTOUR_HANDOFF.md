@@ -34,6 +34,9 @@ Changed files and behavior:
   drone is shown; fleet architecture remains frontend-only.
 - README, shared context, bridge/mode guides and Windows deployment manifest
   describe the current workflow; the new wind helper ships in both installers.
+- Preserved the concurrent `1fec62b` dashboard change: wind values display to one
+  decimal place in Live, Replay, scenario controls and tooltips, with provenance
+  retained and missing measurements still shown as unavailable.
 
 Contracts or decisions changed:
 
