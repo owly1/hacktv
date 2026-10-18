@@ -159,6 +159,7 @@ def dest_point(lat, lon, bearing_deg, dist_m):
 
 
 from fire_detection import DEFAULT_CONF, FireDetector, confirm_hits, parse_marker, same_spot
+from fire_location import locate_fire
 from flight_recording import FlightRecorder
 
 
@@ -602,9 +603,12 @@ class AnafiBridge:
 
     # ---------- fire geolocation ----------
 
-    def _locate(self, hit, frame_shape):
+    def _locate(self, hit, frame_shape, captured=None):
         """Ground position of the detected fire from the camera ray, or the QR marker's size."""
         t = self.telemetry or {}
+        if hit['source'] == 'yolo':
+            fire, area = locate_fire(hit, t, frame_shape, hfov_deg=self.args.hfov, captured=captured)
+            return {'fire': fire, 'drone': dict(t), 'est_area_ha': area}
         extra = t.get("extra") or {}
         lat, lon = t.get("latitude"), t.get("longitude")
         heading = extra.get("heading_deg") or 0.0
@@ -724,8 +728,10 @@ class AnafiBridge:
         if not new and now - self.episode["last_post"] < EPISODE_UPDATE_S:
             return
         self.episode["last_post"] = now
-        where = self._locate(hit, img.shape)
+        where = self._locate(hit, img.shape, captured=captured)
         details = hit["details"] or {"name": f"Detected {hit['label']}", "area_ha": where["est_area_ha"]}
+        if hit['source'] == 'yolo' and where['est_area_ha'] is not None:
+            details = {**details, 'area_ha': where['est_area_ha'], 'area_source': 'camera-box-estimate'}
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, DETECTION_JPEG_QUALITY])
         self.publisher.detection({
             "detected_at": utc_iso(captured),

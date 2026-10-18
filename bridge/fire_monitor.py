@@ -84,7 +84,7 @@ def detection_payload(hit, jpeg, captured, episode, telemetry=None, site=None, f
                     position_source='qr-scenario-site-not-measured')
         details.update(position_simulated=True, location_note='Configured scenario site; not measured fire GPS')
     elif hit['source'] == 'yolo':
-        fire, area = locate_fire(hit, telemetry, frame_shape)
+        fire, area = locate_fire(hit, telemetry, frame_shape, captured=captured)
         if area is not None:
             details.update(area_ha=area, area_source='camera-box-estimate')
     return {'detected_at': iso(captured), 'episode_id': episode,

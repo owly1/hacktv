@@ -110,6 +110,11 @@ Only the exact payload in `bridge/orbit-marker.txt` is accepted as a test fire.
 For flight modes, read the selected guide before enabling `--execute`:
 automatic modes can take off as soon as the marker is recognized.
 
+For real camera-detected fires, the live conditions panel shows a
+[distance advisory](docs/REAL_FIRE_STANDOFF.md): estimated fire radius plus
+a 100 m buffer from the estimated edge. It uses fresh camera/GPS evidence,
+remains display-only, and is separate from the indoor QR flight modes.
+
 ## Test
 
 ```sh

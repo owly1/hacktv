@@ -89,6 +89,14 @@ for the selected 120 ha QR. The latter uses the indoor scaling rule
 against the pinned marker area, not an arbitrary requested flight radius.
 The exact QR identity and permitted fire details remain unchanged.
 
+RGB detections from both current detection paths carry `details.area_source:
+camera-box-estimate` when physical area can be estimated, and retain the full
+captured `drone` telemetry (including `observed_at`, provenance and GPS state).
+The shared estimator requires pose/frame timestamps within two seconds and
+rejects incomplete frame-edge boxes. The dashboard's [real-fire distance
+advisory](REAL_FIRE_STANDOFF.md) consumes these existing fields; it is not a
+flight API and adds no command endpoint.
+
 Legacy bridge geolocation uses camera rays/printed size. The laptop monitor
 can instead label a configured QR scenario site as
 `qr-scenario-site-not-measured`; RGB positions can remain unknown. Directions

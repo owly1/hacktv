@@ -1,5 +1,43 @@
 # Fire size handoff
 
+## Real-fire advisory follow-up
+
+Task / owner: Display real-fire distance advice with the user-selected 100 m
+edge buffer / Codex.
+
+Branch / commit: `fire-size`; follow-up commit containing this section.
+Merged updated `origin/main` (including the team's fleet model work) into the
+existing branch before extending it.
+
+Changed files and behavior: `dist/fire-standoff.js` computes estimated fire
+radius plus 100 m, and the dashboard displays/exports the target and buffer
+shortfall at capture. Advice expires independently of backend polling. The
+shared Python camera estimator now checks pose synchronization and clipped
+boxes; the direct bridge uses that estimator and retains full pose/provenance.
+The Pi copy list includes its shared estimator dependency.
+
+Contracts or decisions changed: User chose display-only recommendations and
+100 m, interpreted as distance from the estimated edge. No real-fire motion
+commands or new API fields were added. QR flight behavior remains separate.
+Missing size/pose, stale evidence, simulations and smoke cannot yield a numeric
+real-fire advisory. Details and limitations: [REAL_FIRE_STANDOFF.md](REAL_FIRE_STANDOFF.md).
+
+Checks run (including skips): 149 Node tests passed, including dashboard,
+advisory and existing contract checks. Python fire tests: 22 passed. Python
+QR checks: 98 collected, 38 passed and 60 Olympe-dependent tests skipped.
+The new direct-bridge SDK adapter check is among the skips. Python compilation
+and diff checks passed.
+
+Hardware/cloud evidence (or not checked): No aircraft connection, deployment,
+real flight or physical size/range validation. Tests use fixtures/mocked services.
+
+Open issue / next step: Validate camera size/range estimates against measured
+scenes. The circular/flat-ground assumption and operator-selected 100 m buffer
+do not establish safe real-fire clearance. Automatic real-fire movement was
+explicitly excluded from this follow-up.
+
+## Original indoor QR implementation
+
 Task / owner: Indoor QR fire-area-scaled retreat and orbit / Codex.
 
 Branch / commit: `fire-size`; implementation commit containing this handoff.

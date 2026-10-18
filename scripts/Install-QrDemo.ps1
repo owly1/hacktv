@@ -22,7 +22,7 @@ $options = @('-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyC
     '-o','HostKeyAlias=fe80::2ecf:67ff:fe80:173e%38','-o','ConnectTimeout=8',
     '-o',('UserKnownHostsFile='+$known),'-i',$key)
 $sourceRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\bridge')).Path
-$names = @('anafi_observer.py','anafi_bridge.py','flight_recording.py','fire_detection.py','fire_monitor.py','qr_circle_core.py','qr_auto_circle.py','qr_orbit_bridge.py','qr_orbit_core.py',
+$names = @('anafi_observer.py','anafi_bridge.py','flight_recording.py','fire_detection.py','fire_location.py','fire_monitor.py','qr_circle_core.py','qr_auto_circle.py','qr_orbit_bridge.py','qr_orbit_core.py',
     'qr_orbit_pose.py','terminal_controls.py','hover_checkout.py','qr_takeoff_demo.py','qr_preset_core.py','qr_preset_demo.py','orbit-marker.txt','orbit-calibration.example.json','orbit-preflight.example.json')
 $sources = @($names | ForEach-Object {
     $source = Join-Path $sourceRoot $_

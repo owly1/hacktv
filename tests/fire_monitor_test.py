@@ -96,7 +96,7 @@ class FireMonitorTests(unittest.TestCase):
         self.assertIsNone(rgb['fire']['longitude'])
 
     def test_rgb_camera_ray_uses_real_pose_and_estimates_initial_area(self):
-        pose = {'latitude': 43.78, 'longitude': -79.19, 'altitude_m': 30,
+        pose = {'latitude': 43.78, 'longitude': -79.19, 'altitude_m': 30, 'observed_at': '1970-01-01T00:01:40Z',
                 'extra': {'heading_deg': 90, 'gimbal_pitch_deg': -45, 'position_source': 'gps'}}
         hit = {**HIT, 'source': 'yolo', 'label': 'smoke', 'bbox': [.4, .4, .6, .6], 'details': None}
         payload = detection_payload(hit, b'jpeg', 100, 'test', pose, frame_shape=(540, 960))
@@ -122,6 +122,36 @@ class FireMonitorTests(unittest.TestCase):
         self.assertIsNone(detector.detect(image))
         detector.labels = ('fire', 'smoke')
         self.assertEqual(detector.detect(image)['label'], 'smoke')
+
+    def test_real_fire_size_tracks_box_size_and_preserves_capture_pose(self):
+        """Keep real size, range and pose together for the advisory's evidence checks."""
+        pose = {'latitude': 43., 'longitude': -79., 'altitude_m': 30,
+                'observed_at': '1970-01-01T00:01:40Z', 'provenance': 'live', 'gps_fix': True,
+                'extra': {'heading_deg': 90, 'gimbal_pitch_deg': -45, 'position_source': 'gps'}}
+        hit = {**HIT, 'source': 'yolo', 'details': None, 'bbox': [.4, .4, .6, .6]}
+        small = detection_payload(hit, b'jpeg', 100, 'test', pose)
+        large = detection_payload({**hit, 'bbox': [.3, .3, .7, .7]}, b'jpeg', 100, 'test', pose)
+        self.assertAlmostEqual(large['details']['area_ha'], 4*small['details']['area_ha'], delta=.0003)
+        self.assertEqual(small['details']['area_source'], 'camera-box-estimate')
+        self.assertEqual(small['drone'], pose)
+        self.assertEqual(small['fire']['position_source'], 'gps+camera-ray-flat-ground')
+
+    def test_unusable_pose_or_partial_view_does_not_invent_physical_area(self):
+        """Refuse stale pose, missing timestamps, invalid GPS and cropped fire regions."""
+        pose = {'latitude': 43., 'longitude': -79., 'altitude_m': 30,
+                'observed_at': '1970-01-01T00:01:40Z', 'gps_fix': True,
+                'extra': {'heading_deg': 90, 'gimbal_pitch_deg': -45, 'position_source': 'gps'}}
+        hit = {**HIT, 'source': 'yolo', 'details': None, 'bbox': [.4, .4, .6, .6]}
+        for changes in ({'observed_at': None}, {'observed_at': '1970-01-01T00:01:37Z'},
+                        {'observed_at': '1970-01-01T00:01:40'}, {'gps_fix': False},
+                        {'altitude_m': None}, {'longitude': 181}):
+            with self.subTest(changes=changes):
+                payload = detection_payload(hit, b'jpeg', 100, 'test', {**pose, **changes})
+                self.assertNotIn('area_ha', payload['details'])
+                self.assertIsNone(payload['fire']['distance_m'])
+        for bbox in ([0, .2, .5, .5], [.4, .4, 1, .7], [.5, .5, .4, .7], [.2, .2, float('nan'), .7]):
+            payload = detection_payload({**hit, 'bbox': bbox}, b'jpeg', 100, 'test', pose)
+            self.assertNotIn('area_ha', payload['details'])
 
     def test_real_decoder_reaches_incident_without_auto_analysis_on_isolated_backend(self):
         """Verify real QR/HTTP detection still works with background analysis disabled."""
