@@ -160,17 +160,20 @@ steering after claim. See [their integration handoff](docs/CIRCLE_CONTOUR_INTEGR
   fire location through visual gaps, and renews correction attempts on measured
   progress. Keep its control and sensor watchdogs separate from UI/replay pacing.
 - Unit tests, configured services and sent landing commands are not physical proof.
-- The separate Live GPS contour action uses a fixed general-area marker anchor
-  and the uniform-fuel +5-minute forecast, advancing on real elapsed time.
-  Its explicit takeoff action first launches one drone into a bounded 1 m-high
-  GPS search, then acquires Marker 2 and switches to contour flight. Search
-  ownership is claimed separately from the accepted fire incident. Normal
-  contour runs until LAND or a protection fault; short tests remain 60 seconds.
-  See [the airborne search handoff](docs/AIRBORNE_CONTOUR_HANDOFF.md).
-  It requires Tiny plus fresh accurate GPS; it never substitutes scenario/home
-  coordinates. Default Start BOSCO remains the existing circular response.
-  Frontend Pi/fleet architecture describes expansion potential; live ingest
-  and aircraft control still serve one drone. See [contour mode](docs/FIRE_CONTOUR_MODE.md).
+- The separate Live GPS contour action uses Marker 2 to select the explicit
+  `outdoor-50m-live-wind` profile: 50 m nominal initial fire diameter, a frozen
+  measured general-area anchor and a rolling +5-minute forecast. One drone
+  searches at 1 m above launch, then uses the best available wind input and GPS to
+  follow the same uniform-fuel model shown on the map. Original Tiny payload,
+  low-wind preview and circular response remain unchanged. GPS precision uses
+  conservative whole-metre ARSDK bounds (≤5 m outdoors), not fictional sub-metre
+  readings. Wind loss alone never blocks takeoff or ends flight: retain the last
+  measured wind, or explicitly label QR wind as a scenario assumption if none
+  was ever measured; fresh FC estimates take over automatically. Frontend plots actual GPS
+  fixes/trails and labels remaining weather/fire assumptions. Normal duration
+  is operator-ended with protection faults; short tests stay 60 seconds.
+  See [outdoor handoff](docs/OUTDOOR_CONTOUR_HANDOFF.md) and [mode guide](docs/FIRE_CONTOUR_MODE.md).
+  Live ingest and aircraft control still serve only one drone.
 
 ## Working routine
 

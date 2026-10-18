@@ -36,16 +36,21 @@ page's flight session; **LAND / STOP** ends it. Use
 [Mac setup](docs/MAC_SETUP.md) for calibration, launch-relative height and
 the continuous QR orbit. Replay never enables aircraft control.
 
-The separate **Take off & search · 1 m** action launches one drone into a bounded
-GPS search at 1 m above takeoff. When it identifies Marker 2, it reads the Tiny
-scenario's weather, freezes a measured fire-area GPS anchor, and follows the
-growing five-minute forecast outline until LAND or a flight protection stops it.
-**Start BOSCO** retains
-the original circular response. Use **Preview tiny contour** to inspect the
-shape and motion without an aircraft. The small physical course requires GPS
-accuracy of 0.5 m or better; missing/ordinary coarse GPS blocks contour flight.
-See [contour setup and limits](docs/FIRE_CONTOUR_MODE.md). The Pi/fleet diagram
-describes the architecture; the live demo still uses only one drone.
+The separate **Take off & search · 1 m** action launches one drone into a
+bounded outdoor GPS search at 1 m above takeoff. Marker 2 selects an explicitly
+simulated **50 m initial fire diameter**. Once its location is measured and a
+fresh numerical flight-controller wind estimate is available, the drone follows
+the evolving five-minute forecast. The map shows its received GPS position,
+recorded GPS trail and the same wind-driven forecast used by the controller.
+**Start BOSCO** retains the original circular response. **Preview tiny contour**
+retains the original 1 m², low-wind illustration without flight.
+Outdoor flight requires fresh GPS with conservative reported uncertainty ≤5 m
+and the existing aircraft protections. Wind loss keeps the last measured model
+input; before any measurement, encoded QR wind is an explicitly labeled
+assumption. Fresh measured wind takes over automatically. Wind unavailability
+alone never blocks takeoff or lands the drone. LAND and flight protections remain.
+See [outdoor contour setup and limits](docs/FIRE_CONTOUR_MODE.md). The live demo
+uses one aircraft; the Pi/fleet diagram describes expansion potential.
 
 For a demonstration without an aircraft:
 

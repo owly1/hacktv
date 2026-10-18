@@ -10,7 +10,7 @@ async function dashboard() {
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
       innerHTML: '', textContent: '', value: '', hidden: false,
-      classList: {/* Accept a class addition in the minimal DOM fixture. */ add() {}, /* Accept a class/layer removal without invoking a real browser. */ remove() {}, /* Accept a class toggle in the minimal DOM fixture. */ toggle() {}},
+      classList: {/* Accept a class addition in the minimal DOM fixture. */ add() {}, /* Accept a class/layer removal without invoking a real browser. */ remove() {}, /* Accept a class toggle in the minimal DOM fixture. */ toggle() {}, /* No fixture CSS classes are initially applied. */ contains() {return false;}},
       style: {/* Accept a style update in the fake dashboard element. */ setProperty() {}},
       /** Accept an attribute update in the fake dashboard element. */
       setAttribute() {},
@@ -20,7 +20,7 @@ async function dashboard() {
   /** Build a chainable fake Leaflet layer for dashboard-state assertions. */
   const layer = () => ({
     addTo() {return this;}, remove() {}, clearLayers() {}, bindTooltip() {return this;},
-    bindPopup() {return this;}, setLatLng() {return this;}, setLatLngs() {return this;}, setOpacity() {return this;}, on() {return this;}, bringToFront() {return this;},
+    bindPopup() {return this;}, setLatLng() {return this;}, setLatLngs() {return this;}, setOpacity() {return this;}, on() {return this;}, bringToFront() {return this;}, getElement() {return null;},
   });
   const context = vm.createContext({
     console, performance, URL, URLSearchParams, AbortSignal,
@@ -28,7 +28,7 @@ async function dashboard() {
     history: {/** Keep browser navigation out of the isolated state tests. */ replaceState() {}},
     document: {getElementById: element, /* Return an empty node list for controls not needed by this fixture. */ querySelectorAll: () => []},
     L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, /* Preserve icon options without constructing a real map icon. */ divIcon: value => value},
-    window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
+    window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {}, requestAnimationFrame() {},
   });
   for (const name of ['model.js', 'contour.js', 'demo-cases.js', 'demo-scout.js', 'people.js', 'app.js']) {
     let source = await readFile(new URL(`../dist/${name}`, import.meta.url), 'utf8');
@@ -380,21 +380,26 @@ test('BOSCO sends search and flight authorization together and disables its star
   assert.equal(element('autonomy-state').textContent,'SEARCHING');
 });
 
-test('contour requires airborne-search capability and accurate GPS without changing the circle action',async()=>{
+test('outdoor contour requires its receiver profile and airborne-search capability without changing the circle action',async()=>{
   const {context,run,element}=await dashboard(); const calls=[];
   context.fetch=async(url,options)=>{
     const body=JSON.parse(options.body); calls.push(body);
     return {ok:true,json:async()=>({enabled:true,mode:body.mode??'circle',session_id:'contour-session',
-      receiver:{ready:true,camera_ready:true,camera_search_supported:true,airborne_search_supported:true,contour_supported:true,contour_ready:true,phase:'contour'},mission:{id:'contour-1'}})};
+      receiver:{ready:true,camera_ready:true,camera_search_supported:true,airborne_search_supported:true,contour_supported:true,contour_ready:true,contour_profile:'outdoor-50m-live-wind',phase:'contour'},mission:{id:'contour-1'}})};
   };
   run(`state.mode='live';state.autonomy={enabled:false,receiver:{ready:true,camera_ready:true,camera_search_supported:true,
-    airborne_search_supported:true,contour_supported:true,contour_ready:false,contour_reason:'GPS accuracy is insufficient'}};renderAutonomy()`);
+    airborne_search_supported:true,contour_supported:true,contour_ready:false,contour_profile:'outdoor-50m-live-wind',contour_reason:'GPS accuracy is insufficient'}};renderAutonomy()`);
   assert.equal(element('autonomy-enable').disabled,false,'existing circle remains available');
   assert.equal(element('autonomy-contour-enable').disabled,true);
   assert.match(element('contour-readiness').textContent,/GPS accuracy is insufficient/);
   run('state.autonomy.receiver.contour_ready=true;renderAutonomy()');
   assert.equal(element('autonomy-contour-enable').disabled,false);
+  assert.match(element('contour-readiness').textContent,/50 m initial fire diameter/);
+  assert.match(element('contour-readiness').textContent,/wind availability does not block flight/);
   assert.equal(element('autonomy-contour-enable').textContent,'Take off & search · 1 m');
+  run('state.autonomy.receiver.contour_profile=null;renderAutonomy()');
+  assert.equal(element('autonomy-contour-enable').disabled,true,'legacy tiny-course receiver cannot start the outdoor profile');
+  run("state.autonomy.receiver.contour_profile='outdoor-50m-live-wind';renderAutonomy()");
   run('state.autonomy.receiver.airborne_search_supported=false;renderAutonomy()');
   assert.equal(element('autonomy-contour-enable').disabled,true,'an older contour receiver cannot start airborne search');
   assert.match(element('contour-readiness').textContent,/updated Pi receiver/);
@@ -414,7 +419,7 @@ test('airborne contour reports the one real aircraft from search through encoded
   const {run,element}=await dashboard();
   run(`state.mode='live';state.autonomy={enabled:true,mode:'contour',flight_seconds:null,mission:null,
     search:{id:'search-1',receiver_id:'pi-1',claimed_at:1000000,height_m:1},
-    receiver:{phase:'waiting',search_state:'off'}};renderAutonomy()`);
+    receiver:{phase:'waiting',search_state:'off',contour_profile:'outdoor-50m-live-wind'}};renderAutonomy()`);
   assert.equal(element('autonomy-state').textContent,'STARTING','a claim alone does not prove airborne motion');
   assert.match(element('autonomy-detail').textContent,/checking takeoff readiness/);
   run("state.autonomy.receiver.phase='takeoff';renderAutonomy()");
@@ -428,18 +433,20 @@ test('airborne contour reports the one real aircraft from search through encoded
   assert.equal(element('contour-mission-status').textContent,'1 drone scanning for fires');
   assert.equal(element('pi-drone-status').textContent,'1 drone scanning for fires');
   assert.match(element('autonomy-detail').textContent,/Moving through the QR search pattern/);
-  assert.match(element('contour-conditions').textContent,/after Marker 2 is decoded/);
-  assert.doesNotMatch(element('contour-conditions').textContent,/0\.2 km\/h/,'the QR scenario is not shown as a measurement before decode');
+  assert.match(element('contour-wind-status').textContent,/Wind provenance appears when the receiver creates the flight plan/);
+  assert.match(element('contour-conditions').textContent,/Onboard wind updates the forecast when available/);
   run("state.autonomy.receiver.search_state='acquiring';state.autonomy.receiver.phase='holding';renderAutonomy()");
   assert.equal(element('autonomy-state').textContent,'READING MARKER');
-  assert.match(element('autonomy-detail').textContent,/Holding position/);
-  assert.match(element('autonomy-detail').textContent,/encoded wind/);
-  run(`state.autonomy.mission={id:'contour-1',contour:{details:BoscoContour.TINY}};
+  assert.match(element('autonomy-detail').textContent,/Holding at 1 m/);
+  assert.match(element('autonomy-detail').textContent,/Onboard wind is used when available/);
+  run(`state.autonomy.mission={id:'contour-1',contour:{profile:'outdoor-50m-live-wind',details:{...BoscoContour.TINY,area_ha:Math.PI*25*25/10000}}};
+    state.autonomy.receiver.contour={wind:{source:'flight-controller',speed_mps:2,direction_deg:90,observed_at:new Date().toISOString(),age_s:0}};
     state.autonomy.receiver.phase='contour';state.autonomy.receiver.search_state='tracking';renderAutonomy()`);
   assert.equal(element('autonomy-state').textContent,'GPS CONTOUR');
   assert.equal(element('contour-mission-status').textContent,'1 drone following the fire contour');
-  assert.match(element('contour-conditions').textContent,/Encoded QR scenario · 0\.2 km\/h wind toward 60° · 22°C · 45% humidity · 0\.01 m\/min spread/);
-  assert.match(element('contour-conditions').textContent,/not measured weather/);
+  assert.match(element('contour-conditions').textContent,/50 m initial diameter/);
+  assert.match(element('contour-wind-status').textContent,/FC wind estimate 7\.2 km\/h toward 90°/);
+  assert.match(element('contour-conditions').textContent,/22°C and 45% humidity are model assumptions/);
   run("state.autonomy.receiver.search_state='holding';state.autonomy.receiver.phase='holding';state.autonomy.receiver.reason='Search boundary reached';renderAutonomy()");
   assert.equal(element('autonomy-state').textContent,'HOLDING');
   assert.match(element('autonomy-detail').textContent,/Search boundary reached/);
@@ -506,6 +513,122 @@ test('tiny preview uses the live contour model with uniform fuel and never sends
   assert.match(element('contour-preview-speed').textContent,/real-time growth/);
   assert.deepEqual(calls,[]);
   assert.equal(run('autonomousSession'),null);
+});
+
+test('Live wind never substitutes defaults, QR inputs, nulls or stale controller cache for fresh wind evidence',async()=>{
+  const {context,run,element}=await dashboard();
+  run("state.mode='live';state.scenario.wind=18;renderWindMetric();animate(150)");
+  assert.equal(element('wind-value').textContent,'—');
+  assert.match(element('wind-context').textContent,/Unavailable/);
+  context.sample={provenance:'live',observed_at:new Date().toISOString(),extra:{fc_wind_available:true,
+    fc_wind_speed_mps:2,fc_wind_direction_deg:90,fc_wind_observed_at:new Date().toISOString(),fc_wind_age_s:0}};
+  run('state.telemetry=sample;renderWindMetric()');
+  assert.equal(element('wind-value').textContent,7.2);
+  assert.match(element('wind-context').textContent,/FC estimate · toward E/);
+  assert.equal(run('state.scenario.wind'),18,'measurement display does not overwrite model inputs');
+  for(const speed of [null,'2',-1,61]) {
+    context.speed=speed;run('state.telemetry.extra.fc_wind_speed_mps=speed;renderWindMetric();updateWindSamples()');
+    assert.equal(element('wind-value').textContent,'—');
+    assert.equal(run('Object.keys(state.windSamples).length'),0);
+  }
+  run('state.telemetry.extra.fc_wind_speed_mps=2;state.telemetry.extra.fc_wind_available=false;renderWindMetric()');
+  assert.equal(element('wind-value').textContent,'—');
+  run('state.telemetry.extra.fc_wind_available=null;renderWindMetric()');
+  assert.equal(element('wind-value').textContent,'—','unknown controller availability is not a confirmed wind measurement');
+  run('state.telemetry.extra.fc_wind_available=true;state.telemetry.extra.fc_wind_direction_deg=null;renderWindMetric()');
+  assert.equal(element('wind-value').textContent,'—','non-calm wind requires direction');
+  run('state.telemetry.extra.fc_wind_speed_mps=0;renderWindMetric()');
+  assert.equal(element('wind-value').textContent,0);
+  assert.match(element('wind-context').textContent,/calm/);
+  run("state.telemetry.extra.fc_wind_observed_at=new Date(Date.now()-6000).toISOString();state.telemetry.observed_at=new Date().toISOString();renderWindMetric();animate(300)");
+  assert.equal(element('wind-value').textContent,'—','a newer telemetry wrapper cannot refresh an old wind event');
+  run("state.telemetry.extra.fc_wind_observed_at=new Date().toISOString();state.telemetry.extra.fc_wind_age_s=6;renderWindMetric()");
+  assert.equal(element('wind-value').textContent,'—','monotonic sensor age also invalidates a stale cache');
+  run("state.mode='demo';state.scenario.wind=24;state.windShown=null;renderWindMetric()");
+  assert.equal(element('wind-value').textContent,24);
+  assert.match(element('wind-context').textContent,/replay scenario/);
+});
+
+test('null environmental telemetry cannot become measured zero temperature or humidity',async()=>{
+  const {run}=await dashboard();
+  run("state.mode='live';state.scenario.temp=22;state.scenario.rh=45;state.telemetry={extra:{temp_c:null,rh_pct:null}};applyEnvSamples()");
+  assert.equal(run('state.scenario.temp'),22);assert.equal(run('state.scenario.rh'),45);
+});
+
+test('outdoor map retains the last measured wind through gaps, continues growth and recovers on new evidence',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.autonomy={enabled:true,mode:'contour',mission:{id:'outdoor-1',contour:{profile:'outdoor-50m-live-wind',started_at:1000000,details:{...BoscoContour.TINY,area_ha:Math.PI*25*25/10000}}},
+    receiver:{contour_profile:'outdoor-50m-live-wind',contour:{profile:'outdoor-50m-live-wind',anchor:{latitude:43.8,longitude:-79.2,position_source:'gps'},started_at:1000000,
+      details:{...BoscoContour.TINY,area_ha:Math.PI*25*25/10000},effective_scenario:{wind:10.8,direction:90,dryness:55,temp:22,rh:45},
+      wind:{source:'flight-controller',speed_mps:3,direction_deg:90,observed_at:new Date(1060000).toISOString(),age_s:0},speed_mps:.5}}};
+    var outdoorBefore=contourMissionGeometry(1060000);state.scenario.wind=60;state.minute=60;state.speed=16;var outdoorAfter=contourMissionGeometry(1060000);`);
+  assert.deepEqual(run('outdoorBefore.route'),run('outdoorAfter.route'));
+  assert.equal(run('outdoorBefore.speedMps'),.5,'live speed is receiver-reported, not the tiny preview speed');
+  assert.ok(run('M.areaHa(outdoorBefore.current)')>.19,'initial fire is about 50 m across');
+  assert.deepEqual(run('outdoorBefore.route'),run('M.footprint([43.8,-79.2],6,state.autonomy.receiver.contour.effective_scenario,state.autonomy.receiver.contour.details,1,{uniformFuel:true})'));
+  run('state.autonomy.receiver.contour.effective_scenario.direction=180;state.autonomy.receiver.contour.effective_scenario.wind=20;var replanned=contourMissionGeometry(1060000)');
+  assert.notDeepEqual(run('outdoorBefore.route'),run('replanned.route'),'received wind changes reshape the actual flight forecast');
+  run('var degraded=contourMissionGeometry(1066000)');
+  assert.equal(run('degraded.wind.status'),'stale');
+  assert.match(run('degraded.wind.label'),/Last measured wind · 6 s old · degraded/);
+  assert.notDeepEqual(run('replanned.route'),run('degraded.route'),'forecast growth continues with the retained last measured wind');
+  run('state.layers.contour=L.layerGroup();renderContourRoute()');
+  assert.match(element('area-context').textContent,/last measured wind · degraded/);
+  run("state.autonomy.receiver.contour.wind.observed_at=new Date(1066000).toISOString();state.autonomy.receiver.contour.wind.direction_deg=45;state.autonomy.receiver.contour.effective_scenario.direction=45;state.autonomy.receiver.contour.wind_status='measured';var recovered=contourMissionGeometry(1066000)");
+  assert.equal(run('recovered.wind.status'),'measured');
+  assert.notDeepEqual(run('recovered.route'),run('degraded.route'),'new measurement updates the retained forecast');
+  run('state.autonomy.receiver.contour.effective_scenario=null');
+  assert.equal(run('contourMissionGeometry(1060000)'),null,'QR weather cannot fill absent receiver wind');
+});
+
+test('outdoor no-wind startup uses only the receiver explicit scenario assumption and labels it separately from Live wind',async()=>{
+  const {run,element}=await dashboard();
+  run(`state.mode='live';state.telemetry=null;state.autonomy={enabled:true,mode:'contour',mission:{id:'outdoor-assumed',contour:{profile:'outdoor-50m-live-wind',started_at:1000000,details:{...BoscoContour.TINY,area_ha:Math.PI*25*25/10000}}},
+    receiver:{phase:'contour',contour_profile:'outdoor-50m-live-wind',contour:{profile:'outdoor-50m-live-wind',anchor:{latitude:43.8,longitude:-79.2,position_source:'gps'},started_at:1000000,
+      details:{...BoscoContour.TINY,area_ha:Math.PI*25*25/10000},effective_scenario:{wind:.2,direction:60,dryness:55,temp:22,rh:45},
+      wind:{source:'qr-scenario-assumption',speed_mps:.2/3.6,direction_deg:60,observed_at:null,age_s:null},wind_status:'assumed',speed_mps:.5}}};
+    var assumed=contourMissionGeometry(1060000);renderAutonomy();renderWindMetric()`);
+  assert.equal(run('assumed.wind.status'),'assumed');
+  assert.match(element('contour-wind-status').textContent,/Wind unavailable · using 0\.2 km\/h scenario assumption/);
+  assert.match(element('contour-conditions').textContent,/an assumption until an onboard estimate arrives/);
+  assert.equal(element('wind-value').textContent,'—','the scenario assumption never becomes a live measurement');
+  assert.match(element('wind-context').textContent,/Live wind unavailable · flight model: Wind unavailable · using 0\.2 km\/h scenario assumption/);
+  assert.equal(element('autonomy-state').textContent,'GPS CONTOUR','missing wind does not imply a held or stopped flight');
+  run("state.autonomy.receiver.contour.wind.source='made-up-wind'");
+  assert.equal(run('contourMissionGeometry(1060000)'),null,'unsupported provenance cannot masquerade as the approved fallback');
+});
+
+test('live drone marker follows fresh received GPS only and hides when the sensor event becomes stale',async()=>{
+  const {context,run,element}=await dashboard();
+  context.sample={provenance:'live',drone_id:'ANAFI-01',observed_at:new Date().toISOString(),gps_fix:'fix',latitude:43.8,longitude:-79.2,
+    extra:{position_source:'gps',gps_observed_at:new Date().toISOString(),gps_age_s:0}};
+  run(`state.mode='live';state.telemetry=sample;state.centredOnDrone=true;state.layers.trail=L.layerGroup();
+    var markerPositions=[],markerOpacity=null;state.droneMarker={setLatLng(ll){markerPositions.push(ll);return this;},setOpacity(v){markerOpacity=v;return this;},getElement(){return null;}};renderDrone()`);
+  assert.deepEqual([...run('dronePosition()')],[43.8,-79.2]);
+  assert.equal(run('markerPositions.length'),1);
+  assert.equal(run('markerOpacity'),1);
+  assert.match(element('live-position-status').textContent,/received GPS 43\.800000, -79\.200000/);
+  run('state.scenario.wind=50;state.minute=60;renderContourRoute()');
+  assert.equal(run('markerPositions.length'),1,'forecast rendering never moves the real aircraft icon');
+  run("state.telemetry.extra.gps_observed_at=new Date(Date.now()-2000).toISOString();renderDrone()");
+  assert.equal(run('dronePosition()'),null);
+  assert.equal(run('markerOpacity'),0);
+  assert.match(element('live-position-status').textContent,/GPS stale/);
+  run("state.telemetry.extra.gps_observed_at=new Date().toISOString();state.telemetry.extra.position_source='home-plus-flight-moves';renderDrone()");
+  assert.equal(run('dronePosition()'),null);
+  assert.equal(run('markerPositions.length'),1,'configured coordinates cannot move the GPS aircraft icon');
+});
+
+test('recorded GPS trail breaks at unavailable coordinates, receiver provenance changes and timestamp gaps',async()=>{
+  const {context,run}=await dashboard(), now=Date.now();
+  const point=(seconds,latitude,extra={})=>({t:new Date(now+seconds*1000).toISOString(),gps_observed_at:new Date(now+seconds*1000).toISOString(),
+    provenance:'live',drone_id:'ANAFI-01',position_source:'gps',gps_fix:'fix',latitude,longitude:-79.2,...extra});
+  context.path=[point(-15,43.8),point(-14,43.801),point(-13,null),point(-12,43.802),point(-11,43.803),
+    point(-10,43.804,{position_source:'home-plus-flight-moves'}),point(-9,43.805),point(-8,43.806),point(-1,43.807),point(0,43.808)];
+  run("state.mode='live';state.telemetry=null;var gpsSegments=measuredGpsTrail(path)");
+  assert.equal(run('gpsSegments.length'),4);
+  assert.deepEqual([...run('gpsSegments.map(segment=>segment.length)')],[2,2,2,2]);
+  assert.equal(run('gpsSegments.flat().some(p=>p[0]===43.804)'),false,'unmeasured local movement does not enter the GPS trail');
 });
 
 test('a delayed poll cannot erase a newly enabled flight session',async()=>{

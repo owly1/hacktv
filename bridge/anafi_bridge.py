@@ -80,17 +80,23 @@ except ImportError as e:
         "  pip install -r bridge/requirements.txt"
     )
 
+from wind_measurement import WindMeasurement, wind_vector
+
 try:
-    # Flight-controller wind estimate: the FC fuses motor commands, IMU and
-    # GPS/optical-flow into a NED wind vector (what FreeFlight shows). Not all
-    # firmware/olympe builds expose it, so a missing import just disables the
-    # field — the bridge still runs and the field stays None.
+    # The numerical estimate is optional and must be confirmed by actual
+    # aircraft events. Import availability alone says nothing about hardware.
     from olympe.messages.flight_data import Command as FlightDataCommand
     from olympe.messages.flight_data.Event import State as FlightDataState
     from olympe.messages.flight_data.Event import WindSpeed
+except ImportError:
+    FlightDataCommand = WindSpeed = FlightDataState = None
+
+try:
+    # Classic ANAFI's warning is independently useful even when its firmware
+    # does not implement the newer numerical flight_data feature.
     from olympe.messages.ardrone3.PilotingState import WindStateChanged
 except ImportError:
-    FlightDataCommand = WindSpeed = FlightDataState = WindStateChanged = None
+    WindStateChanged = None
 
 DEFAULT_DRONE_IP = "192.168.42.1"  # ANAFI's address on its own Wi-Fi network
 WINDOW = "ANAFI live"
@@ -103,14 +109,10 @@ def fc_wind(north, east):
 
     Convention: the vector is the wind's velocity — it points where the wind
     blows TOWARD — so direction_deg = atan2(east, north) in degrees clockwise
-    from north, matching the dashboard's TOWARD convention. If a field check
-    ever shows the vector is FROM-ward instead, flip 180 here, not downstream.
+    from north, matching the dashboard's TOWARD convention.
     A zero vector returns (0.0, None): no wind means no direction to point.
     """
-    speed = math.hypot(north, east)
-    if speed < 0.05:
-        return 0.0, None
-    return round(speed, 2), round(math.degrees(math.atan2(east, north)) % 360.0, 1)
+    return wind_vector(north, east)
 TELEMETRY_INTERVAL = 1.0  # seconds between published telemetry samples (contract: 1-2 Hz)
 SNAPSHOT_FILE_INTERVAL = 3.0
 VIDEO_WIDTH = 960
@@ -455,6 +457,9 @@ class AnafiBridge:
         # flight state
         self.flight_phase = None
         self.abort_flight = threading.Event()
+        self._wind_subscriptions = []
+        self._wind_tracker = WindMeasurement(sdk_available=all(
+            item is not None for item in (FlightDataCommand, FlightDataState, WindSpeed)))
 
     # ---------- telemetry ----------
 
@@ -464,6 +469,18 @@ class AnafiBridge:
             return self.drone.get_state(msg)
         except Exception:
             return None
+
+    def measured_wind_snapshot(self):
+        """Return only a fresh vector received on this aircraft connection, never a cache refresh."""
+        if not self.connected:
+            return None
+        return self._wind_tracker.snapshot(time.monotonic())
+
+    def measured_wind_reason(self):
+        """Report the precise missing measurement before forecast code uses real wind."""
+        if not self.connected:
+            return 'Aircraft is disconnected; measured wind is unavailable'
+        return self._wind_tracker.reason(time.monotonic())
 
     def _gimbal_pitch(self):
         s = self._state(gimbal.attitude)
@@ -527,18 +544,15 @@ class AnafiBridge:
         t["extra"]["position_source"] = source
         if (s := self._state(WifiSignalChanged)) is not None:
             t["extra"]["wifi_rssi_dbm"] = s["rssi"]
-        if WindSpeed is not None and (s := self._state(WindSpeed)) is not None:
-            try:
-                spd, deg = fc_wind(float(s["north"]), float(s["east"]))
-                t["extra"]["fc_wind_speed_mps"] = spd
-                t["extra"]["fc_wind_direction_deg"] = deg
-            except (KeyError, TypeError, ValueError):
-                pass
-        if FlightDataState is not None and (s := self._state(FlightDataState)) is not None:
-            try:
-                t["extra"]["fc_wind_available"] = bool(s.get("is_wind_speed_available"))
-            except (AttributeError, TypeError):
-                pass
+        wind = self.measured_wind_snapshot()
+        wind_status = self._wind_tracker.diagnostics(time.monotonic())
+        t['extra'].update({'fc_wind_available': wind_status['available'],
+                          'fc_wind_supported': wind_status['supported'],
+                          'fc_wind_observed_at': wind_status['observed_at'],
+                          'fc_wind_age_s': wind_status['age_s']})
+        if wind is not None:
+            t['extra']['fc_wind_speed_mps'] = wind['speed_mps']
+            t['extra']['fc_wind_direction_deg'] = wind['direction_deg']
         if WindStateChanged is not None and (s := self._state(WindStateChanged)) is not None:
             try:
                 v = s["state"]
@@ -1045,19 +1059,41 @@ class AnafiBridge:
         return True
 
     def _probe_wind_capability(self, drone):
-        """Ask the FC whether it streams a wind estimate. GetState makes the drone
-        emit flight_data.Event.State right away, so is_wind_speed_available is
-        known at connect — not first flight. Failures just leave the field at
-        None; the bridge works regardless."""
-        if FlightDataCommand is None or FlightDataState is None:
+        """Subscribe before requesting state; only received events establish support and freshness."""
+        self._stop_wind_monitor()
+        tracker = self._wind_tracker = WindMeasurement(sdk_available=all(
+            item is not None for item in (FlightDataCommand, FlightDataState, WindSpeed)))
+        if not tracker.sdk_available:
             return
+
+        def state_received(event, scheduler):
+            """Capture availability/capability reports without reading or refreshing an SDK cache."""
+            tracker.receive_state(event.args)
+
+        def vector_received(event, scheduler):
+            """Stamp the numerical vector's actual receipt once on the owning connection."""
+            tracker.receive_vector(event.args, time.monotonic(), time.time())
+
         try:
+            for callback, message in ((state_received, FlightDataState), (vector_received, WindSpeed)):
+                subscriber = drone.subscribe(callback, message(_policy='wait'))
+                self._wind_subscriptions.append((drone, subscriber))
             drone(FlightDataCommand.GetState(include_default_capabilities=True)).wait(_timeout=5)
-            s = drone.get_state(FlightDataState)
-            print(f"[+] FC wind estimation available: "
-                  f"{None if s is None else s.get('is_wind_speed_available')}")
+            # Command acknowledgement can precede the State event. The event
+            # latch is installed above, so a fast response cannot be missed.
+            tracker.state_received.wait(timeout=1.)
+            print(f"[+] FC wind supported: {tracker.supported}; available: {tracker.available}")
         except Exception as e:
-            print(f"[!] FC wind capability probe failed (estimate fields stay off): {e!r}")
+            print(f"[!] FC wind capability probe unavailable: {e!r}")
+
+    def _stop_wind_monitor(self):
+        """Detach callbacks from their original connection before replacing aircraft state."""
+        for drone, subscriber in getattr(self, '_wind_subscriptions', []):
+            try:
+                drone.unsubscribe(subscriber)
+            except Exception:
+                pass
+        self._wind_subscriptions = []
 
     def _aircraft_link(self):
         """Return the aircraft endpoint used by a direct or controller connection."""
@@ -1086,6 +1122,9 @@ class AnafiBridge:
 
     def _disconnect(self):
         """Stop streaming, release retained frames and close the SDK connection."""
+        self._stop_wind_monitor()
+        self._wind_tracker = WindMeasurement(sdk_available=all(
+            item is not None for item in (FlightDataCommand, FlightDataState, WindSpeed)))
         with self.lock:
             drone, self.drone = self.drone, None
             self.connected = False

@@ -170,12 +170,16 @@ export class MemoryStorage {
   async telemetrySummary({ sinceMs }) {
     return bucketRows(this.telemetry, sinceMs);
   }
-  /** Read chronological positioned telemetry plus available camera heading/pitch. */
+  /** Preserve measurement provenance and missing-position gaps in the received GPS trail. */
   async flightPath({ sinceMs, limit = 600 }) {
     return this.telemetry
-      .filter((s) => Date.parse(s.observed_at) >= sinceMs && s.latitude != null)
+      .filter((s) => Date.parse(s.observed_at) >= sinceMs)
+      .sort((a,b)=>Date.parse(a.observed_at)-Date.parse(b.observed_at))
       .slice(-limit)
       .map((s) => ({ t: s.observed_at, latitude: s.latitude, longitude: s.longitude, altitude_m: s.altitude_m,
+        provenance:s.provenance,drone_id:s.drone_id,gps_fix:s.gps_fix,
+        position_source:s.extra?.position_source??null,gps_observed_at:s.extra?.gps_observed_at??null,
+        gps_accuracy_m:s.extra?.gps_accuracy_m??null,
         heading_deg: s.extra?.heading_deg ?? null, gimbal_pitch_deg: s.extra?.gimbal_pitch_deg ?? null }));
   }
   /** Persist a validated Gemini analysis record. */
@@ -287,21 +291,27 @@ export class PgStorage {
     );
     return rows.map((r) => ({ ...r, bucket: new Date(r.bucket).toISOString() }));
   }
-  /** Read chronological positioned telemetry plus available camera heading/pitch. */
+  /** Preserve original GPS provenance and missing-position gaps in database-backed trails. */
   async flightPath({ sinceMs, limit = 600 }) {
     const rows = await this.q(
-      `SELECT observed_at, latitude, longitude, altitude_m, heading_deg, gimbal_pitch_deg FROM (
-         SELECT observed_at, latitude, longitude, altitude_m,
+      `SELECT * FROM (
+         SELECT observed_at, latitude, longitude, altitude_m, provenance, drone_id,
+                payload->>'gps_fix' AS gps_fix,
+                payload->'extra'->>'position_source' AS position_source,
+                payload->'extra'->>'gps_observed_at' AS gps_observed_at,
+                payload->'extra'->'gps_accuracy_m' AS gps_accuracy_m,
                 (payload->'extra'->>'heading_deg')::float8 AS heading_deg,
                 (payload->'extra'->>'gimbal_pitch_deg')::float8 AS gimbal_pitch_deg
          FROM telemetry
-         WHERE observed_at >= $1 AND latitude IS NOT NULL
+         WHERE observed_at >= $1
          ORDER BY observed_at DESC LIMIT $2) recent
        ORDER BY observed_at`,
       [new Date(sinceMs).toISOString(), limit],
     );
     return rows.map((r) => ({
       t: new Date(r.observed_at).toISOString(), latitude: r.latitude, longitude: r.longitude, altitude_m: r.altitude_m,
+      provenance:r.provenance,drone_id:r.drone_id,gps_fix:r.gps_fix,
+      position_source:r.position_source,gps_observed_at:r.gps_observed_at,gps_accuracy_m:r.gps_accuracy_m,
       heading_deg: r.heading_deg, gimbal_pitch_deg: r.gimbal_pitch_deg,
     }));
   }

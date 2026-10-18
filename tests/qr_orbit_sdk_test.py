@@ -90,6 +90,10 @@ class AdapterTests(unittest.TestCase):
         args = self.controller_args()
         args.drone_id = 'test'
         bridge = AnafiBridge(args, SimpleNamespace(), SimpleNamespace())
+        bridge.connected = True
+        bridge._wind_tracker.sdk_available = True
+        bridge._wind_tracker.receive_state({'is_wind_speed_available': True})
+        bridge._wind_tracker.receive_vector({'north': 0., 'east': 2.}, time.monotonic(), time.time())
         wind, available, warning = object(), object(), object()
         states = {wind: {'north': 0., 'east': 2.}, available: {'is_wind_speed_available': True},
                   warning: {'state': SimpleNamespace(name='ok')}, module.AltitudeChanged: {'altitude': 1.}}
@@ -100,6 +104,8 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(bridge.telemetry['extra']['fc_wind_speed_mps'], 2.)
         self.assertEqual(bridge.telemetry['extra']['fc_wind_direction_deg'], 90.)
         self.assertTrue(bridge.telemetry['extra']['fc_wind_available'])
+        self.assertIsNotNone(bridge.telemetry['extra']['fc_wind_observed_at'])
+        self.assertLess(bridge.telemetry['extra']['fc_wind_age_s'], 1.)
         self.assertEqual(bridge.telemetry['extra']['fc_wind_state'], 'ok')
         self.assertEqual(module.fc_wind(0, 0), (0.0, None))
 
@@ -108,16 +114,59 @@ class AdapterTests(unittest.TestCase):
         import anafi_bridge as module
         bridge = AnafiBridge(self.controller_args(), SimpleNamespace(), SimpleNamespace())
         command = Mock()
-        request, event = object(), object()
+        request = object()
+        event, vector = Mock(), Mock()
         command.GetState.return_value = request
         drone = Mock()
-        drone.get_state.return_value = {'is_wind_speed_available': True}
-        with patch.multiple(module, FlightDataCommand=command, FlightDataState=event):
+        callbacks = []
+        def subscribe(callback, expectation):
+            """Record subscribers before the simulated command emits an immediate state reply."""
+            callbacks.append(callback)
+            return object()
+        def send(requested):
+            """Return state during send, exposing the missed-fast-response race in old code."""
+            self.assertEqual(len(callbacks), 2)
+            callbacks[0](SimpleNamespace(args={'is_wind_speed_available': True,
+                         'default_capabilities': {'supported_features': ['WIND_SPEED_ESTIMATION']}}), None)
+            return Mock()
+        drone.subscribe.side_effect = subscribe
+        drone.side_effect = send
+        with patch.multiple(module, FlightDataCommand=command, FlightDataState=event, WindSpeed=vector):
             bridge._probe_wind_capability(drone)
         command.GetState.assert_called_once_with(include_default_capabilities=True)
         drone.assert_called_once_with(request)
-        drone.return_value.wait.assert_called_once_with(_timeout=5)
-        drone.get_state.assert_called_once_with(event)
+        drone.get_state.assert_not_called()
+        self.assertTrue(bridge._wind_tracker.supported)
+        self.assertTrue(bridge._wind_tracker.available)
+        self.assertIsNone(bridge._wind_tracker.snapshot(time.monotonic()))
+
+    def test_wind_parser_accepts_installed_sdk_protobuf_event_shapes(self):
+        """Decode real SDK protobufs, including nested capability wrappers and enum tuples, without a radio."""
+        import anafi_bridge as module
+        from wind_measurement import WindMeasurement
+        if module.FlightDataState is None or module.WindSpeed is None:
+            self.skipTest('Installed SDK has no numerical flight_data schema')
+        state = module.FlightDataState
+        service = state.service_proto()
+        fields = getattr(service, state.field_name)
+        fields.is_wind_speed_available = True
+        fields.default_capabilities.supported_features.append(0)
+        tracker = WindMeasurement()
+        tracker.receive_state(state._decode_payload(service.SerializeToString()))
+        self.assertTrue(tracker.supported)
+        vector = module.WindSpeed
+        service = vector.service_proto()
+        fields = getattr(service, vector.field_name)
+        fields.north, fields.east = 0., 2.
+        tracker.receive_vector(vector._decode_payload(service.SerializeToString()), 10., 1700000000.)
+        self.assertEqual(tracker.snapshot(10.)['direction_deg'], 90.)
+        # State without capabilities carries availability only; it must not
+        # erase support learned from the earlier full capability response.
+        service = state.service_proto()
+        getattr(service, state.field_name).is_wind_speed_available = False
+        tracker.receive_state(state._decode_payload(service.SerializeToString()))
+        self.assertTrue(tracker.supported)
+        self.assertIsNone(tracker.snapshot(10.))
 
     def test_controller_connection_without_paired_aircraft_is_not_a_drone_link(self):
         """Verify controller connection without paired aircraft is not a drone link."""
@@ -369,6 +418,41 @@ class AdapterTests(unittest.TestCase):
             with self.subTest(change=change):
                 pending.matched_events.return_value.last.return_value=SimpleNamespace(args={**result,**change})
                 with self.assertRaises(RuntimeError):driver.move(requested,.25,lambda:None)
+
+    def test_outdoor_contour_accepts_bounded_stop_error_without_changing_circle(self):
+        """A received large-course undershoot can be replanned only in the latched contour mode."""
+        requested = (2., 0., 0., .1)
+        actual = (1.6, .25, .02, .1)
+        pending = Mock()
+        pending.done.return_value = pending.success.return_value = True
+        result = dict(zip(('dX', 'dY', 'dZ', 'dPsi'), actual), error='ok')
+        pending.matched_events.return_value.last.return_value = SimpleNamespace(args=result)
+        bridge = SimpleNamespace(drone=Mock(return_value=pending), publisher=Mock(),
+                                 path_reference='measured-fire', response_mode='contour')
+        driver = OlympeOrbitDriver(bridge)
+        self.assertEqual(driver.move(requested, 1., lambda: None), actual)
+        for mode in ('circle', None):
+            with self.subTest(mode=mode):
+                bridge.response_mode = mode
+                with self.assertRaisesRegex(RuntimeError, 'outside tolerance'):
+                    driver.move(requested, .25, lambda: None)
+
+    def test_outdoor_contour_rejects_wrong_way_large_error_and_vertical_or_yaw_drift(self):
+        """Broader outdoor stop tolerances retain direction, bounded error and the original height/yaw checks."""
+        requested = (2., 0., 0., 0.)
+        pending = Mock()
+        pending.done.return_value = pending.success.return_value = True
+        bridge = SimpleNamespace(drone=Mock(return_value=pending), publisher=Mock(),
+                                 path_reference='measured-fire', response_mode='contour')
+        driver = OlympeOrbitDriver(bridge)
+        for actual in ((-.02, 0., 0., 0.), (1.49, 0., 0., 0.), (2.31, 0., 0., 0.),
+                       (2., .31, 0., 0.), (2., 0., .09, 0.), (2., 0., 0., .11)):
+            with self.subTest(actual=actual):
+                result = dict(zip(('dX', 'dY', 'dZ', 'dPsi'), actual), error='ok')
+                pending.matched_events.return_value.last.return_value = SimpleNamespace(args=result)
+                with self.assertRaisesRegex(RuntimeError, 'outside tolerance'):
+                    driver.move(requested, 1., lambda: None)
+                pending.cancel.assert_called()
 
     def continuous_fake(self):
         now = [10.]

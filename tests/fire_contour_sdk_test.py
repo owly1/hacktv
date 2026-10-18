@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]/'bridge'))
 HAS_SDK = importlib.util.find_spec('olympe') is not None
 if HAS_SDK:
     import fire_response as response
-    from fire_contour import GPSFix, geographic_offset
+    from fire_contour import GPSFix, geographic_offset, OUTDOOR_DETAILS
     from fire_detection import parse_marker, TINY_FIRE_MARKER_PAYLOAD
     from fire_tracking import FireTarget
     from fire_response_sdk_test import ResponseTests
@@ -48,8 +48,11 @@ class ContourResponseTests(unittest.TestCase):
                   'incident_id': 'tiny-incident', 'at': time.time()*1000}
         b.control = {'enabled': True, 'session_id': 'contour-session', 'mode': 'contour', 'target': target,
                      'mission': {'mode': 'contour', 'episode_id': 'tiny-fire', 'qr_text': TINY_FIRE_MARKER_PAYLOAD,
-                                 'contour': {'forecast_minutes': 5, 'started_at': time.time()*1000, 'details': details}}}
+                                 'contour': {'profile': response.OUTDOOR_PROFILE, 'forecast_minutes': 5, 'started_at': time.time()*1000, 'details': dict(OUTDOOR_DETAILS), 'marker_details': details}}}
         b.control['search']={'id':'search-one','receiver_id':b.receiver_id,'height_m':1}
+        b.measured_wind_snapshot=Mock(return_value={'source':'flight-controller','speed_mps':2.,
+            'direction_deg':90.,'observed_at':response.utc_iso(time.time()),'age_s':0.})
+        b.measured_wind_reason=Mock(return_value=None)
         b.control_at = time.monotonic()
         return b
 
@@ -218,10 +221,32 @@ class ContourResponseTests(unittest.TestCase):
         self.assertTrue(listener.fixed)
         self.assertIsNone(listener.snapshot())
         listener.location_changed(SimpleNamespace(args={'latitude': 43.78, 'longitude': -79.19,
-                                                        'latitude_accuracy': .2, 'longitude_accuracy': .2}), None)
-        self.assertIsNone(response.gps_reason(listener.snapshot(), time.monotonic()))
+                                                        'latitude_accuracy': 1, 'longitude_accuracy': 1}), None)
+        self.assertIsNone(response.gps_reason(listener.snapshot(), time.monotonic(), max_accuracy_m=5.))
         listener.fix_changed(SimpleNamespace(args={'fixed': 0}), None)
-        self.assertIsNotNone(response.gps_reason(listener.snapshot(), time.monotonic()))
+        self.assertIsNotNone(response.gps_reason(listener.snapshot(), time.monotonic(), max_accuracy_m=5.))
+
+    def test_wind_unavailable_does_not_block_outdoor_takeoff(self):
+        """Wind quality is a degraded model condition, never a takeoff or QR-claim gate."""
+        b=self.bridge();b.measured_wind_snapshot.return_value=None
+        b.measured_wind_reason.return_value='Wind unavailable'
+        self.assertIsNone(b._contour_reason())
+        plan=b._build_contour_plan(b.control)
+        self.assertEqual(plan.status(time.monotonic())['wind_status'],'assumed')
+        self.assertEqual(plan.wind['source'],'qr-scenario-assumption')
+        self.assertIsNone(plan.wind['observed_at'])
+        self.assertEqual(plan.scenario['wind'],.2)
+
+    def test_displayed_gps_requires_actual_event_freshness(self):
+        """Telemetry polling cannot keep an old coordinate alive for the aircraft map marker."""
+        b=self.bridge();b.telemetry['extra']={}
+        for age,expected in ((0,43.78),(2,None)):
+            b.contour_gps=SimpleNamespace(snapshot=lambda:GPSFix(time.monotonic()-age,43.78,-79.19,2.8,True))
+            with patch.object(response.QRAutoPreset,'_poll_telemetry'):
+                b._poll_telemetry()
+            self.assertEqual(b.telemetry['latitude'],expected)
+            self.assertEqual(b.telemetry['extra']['position_source'],'gps' if age==0 else 'unavailable')
+            self.assertIsNotNone(b.telemetry['extra']['gps_observed_at'])
 
 
 if __name__ == '__main__':
