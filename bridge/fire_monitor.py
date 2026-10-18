@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Mac RGB/QR detector consuming the real camera relay. No aircraft commands."""
+"""Laptop RGB/QR detector consuming the real camera relay. No aircraft commands."""
 import argparse
 import base64
 from datetime import datetime, timezone
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -14,6 +13,7 @@ from urllib.request import Request, urlopen
 import cv2
 import numpy as np
 from fire_detection import FireDetector, confirm_hits, same_spot
+from fire_location import locate_fire
 
 
 def iso(at):
@@ -70,8 +70,8 @@ class Episodes:
         self.last_post = now
 
 
-def detection_payload(hit, jpeg, captured, episode, telemetry=None, site=None):
-    """Build a fire-ingest record, distinguishing measured pose from a configured QR scenario site."""
+def detection_payload(hit, jpeg, captured, episode, telemetry=None, site=None, frame_shape=(540, 960)):
+    """Build a fire-ingest record from camera evidence and the available pose."""
     details = dict(hit.get('details') or {})
     fire = {'latitude': None, 'longitude': None, 'distance_m': None,
             'bearing_deg': None, 'position_source': 'unavailable'}
@@ -81,6 +81,10 @@ def detection_payload(hit, jpeg, captured, episode, telemetry=None, site=None):
         fire.update(latitude=site['latitude'], longitude=site['longitude'],
                     position_source='qr-scenario-site-not-measured')
         details.update(position_simulated=True, location_note='Configured scenario site; not measured fire GPS')
+    elif hit['source'] == 'yolo':
+        fire, area = locate_fire(hit, telemetry, frame_shape)
+        if area is not None:
+            details.update(area_ha=area, area_source='camera-box-estimate')
     return {'detected_at': iso(captured), 'episode_id': episode,
             **{k: hit[k] for k in ('source', 'label', 'confidence', 'bbox')},
             'fire': fire, 'drone': telemetry, 'details': details,
@@ -135,13 +139,17 @@ class Monitor:
         episode = self.episodes.observe(hit, captured, now)
         self.health.update(camera_state='live' if now-captured < 2 else 'stale',
                            last_frame_at=iso(captured), error=None)
+        # Preview every fresh inference, including empty results. Incident
+        # confirmation and its five-second repeat interval remain separate.
+        overlays = [{k: hit[k] for k in ('source', 'label', 'confidence', 'bbox')}] if hit and now-captured < 2 else []
+        self.post('/api/ingest/overlays', {'captured_at': iso(captured), 'detections': overlays})
         if episode:
             with self.get('/api/status') as response:
                 status = json.load(response)
             with self.get('/api/telemetry/latest') as response:
                 telemetry = json.load(response)
             sample = telemetry.get('sample') if (telemetry.get('age_ms') is not None and 0 <= telemetry['age_ms'] < 10000) else None
-            payload = detection_payload(hit, jpeg, captured, episode, sample, status.get('site'))
+            payload = detection_payload(hit, jpeg, captured, episode, sample, status.get('site'), image.shape)
             self.post('/api/ingest/detection', payload)
             self.episodes.acknowledged(time.time())
             self.health.update(last_detection_at=iso(captured), last_source=hit['source'])
@@ -170,6 +178,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', default='http://127.0.0.1:8787')
     parser.add_argument('--model', default=os.environ.get('EMBERWATCH_MODEL', str(Path.home()/'emberwatch-models/fire-smoke-yolov8n.pt')))
+    parser.add_argument('--detect-smoke', action='store_true', default=os.environ.get('EMBERWATCH_DETECT_SMOKE') == '1',
+                        help='Also confirm smoke-only sightings (more prone to false alarms)')
     args = parser.parse_args()
     from urllib.parse import urlparse
     url = urlparse(args.backend)
@@ -177,15 +187,23 @@ def main():
         parser.error('Use the localhost backend')
     with (Path(__file__).parents[1]/'.fire-monitor.local').open('w') as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            if os.name == 'nt':
+                import msvcrt
+                lock.write('0')
+                lock.flush()
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
             raise SystemExit('A fire monitor is already running for this checkout.')
         try:
             import torch
             torch.set_num_threads(2)
         except ImportError:
             pass  # The QR detector still works; model health reports the gap.
-        detector = FireDetector(args.model)
+        detector = FireDetector(args.model, detect_smoke=args.detect_smoke)
         print('Fire monitor: QR + RGB inference; no flight commands.', flush=True)
         Monitor(args.backend, os.environ['DASHBOARD_TOKEN'], os.environ['INGEST_TOKEN'], detector).run()
 

@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node --env-file=.env backend/server.mjs",
     "demo": "node scripts/demo.mjs",
+    "live-demo": "node scripts/demo.mjs --live",
+    "vision": "node --env-file=.env scripts/vision.mjs --detect-smoke",
     "db:init": "node --env-file=.env backend/db-init.mjs",
     "test": "node --test"
   },

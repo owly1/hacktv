@@ -110,3 +110,10 @@ Tests use fixtures and mocked aircraft, not live cloud services or motors.
 
 Spread and rescue locations are model estimates. A reviewer evaluates plans;
 the dashboard and Gemini do not issue aircraft commands or dispatch crews.
+
+## Live detection extension
+
+On `dive-dashboard`, run `npm run live-demo` with the existing receiver and
+`npm run vision` for laptop fire/QR/person recognition. Live mode consumes
+actual camera detections; it does not generate fictional people. See
+[the live dashboard guide](docs/LIVE_DEMO_DASHBOARD.md).

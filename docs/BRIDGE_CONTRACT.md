@@ -110,3 +110,16 @@ Flight phases are `preflight`, `takeoff`, `climb`, `circle`, `return`, `landing`
 `landed`, `aborted`, `error`. They report events, not commands. The backend,
 dashboard and Gemini cannot pilot. Explicit terminal runtimes own execution;
 automatic observation recovery never restarts a flight session.
+
+### Laptop detection overlays — `POST /api/ingest/overlays`
+
+Authenticated with the ingest token. Body:
+`{ "captured_at": "<ISO UTC>", "detections": [{ "source": "yolo", "label": "smoke", "confidence": 0.85, "bbox": [0.2, 0.3, 0.6, 0.7] }] }`.
+Send an empty array for a negative inference. At most ten ordered normalized
+boxes are accepted; source is `qr-test|yolo`, label is `fire|smoke|person`
+(QR must be fire), confidence is 0–1. Returns `{accepted}`. Results more than
+two seconds old or older than the latest overlay are ignored. An overlay
+can annotate matching/newer frames for up to 1.5 seconds of camera motion;
+embedded frame detections take precedence. A redraw retains the image's
+original timestamp and does not count as a new frame or incident.
+
