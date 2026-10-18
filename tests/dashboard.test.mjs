@@ -99,6 +99,15 @@ test('fleet briefs contain the selected telemetry, all aircraft and source-attri
   assert.equal(run('simCase(demoCase()).drone.telemetry.drone_id'), 'ANAFI-03');
 });
 
+test('exterior fleet leads are not labeled at the fire merely because it could arrive soon', async () => {
+  const {run} = await dashboard();
+  run(`selectDemo(state.demo.fires[0].id); peopleState.snap = BoscoScout.snapshot(state.demo.scout, 210);
+    fireArrivalAt = () => 5;`);
+  assert.equal(run('withArrival(peopleState.snap.leads).some(l => l.atFire)'), false);
+  run('fireArrivalAt = () => 0');
+  assert.equal(run('withArrival(peopleState.snap.leads).every(l => l.atFire)'), true);
+});
+
 const liveIncident = (over = {}) => ({
   active: true, episode_id: 'live-qr', first_detected_at: new Date().toISOString(),
   last_seen_at: new Date().toISOString(), sightings: 3, max_confidence: 1,

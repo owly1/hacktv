@@ -18,7 +18,20 @@
     const u = a * .45 + (a + offset) * Math.cos(angle), v = (b + offset) * Math.sin(angle);
     return {e: u * Math.sin(w) - v * Math.cos(w), n: u * Math.cos(w) + v * Math.sin(w)};
   }
-  /** Choose 4–8 fixed fictional people beside the perimeter at each first search. */
+  /** Estimate signed ground clearance to the rendered ellipse, in metres. */
+  function clearance(scene, t, point) {
+    let distance = Infinity;
+    for (let i = 0; i < 96; i++) {
+      const a = boundary(scene, t, i * Math.PI / 48), b = boundary(scene, t, (i + 1) * Math.PI / 48);
+      const dx = b.e - a.e, dy = b.n - a.n;
+      const k = Math.max(0, Math.min(1, ((point.e - a.e) * dx + (point.n - a.n) * dy) / (dx * dx + dy * dy)));
+      distance = Math.min(distance, Math.hypot(point.e - a.e - k * dx, point.n - a.n - k * dy));
+    }
+    const a = Math.min(300, 90 + t * .8), w = scene.direction * RAD;
+    const u = point.e * Math.sin(w) + point.n * Math.cos(w) - a * .45, v = -point.e * Math.cos(w) + point.n * Math.sin(w);
+    return ((u / a) ** 2 + (v / (a / 2.4)) ** 2 < 1 ? -1 : 1) * distance;
+  }
+  /** Put fictional people beyond the largest rendered fire so growth never engulfs them. */
   function create(fire, seed = Math.floor(Math.random() * 4294967296), startedAt = Date.now()) {
     const rng = random(seed), targets = [];
     const drones = COLORS.map((color, index) => ({id: `ANAFI-0${index + 1}`, index, color,
@@ -33,7 +46,7 @@
       const angle = drone.index * Math.PI / 2 + t * .018;
       const count = 1 + Math.floor(rng() * 2);
       for (let i = 0; i < count; i++) {
-        const {e, n} = boundary(scene, t, angle + (i ? .10 : -.06), 8 + rng() * 5);
+        const {e, n} = boundary(scene, 300, angle + (i ? .10 : -.06), 75 + rng() * 5);
         targets.push({id: `fleet-${seed}-${targets.length + 1}`, number: targets.length + 1,
           e, n, assignedDrone: drone.id, samples: [], seenBy: [], total: 0, first: null,
           acknowledged: null, closed: null});
@@ -55,15 +68,15 @@
     if (s < DESCENT * 2 + SEARCH) return {phase: 'Ascending', depth: 1 - smooth((s - DESCENT - SEARCH) / DESCENT), next: scene.period - s};
     return {phase: 'Observing', depth: 0, next: scene.period - s};
   }
-  /** Place one aircraft outside the current fire, with a downward-looking search camera. */
+  /** Orbit the maximum replay envelope; descend toward exterior people with 110+ m clearance. */
   function position(scene, t, drone) {
     const task = assignment(scene, t, drone), angle = drone.index * Math.PI / 2 + t * .018;
-    const {e, n} = boundary(scene, t, angle, 90 - 68 * task.depth);
-    const edge = boundary(scene, t, angle, 10), centre = boundary(scene, t, 0, -Math.min(300, 90 + t * .8));
+    const {e, n} = boundary(scene, 300, angle, 210 - 90 * task.depth);
+    const edge = boundary(scene, 300, angle, 78), centre = boundary(scene, t, 0, -Math.min(300, 90 + t * .8));
     const focus = {e: centre.e + (edge.e - centre.e) * task.depth, n: centre.n + (edge.n - centre.n) * task.depth};
-    return {e, n, alt: 64 + drone.index * 3 - (40 + drone.index * 2) * task.depth,
+    return {e, n, alt: 78 + drone.index * 2 - (42 + drone.index) * task.depth,
       heading: (Math.atan2(focus.e - e, focus.n - n) / RAD + 360) % 360,
-      pitch: Math.atan2(64 + drone.index * 3 - (40 + drone.index * 2) * task.depth, Math.hypot(focus.e - e, focus.n - n)) / RAD,
+      pitch: Math.atan2(78 + drone.index * 2 - (42 + drone.index) * task.depth, Math.hypot(focus.e - e, focus.n - n)) / RAD,
       roll: 3 * Math.sin(angle) + 4 * Math.sin(task.depth * Math.PI), ...task};
   }
   /** One shared clock supplies each drone's camera, map, telemetry and sighting pose. */
@@ -126,8 +139,8 @@
         observed_by: [...target.seenBy],
         views: angles.length, angle_span_deg: span, view_azimuths_deg: angles, sensors: ['visible'], observations: target.total,
         movement: {status: 'stationary', detail: 'Simulated person at a fixed location'}, missed_looks: 0,
-        delayed: {any: false, max_delay_s: 0}, fire_distance_m: Math.round(Math.hypot(target.e, target.n)),
-        fire_arrival: {minutes: null, basis: 'fictional person beside the perimeter at first assigned search'}, at_fire: false,
+        delayed: {any: false, max_delay_s: 0}, fire_distance_m: Math.round(clearance(scene, t, target)),
+        fire_arrival: {minutes: null, basis: 'fictional person outside the maximum rendered replay fire'}, at_fire: false,
         priority: {tier: target.closed ? 9 : 0, base_tier: multi ? 2 : 4, reasons: ['SIMULATED: fictional person for presentation']},
         acknowledged: target.acknowledged, closed: target.closed, provenance: 'demo-simulated', next_look: null,
         evidence: samples.slice(-6).reverse().map(s => ({id: `${target.id}-${s.drone_id}-${s.t}`, drone_id: s.drone_id, at: time(s.t), sensor: 'visible', from: `${s.drone_id} camera`,
@@ -153,5 +166,5 @@
     else if (kind === 'close' && ['found', 'not-a-person', 'duplicate', 'handed-off'].includes(outcome)) target.closed = {...record, outcome};
     else throw new Error('Choose a supported lead action');
   }
-  root.BoscoScout = {START, create, pose, visible, snapshot, action, boundary};
+  root.BoscoScout = {START, create, pose, visible, snapshot, action, boundary, clearance};
 })(globalThis);

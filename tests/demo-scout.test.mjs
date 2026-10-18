@@ -18,12 +18,13 @@ test('historical cases orbit outside the evolving perimeter with continuous, coo
         const u = p.e * Math.sin(wd) + p.n * Math.cos(wd) - a * .45;
         const v = -p.e * Math.cos(wd) + p.n * Math.sin(wd);
         assert.ok((u / a) ** 2 + (v / (a / 2.4)) ** 2 > 1, 'flight remains outside the current burning footprint');
+        assert.ok(S.clearance(scene, t, p) > 110, 'drones retain over 110 m of ground clearance from the fire');
         assert.ok(Math.abs(p.climbRate) < 4, 'vertical speed is in simulation seconds');
         const next = S.pose(scene, t + .01, p.drone_id);
         assert.ok(Math.hypot(p.e - next.e, p.n - next.n) < .15);
         assert.ok(Math.abs(p.alt - next.alt) < .041);
         if (p.phase === 'Descending' && p.climbRate < -1) descending = true;
-        if (p.phase === 'Searching perimeter' && p.alt < 30) searching = true;
+        if (p.phase === 'Searching perimeter' && p.alt < 40) searching = true;
         if (p.phase === 'Ascending' && p.climbRate > 1) ascending = true;
       }
     }
@@ -36,6 +37,9 @@ test('every drone finds people for varied seeds and headings, with camera-derive
     const scene = S.create({lat: 43.78, lon: -79.19, directionDeg: seed * 7 % 360}, seed, 1000);
     assert.equal(S.snapshot(scene, 0).leads.length, 0);
     const snap = S.snapshot(scene, 210);
+    for (const person of scene.targets) for (const t of [0, 30, 100, 300, 7200]) {
+      assert.ok(S.clearance(scene, t, person) >= 70, 'fixed people remain at least 70 m outside even after maximum fire growth');
+    }
     assert.equal(snap.leads.length, scene.targets.length);
     assert.ok(snap.fleet.every(d => d.people > 0), 'all four cameras contribute');
     assert.equal(new Set(snap.leads.map(l => l.id)).size, snap.leads.length);
@@ -53,23 +57,29 @@ test('every drone finds people for varied seeds and headings, with camera-derive
 test('all views of one person share one lead; POV changes preserve time and review state', () => {
   const fire = {lat: 43.78, lon: -79.19, directionDeg: 60};
   const scene = S.create(fire, 42, 1000), other = S.create(fire, 99, 1000);
-  const snap = S.snapshot(scene, 210), lead = snap.leads.find(l => l.observed_by.length > 1);
+  const snap = S.snapshot(scene, 310), lead = snap.leads.find(l => l.observed_by.length > 1);
   assert.ok(lead, 'cross-drone evidence exercises shared identity');
   assert.equal(snap.counts.open, scene.targets.length, 'repeated sightings never inflate the count');
   const ids = snap.leads.map(l => l.id);
   for (const drone of scene.drones) {
     scene.selectedId = drone.id;
-    assert.equal(S.pose(scene, 210).drone_id, drone.id);
-    assert.deepEqual(S.snapshot(scene, 210).leads.map(l => l.id), ids);
+    assert.equal(S.pose(scene, 310).drone_id, drone.id);
+    assert.deepEqual(S.snapshot(scene, 310).leads.map(l => l.id), ids);
   }
   S.action(scene, lead.id, 'ack', 'Demo commander');
   S.action(scene, lead.id, 'close', 'Demo commander', 'found');
-  const updated = S.snapshot(scene, 211);
+  const updated = S.snapshot(scene, 311);
   assert.equal(updated.leads.find(l => l.id === lead.id).acknowledged.by, 'Demo commander');
   assert.equal(updated.counts.open, snap.counts.open - 1);
   assert.ok(other.targets.every(x => !x.acknowledged && !x.closed));
   assert.throws(() => S.action(scene, lead.id, 'close', 'Commander', 'unsupported'));
   assert.throws(() => S.action(scene, lead.id, 'ack', ' '));
+});
+
+test('displayed clearance measures the fire edge, with a negative distance inside it', () => {
+  const scene = S.create({lat:43, lon:-79, directionDeg:0},42);
+  assert.ok(Math.abs(S.clearance(scene,300,{e:0,n:555}) - 120) < .1);
+  assert.ok(S.clearance(scene,300,{e:0,n:135}) < -124);
 });
 
 test('long presentations bound evidence storage and retain original sighting and totals', () => {

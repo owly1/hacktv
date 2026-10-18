@@ -903,10 +903,10 @@ function animateDemoCase(now) {
   $('altitude').innerHTML = `${p.alt.toFixed(1)} <small>m</small>`; $('ground-speed').innerHTML = `${p.speed.toFixed(1)} <small>m/s</small>`;
   $('power').innerHTML = `${Math.round(p.battery)} <small>%</small>`; $('flight-state').textContent = `${p.phase} · ${p.climbRate >= 0 ? '+' : ''}${p.climbRate.toFixed(1)} m/s vertical`;
   $('battery-value').innerHTML = `${Math.round(p.battery)}<span class="small-unit">%</span>`; $('battery-context').textContent = `${p.drone_id} battery`;
-  $('telemetry-note').textContent = `${p.drone_id} · SIMULATED POSITION · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${p.role}`;
+  $('telemetry-note').textContent = `${p.drone_id} · SIMULATED POSITION · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${Math.round(BoscoScout.clearance(state.demo.scout, t, p))} m from fire edge`;
   for (const q of poses) {
     $(`fleet-phase-${q.drone_id}`).textContent = q.phase;
-    $(`fleet-tel-${q.drone_id}`).textContent = `${q.alt.toFixed(0)} m · ${q.speed.toFixed(1)} m/s · ${Math.round(q.battery)}%`;
+    $(`fleet-tel-${q.drone_id}`).textContent = `${q.alt.toFixed(0)} m high · ${Math.round(BoscoScout.clearance(state.demo.scout, t, q))} m from fire · ${Math.round(q.battery)}%`;
     const count = state.demo.scout.targets.filter(x => x.seenBy.includes(q.drone_id)).length;
     $(`fleet-people-${q.drone_id}`).textContent = `${count} people spotted · ${q.sector}`;
   }
@@ -926,7 +926,7 @@ function renderFleetCamera(canvas, cam, p, poses, f, t, confidence) {
   ctx.save(); ctx.scale(canvas.width / cam.w, canvas.height / cam.h);
   const found = EmberCamera.render(ctx, cam, p, {t, shake: 0, fire: simFire(f, t), confidence,
     people: state.demo.scout.targets.filter(target => BoscoScout.visible(p, target)), fleet: poses,
-    speed: p.speed, battery: p.battery, range: p.range,
+    speed: p.speed, battery: p.battery, range: p.range, clearance: BoscoScout.clearance(state.demo.scout, t, p),
     footer: `${p.drone_id} · SIMULATED · ${p.phase.toUpperCase()}`});
   ctx.restore(); return found;
 }

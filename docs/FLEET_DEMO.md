@@ -51,8 +51,9 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
    drones within about 50 seconds. Speed changes preserve the current clock.
 5. Watch cyan person boxes appear during low searches and **People found**
    increase. Each case randomly chooses 4–8 fixed fictional people, placed
-   beside the perimeter at their first assigned search. The fire can later
-   approach their positions. Leads include coordinates, illustrative uncertainty,
+   at least 70 m beyond the largest fire rendered by the replay, so they remain
+   outside throughout the presentation. Drones keep over 110 m of ground clearance;
+   camera HUDs and cards display distance from the current fire edge. Leads include coordinates, illustrative uncertainty,
    capture times and source drone evidence. A named responder can acknowledge
    and close leads; closing removes a lead from the open counter.
 6. Click a card or map marker. Its color highlights on the map and its
@@ -71,9 +72,10 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
 
 The fleet is rendered locally with a common clock and existing WebGL terrain,
 smoke, fire boxes and 3D camera projection. One aircraft at a time descends
-from 64–73 m to 24–27 m, searches outside the growing fire and ascends; the
+from 78–84 m to 36–39 m, searches an exterior buffer and ascends; the
 other three maintain observation. The repeatable schedule has small seeded
-gaps. These dimensions and timings illustrate a presentation, not a validated
+gaps. Flights and people use the maximum rendered fire envelope to keep a
+visible buffer even as the fire grows. These dimensions and timings illustrate a presentation, not a validated
 flight plan. WebGL is needed for the rendered terrain; satellite imagery needs
 network access or previously cached tiles.
 

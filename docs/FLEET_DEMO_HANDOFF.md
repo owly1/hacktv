@@ -27,7 +27,7 @@ and briefs now include the whole simulated fleet and source-attributed leads.
 The prediction remains the existing illustrative model, shared across views.
 The older backend person-search fixtures and pad flight replay stay separate.
 
-Checks run (including skips): `npm test` (103 passed); relevant Windows-compatible Python
+Checks run (including skips): `npm test` (105 passed); relevant Windows-compatible Python
 fire-marker checks (3 passed). New coverage exercises all nine historical
 geometries, 100 seeds/headings, all four detection contributors, exterior paths,
 vertical speed/continuity, coordinated coverage, shared identities, bounded
@@ -39,6 +39,12 @@ manual/automatic POV, map positions, descent/ascent, shared counter, named
 acknowledgement, case switch, full screen and planning using an isolated fake
 Gemini transport. No aircraft or real Gemini service was used for this task's
 verification. This is no evidence of real fleet flight/ingest or person tracking.
+
+Follow-up: drones now stay more than 110 m from the rendered fire edge and
+fictional people remain at least 70 m beyond the maximum rendered fire. Cards,
+HUDs and telemetry show edge clearance. An imminent forecast no longer labels
+an exterior fictional person as already at the fire. Regression checks cover
+buffer clearance through maximum growth and long presentations.
 
 Open issue / next step: integrate through review into `main`. Real fleet ingest,
 freshness isolation, multi-view boundary fusion and physical coordination remain

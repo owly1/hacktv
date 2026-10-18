@@ -268,7 +268,7 @@ void main() {
     const left = [`ALT ${pose.alt.toFixed(1)} m`, `SPD ${info.speed.toFixed(1)} m/s`, `GIM ${(-pose.pitch).toFixed(1)}°`, ...(pose.drone_id ? [`V/S ${pose.climbRate.toFixed(1)} m/s`] : [])];
     left.forEach((s, i) => ctx.fillText(s, w * .04, h * .44 + i * fs * 1.35));
     ctx.textAlign = 'right';
-    const right = [info.range != null ? `RNG ${Math.round(info.range)} m` : '', `BAT ${Math.round(info.battery)}%`, info.zoom ?? 'ZOOM 1.0×'].filter(Boolean);
+    const right = [info.clearance != null ? `EDGE ${Math.round(info.clearance)} m` : info.range != null ? `RNG ${Math.round(info.range)} m` : '', `BAT ${Math.round(info.battery)}%`, info.zoom ?? 'ZOOM 1.0×'].filter(Boolean);
     right.forEach((s, i) => ctx.fillText(s, w * .96, h * .44 + i * fs * 1.35));
     ctx.textAlign = 'center'; ctx.font = `${Math.round(fs * .8)}px Consolas, monospace`;
     ctx.fillText(info.footer, cx, h * .78);
