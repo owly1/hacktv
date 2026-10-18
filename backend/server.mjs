@@ -16,6 +16,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PersonSearch, validatePersonObservation, describeLeadsForPlan, MAX_CROP_BYTES } from './people.mjs';
+import SITE_LANDMARKS from './site-landmarks.json' with { type: 'json' };
 import { PersonSearchSim, scenarioFromExample } from './people-sim.mjs';
 import {
   ApiError,
@@ -482,6 +483,86 @@ const GEMINI_TOOLS = [{
 
 const MAX_TOOL_ROUNDS = 2; // then a forced tool-free final answer
 
+// ---- "ask the incident": map-grounded Q&A ----
+// The model answers in the venue's own language — named buildings, roads and
+// terrain — because the server computes real distance/bearing/projected-arrival
+// facts for every gazetteer place and hands them over as tools. This is what
+// keeps answers specific instead of generic LLM guesses.
+const ASK_MIN_INTERVAL_MS = 15_000;
+const ASK_INSTRUCTIONS = [
+  'You are the incident analyst for a drone wildfire-monitoring dashboard at the mapped site.',
+  'Answer the commander\'s question briefly and concretely, in the place names and numbers provided below — not generic statements.',
+  'Every named place in PLACE FACTS has real computed values: distance from the fire, compass bearing from the fire, whether it is inside the burn now, and the projected minutes until the spread outline reaches it (null = not projected within the horizon).',
+  'Directions are degrees clockwise from north; wind direction is the direction the wind blows TOWARD; projected arrival uses the illustrative spread model on this dashboard, so give times as approximate ("~35 min") and flag when the question outruns the model\'s honesty (e.g. beyond 180 min).',
+  'You may call landmark_query for a place\'s facts, point_query for any raw coordinates, and the telemetry/detection/snapshot tools for live evidence. Only claim what the facts or tools support; anything unknowable belongs in confidence_note.',
+  'In landmarks_mentioned, list the id of every named place your answer refers to (use only ids present in PLACE FACTS).',
+].join(' ');
+const ASK_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    answer: { type: 'STRING', description: 'Concrete answer citing named places, distances, bearings and/or projected arrival times.' },
+    landmarks_mentioned: { type: 'ARRAY', items: { type: 'STRING' }, description: 'Gazetteer ids of named places cited in the answer.' },
+    confidence_note: { type: 'STRING', description: 'What limits this answer (model is illustrative, telemetry gaps, horizon), or empty.' },
+  },
+  required: ['answer'],
+};
+const ASK_EXTRA_TOOLS = [{
+  functionDeclarations: [
+    {
+      name: 'landmark_query',
+      description: 'Returns computed facts (distance, bearing, inside-fire-now, projected arrival minutes) for a named place at this site.',
+      parameters: {
+        type: 'OBJECT',
+        properties: { name: { type: 'STRING', description: 'Place name or id, e.g. "Instructional Centre" or "ic".' } },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'point_query',
+      description: 'Returns projected-arrival facts for an arbitrary lat/lon point near the site.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          latitude: { type: 'NUMBER' },
+          longitude: { type: 'NUMBER' },
+        },
+        required: ['latitude', 'longitude'],
+      },
+    },
+  ],
+}];
+
+/* Metres between two geographic points (equirectangular, matches destPoint). */
+function geoDistanceM(lat1, lon1, lat2, lon2) {
+  const dLat = (lat2 - lat1) * 111320;
+  const dLon = (lon2 - lon1) * 111320 * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+  return Math.hypot(dLat, dLon);
+}
+/* Clockwise-from-north bearing from point 1 to point 2. */
+function geoBearingDeg(lat1, lon1, lat2, lon2) {
+  const dLat = lat2 - lat1;
+  const dLon = (lon2 - lon1) * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+  return (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
+}
+
+/** Computed facts for one place vs the current fire projection (origin may be null — then only site-relative distance is honest). */
+export function placeFacts(place, origin, scenario, details, site) {
+  const M = globalThis.EmberModel;
+  const anchor = origin ?? [site.latitude, site.longitude];
+  const pt = [place.latitude, place.longitude];
+  const facts = {
+    id: place.id, name: place.name, kind: place.kind,
+    latitude: place.latitude, longitude: place.longitude,
+    distance_m: Math.round(geoDistanceM(anchor[0], anchor[1], pt[0], pt[1])),
+  };
+  if (!origin) { facts.fire_context = 'no active fire — distance is from the configured site anchor'; return facts; }
+  facts.bearing_deg = Math.round(geoBearingDeg(origin[0], origin[1], pt[0], pt[1]));
+  facts.bearing_compass = M.compass(facts.bearing_deg);
+  facts.inside_fire_now = M.insidePolygon(pt, M.footprint(origin, 0, scenario, details));
+  facts.projected_arrival_min = M.arrivalMinutes(origin, pt, scenario, details);
+  return facts;
+}
+
 function describeDetection(detection) {
   if (!detection) return null;
   const testNote = detection.source === 'qr-test'
@@ -933,6 +1014,7 @@ export function createApp({
     videoClients: new Set(),
     lastGeminiStart: -Infinity,
     lastPlanStart: -Infinity,
+    lastAskStart: -Infinity,
     lastDemoStart: -Infinity,
     gemini: { lastError: null, lastErrorAt: null, lastOkAt: null, pending: false },
     flightEvents: [],
@@ -1070,41 +1152,43 @@ export function createApp({
     }
   }
 
+  /** Serve a bounded Gemini read-only evidence tool using the selected storage adapter. Shared by analysis and ask-the-incident. */
+  async function evidenceTool(name, args = {}) {
+    if (name === 'get_latest_telemetry') {
+      return { sample: await storage.latestTelemetry() };
+    }
+    if (name === 'get_telemetry_history') {
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
+      const sinceMs = Number.isFinite(Number(args.since_minutes)) && Number(args.since_minutes) > 0
+        ? now() - Number(args.since_minutes) * 60_000
+        : null;
+      const samples = await storage.telemetryHistory({ limit, sinceMs });
+      return { samples, count: samples.length };
+    }
+    if (name === 'get_snapshot') {
+      const s = state.latestSnapshot;
+      return s
+        ? { available: true, captured_at: new Date(s.capturedAtMs).toISOString() }
+        : { available: false };
+    }
+    if (name === 'get_detection_history') {
+      const rows = await storage.detectionHistory({ limit: 20 });
+      return {
+        detections: rows.map((d) => ({
+          detected_at: d.detected_at, source: d.source, label: d.label,
+          confidence: d.confidence, fire: d.fire, status: d.status,
+        })),
+      };
+    }
+    return { error: `unknown tool ${name}` };
+  }
+
   // ---- evidence-seeking Gemini analysis ----
   // Gemini may call the declared tools; each round appends the model's
   // functionCall turn and our functionResponse turn. After MAX_TOOL_ROUNDS
   // we forbid further calls and require the structured assessment.
   async function runAnalysis(evidence, { trigger, episodeId = null }) {
-    /** Serve a bounded Gemini read-only evidence tool using the selected storage adapter. */
-    const executeTool = async (name, args = {}) => {
-      if (name === 'get_latest_telemetry') {
-        return { sample: await storage.latestTelemetry() };
-      }
-      if (name === 'get_telemetry_history') {
-        const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
-        const sinceMs = Number.isFinite(Number(args.since_minutes)) && Number(args.since_minutes) > 0
-          ? now() - Number(args.since_minutes) * 60_000
-          : null;
-        const samples = await storage.telemetryHistory({ limit, sinceMs });
-        return { samples, count: samples.length };
-      }
-      if (name === 'get_snapshot') {
-        const s = state.latestSnapshot;
-        return s
-          ? { available: true, captured_at: new Date(s.capturedAtMs).toISOString() }
-          : { available: false };
-      }
-      if (name === 'get_detection_history') {
-        const rows = await storage.detectionHistory({ limit: 20 });
-        return {
-          detections: rows.map((d) => ({
-            detected_at: d.detected_at, source: d.source, label: d.label,
-            confidence: d.confidence, fire: d.fire, status: d.status,
-          })),
-        };
-      }
-      return { error: `unknown tool ${name}` };
-    };
+    const executeTool = evidenceTool;
 
     const contents = [{ role: 'user', parts: buildAnalysisParts(evidence) }];
     const toolTrace = [];
@@ -1178,6 +1262,87 @@ export function createApp({
     };
     await storage.insertAnalysis(record);
     return record;
+  }
+
+  /** Keep the ask response honest: a real answer, landmark ids as strings, bounded lengths. */
+  function validateAskContent(content) {
+    if (typeof content?.answer !== 'string' || !content.answer.trim()) {
+      throw new ApiError(502, 'Gemini response missing answer');
+    }
+    return {
+      answer: content.answer.trim().slice(0, 2000),
+      landmarks_mentioned: Array.isArray(content.landmarks_mentioned)
+        ? content.landmarks_mentioned.filter((x) => typeof x === 'string')
+        : [],
+      confidence_note: typeof content.confidence_note === 'string'
+        ? content.confidence_note.trim().slice(0, 500) : '',
+    };
+  }
+
+  /* Ask-the-incident: the model gets every gazetteer place pre-computed against
+     the current projection, plus tools to query more. Answers are map-specific
+     because the facts are computed here, not guessed by the model. */
+  async function runAsk({ question, scenario, origin, details }) {
+    const facts = SITE_LANDMARKS.places.map((p) => placeFacts(p, origin, scenario, details, site));
+    const executeTool = async (name, args = {}) => {
+      if (name === 'landmark_query') {
+        const q = String(args.name ?? '').trim().toLowerCase();
+        const hit = SITE_LANDMARKS.places.find((p) => p.id === q || p.name.toLowerCase().includes(q));
+        return hit ? placeFacts(hit, origin, scenario, details, site) : { error: `no landmark matches "${args.name}"` };
+      }
+      if (name === 'point_query') {
+        const la = Number(args.latitude), lo = Number(args.longitude);
+        if (!Number.isFinite(la) || !Number.isFinite(lo)) return { error: 'latitude and longitude are required numbers' };
+        return placeFacts({ id: 'point', name: `(${la.toFixed(5)},${lo.toFixed(5)})`, kind: 'point', latitude: la, longitude: lo }, origin, scenario, details, site);
+      }
+      return evidenceTool(name, args);
+    };
+
+    const parts = [
+      { text: ASK_INSTRUCTIONS },
+      { text: `Site: ${JSON.stringify(site)}. Current time: ${new Date(now()).toISOString()}.` },
+      { text: `Question: ${question}` },
+      { text: origin
+          ? `Fire context: ${JSON.stringify({ origin, details: details ?? null })}`
+          : 'No fire is currently projected — arrival facts are unavailable and distances are from the configured site anchor.' },
+      { text: `Scenario conditions: ${JSON.stringify(scenario)}.` },
+      { text: `PLACE FACTS:\n${facts.map((f) => `- ${f.id} · ${f.name} (${f.kind}): ${JSON.stringify(f)}`).join('\n')}` },
+    ];
+    const contents = [{ role: 'user', parts }];
+    const tools = [{ functionDeclarations: [...GEMINI_TOOLS[0].functionDeclarations, ...ASK_EXTRA_TOOLS[0].functionDeclarations] }];
+    const toolTrace = [];
+    let apiResponse = null;
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      const lastRound = round === MAX_TOOL_ROUNDS;
+      apiResponse = await geminiTransport({
+        contents,
+        tools: lastRound ? undefined : tools,
+        toolConfig: lastRound
+          ? { functionCallingConfig: { mode: 'NONE' } }
+          : { functionCallingConfig: { mode: 'AUTO' } },
+        generationConfig: { responseMimeType: 'application/json', responseSchema: ASK_SCHEMA },
+      });
+      const callParts = candidateParts(apiResponse);
+      const calls = callParts.filter((p) => p.functionCall).map((p) => p.functionCall);
+      if (calls.length === 0 || lastRound) break;
+      contents.push({ role: 'model', parts: callParts });
+      const responseParts = [];
+      for (const call of calls.slice(0, 4)) {
+        const result = await executeTool(call.name, call.args ?? {});
+        toolTrace.push({ tool: call.name, args: call.args ?? {}, ok: !result.error });
+        responseParts.push({ functionResponse: { name: call.name, response: result } });
+        if (call.name === 'get_snapshot' && result.available && state.latestSnapshot) {
+          responseParts.push({ inline_data: { mime_type: 'image/jpeg', data: state.latestSnapshot.jpeg.toString('base64') } });
+        }
+      }
+      contents.push({ role: 'user', parts: responseParts });
+    }
+    const content = validateAskContent(parseGeminiJson(apiResponse));
+    // Highlightable ids only: declared ids ∩ gazetteer, plus any place the answer names verbatim (the model sometimes returns the name instead of the id).
+    const mentioned = new Set(content.landmarks_mentioned.filter((id) => SITE_LANDMARKS.places.some((p) => p.id === id)));
+    const low = content.answer.toLowerCase();
+    for (const p of SITE_LANDMARKS.places) if (low.includes(p.name.toLowerCase())) mentioned.add(p.id);
+    return { content, toolTrace, mentioned: [...mentioned] };
   }
 
   // One automatic analysis per newly detected fire, inside the shared
@@ -1579,6 +1744,55 @@ export function createApp({
         error: state.gemini.lastError
           ? { message: state.gemini.lastError, at: state.gemini.lastErrorAt }
           : null,
+      });
+      return;
+    }
+
+    // Ask-the-incident: map-grounded Q&A. The fire context is the live incident
+    // when one exists; in demo mode the client supplies the replayed fire.
+    if (req.method === 'POST' && pathname === '/api/ask') {
+      requireAuth(req, 'dashboard');
+      const body = await readJson(req);
+      const question = typeof body.question === 'string' ? body.question.trim() : '';
+      if (question.length < 3 || question.length > 600) {
+        throw new ApiError(400, 'question must be 3–600 characters');
+      }
+      if (!geminiTransport) throw new ApiError(503, 'Gemini is not configured on this backend');
+      const nowMs = now();
+      if (nowMs - state.lastAskStart < ASK_MIN_INTERVAL_MS) {
+        throw new ApiError(429, 'questions are limited to one per 15 seconds');
+      }
+      state.lastAskStart = nowMs;
+      const incident = await activeIncident().catch(() => null);
+      const live = Boolean(incident?.active && incident.latest?.fire?.latitude != null);
+      const details = live ? incident.latest.details ?? null : plainObject(body.details);
+      const clientFire = plainObject(body.fire);
+      const origin = live
+        ? [incident.latest.fire.latitude, incident.latest.fire.longitude]
+        : (clientFire && Number.isFinite(clientFire.latitude) && Number.isFinite(clientFire.longitude)
+            ? [clientFire.latitude, clientFire.longitude]
+            : null);
+      const scenario = plainObject(body.scenario) ?? globalThis.EmberModel.scenarioFrom(details);
+      let asked;
+      try {
+        asked = await runAsk({ question, scenario, origin, details });
+        recordGeminiResult(null);
+      } catch (err) {
+        recordGeminiResult(err);
+        throw err;
+      }
+      sendJson(res, 200, {
+        id: crypto.randomUUID(),
+        created_at: new Date(now()).toISOString(),
+        model: geminiTransport.lastModel ?? geminiModel,
+        provenance: live ? 'gemini' : 'gemini-demo',
+        question,
+        ...asked.content,
+        landmarks: SITE_LANDMARKS.places
+          .filter((p) => asked.mentioned.includes(p.id))
+          .map((p) => placeFacts(p, origin, scenario, details, site)),
+        tool_trace: asked.toolTrace,
+        context: { fire_projected: Boolean(origin), live_incident: live, scenario },
       });
       return;
     }

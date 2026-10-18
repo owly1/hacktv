@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createApp, MemoryStorage, validateAnalysisContent, createPgPool, fcWindEstimate } from '../backend/server.mjs';
+import { createApp, MemoryStorage, validateAnalysisContent, createPgPool, fcWindEstimate, placeFacts } from '../backend/server.mjs';
 import { ApiError } from '../backend/validation.mjs';
 
 const INGEST = 'ingest-token-aaa';
@@ -645,4 +645,100 @@ test('a lost idle database connection does not crash the backend', async () => {
   }
   assert.match(logged.join(' '), /idle connection lost \(ETIMEDOUT\)/);
   await pool.end();
+});
+
+// ---- ask the incident: map-grounded Q&A ----
+
+const askDetection = (over = {}) => ({
+  detected_at: new Date(nowMs).toISOString(), episode_id: 'ep-ask-1', source: 'yolo',
+  label: 'fire', confidence: 0.8, bbox: [0.1, 0.1, 0.2, 0.2],
+  fire: { latitude: 43.7866, longitude: -79.1902 },
+  ...over,
+});
+
+test('ask requires a question and Gemini', async () => {
+  const bad = await req('POST', '/api/ask', { token: DASH, body: { question: 'hi' } });
+  assert.equal(bad.status, 400);
+  const noGemini = http.createServer(createApp({
+    ingestToken: INGEST, dashboardToken: DASH, allowedOrigins: [ORIGIN],
+    storage: new MemoryStorage(), geminiTransport: null,
+  }));
+  await new Promise((r) => noGemini.listen(0, '127.0.0.1', r));
+  const port = noGemini.address().port;
+  const res = await fetch(`http://127.0.0.1:${port}/api/ask`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${DASH}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ question: 'is it heading toward the library?' }),
+  });
+  noGemini.close();
+  assert.equal(res.status, 503);
+});
+
+test('ask answers with computed place facts and records the tool trace', async () => {
+  await req('POST', '/api/ingest/detection', { token: INGEST, body: askDetection() });
+  fakeGeminiReplies = [
+    geminiCallReply('landmark_query', { name: 'Instructional Centre' }),
+    geminiTextReply(JSON.stringify({
+      answer: 'The projected zone reaches the Instructional Centre in about 50 minutes at current wind. Ellesmere Road is upwind and is not projected.',
+      landmarks_mentioned: ['ic', 'ellesmere', 'bogus-id'],
+      confidence_note: 'Illustrative spread model.',
+    })),
+  ];
+  const res = await req('POST', '/api/ask', {
+    token: DASH,
+    body: { question: 'When does it reach the Instructional Centre?', scenario: { wind: 20, direction: 45, dryness: 65, temp: 20, rh: 40 } },
+  });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.match(json.answer, /Instructional Centre/);
+  assert.equal(json.context.live_incident, true);
+  assert.equal(json.context.fire_projected, true);
+  // only gazetteer ids may be highlighted — the bogus id is dropped
+  const ids = json.landmarks.map((l) => l.id).sort();
+  assert.deepEqual(ids, ['ellesmere', 'ic']);
+  // every returned landmark carries computed facts, not model guesses
+  const ic = json.landmarks.find((l) => l.id === 'ic');
+  assert.equal(typeof ic.distance_m, 'number');
+  assert.equal(typeof ic.projected_arrival_min === 'number' || ic.projected_arrival_min === null, true);
+  assert.equal(json.tool_trace[0].tool, 'landmark_query');
+  assert.equal(json.tool_trace[0].ok, true);
+  // the model was handed the precomputed facts table
+  const promptText = JSON.stringify(fakeGeminiCalls.at(-2)?.contents ?? fakeGeminiCalls.at(-1).contents);
+  assert.match(promptText, /PLACE FACTS/);
+  assert.match(promptText, /Instructional Centre/);
+
+  const again = await req('POST', '/api/ask', { token: DASH, body: { question: 'another question soon' } });
+  assert.equal(again.status, 429);
+});
+
+test('ask without a projected fire answers from the site anchor honestly', async () => {
+  nowMs += 31 * 60_000; // incident expires after 30 min unseen — and the ask rate limit passes
+  fakeGeminiReplies = [geminiTextReply(JSON.stringify({
+    answer: 'No fire is currently projected; the Instructional Centre sits about 200 m northeast of the site anchor.',
+    landmarks_mentioned: ['ic'],
+  }))];
+  const res = await req('POST', '/api/ask', {
+    token: DASH,
+    body: { question: 'Where is the Instructional Centre?' },
+  });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.context.fire_projected, false);
+  const ic = json.landmarks.find((l) => l.id === 'ic');
+  assert.equal(ic.fire_context, 'no active fire — distance is from the configured site anchor');
+  assert.equal('projected_arrival_min' in ic, false);
+});
+
+test('placeFacts: downwind arrives sooner than upwind, upwind may never arrive', async () => {
+  const M = globalThis.EmberModel;
+  const site = { name: 'test', latitude: 43.7866, longitude: -79.1903 };
+  const origin = [43.7866, -79.1903];
+  const sc = { wind: 30, direction: 0, dryness: 65, temp: 20, rh: 40 }; // wind blows toward N
+  const north = placeFacts({ id: 'n', name: 'North spot', kind: 'point', latitude: 43.7906, longitude: -79.1903 }, origin, sc, null, site);
+  const south = placeFacts({ id: 's', name: 'South spot', kind: 'point', latitude: 43.7826, longitude: -79.1903 }, origin, sc, null, site);
+  assert.ok(north.projected_arrival_min != null && north.projected_arrival_min < 180);
+  assert.ok(south.projected_arrival_min === null || south.projected_arrival_min > north.projected_arrival_min * 3);
+  assert.equal(north.bearing_compass, 'N');
+  assert.equal(south.bearing_compass, 'S');
+  assert.ok(Math.abs(north.distance_m - south.distance_m) < 30, 'both ~445 m from origin');
 });

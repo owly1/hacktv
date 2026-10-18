@@ -103,7 +103,7 @@ function initMap() {
     tiles.on('tileerror', () => { state.tileErrors++; if (!state.tilesOk && state.tileErrors >= 4) { $('map-viewport').classList.add('tiles-offline'); renderMapChip(); } });
   }
   state.tiles.osm.addTo(map);
-  for (const name of ['spread', 'wind', 'fire', 'drone', 'demo']) state.layers[name] = L.layerGroup().addTo(map);
+  for (const name of ['spread', 'wind', 'fire', 'drone', 'demo', 'ask']) state.layers[name] = L.layerGroup().addTo(map);
   state.layers.path = L.polyline([], {color: '#3A372E', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
   state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
@@ -459,6 +459,82 @@ function renderPlan(offline) {
   $('export-plan').onclick = () => download(`bosco-plan-${p.id.slice(0, 8)}.json`, JSON.stringify(p, null, 2), 'application/json');
 }
 
+/** Render the ask-the-incident answer plus highlight markers for the places it cites. */
+function renderAsk(r) {
+  const box = $('ask-answer');
+  box.hidden = false;
+  const consulted = r.tool_trace?.length
+    ? `<p class="microcopy">Gemini consulted: ${r.tool_trace.map((t) => escapeHTML(t.tool)).join(', ')}</p>` : '';
+  const noFire = r.context && !r.context.fire_projected
+    ? '<p class="microcopy">No fire projected — distances measured from the site anchor.</p>' : '';
+  box.innerHTML = `<div class="ask-response"><p class="ask-q">${escapeHTML(r.question)}</p><p class="ask-a">${escapeHTML(r.answer)}</p>${r.confidence_note ? `<p class="ask-note">${escapeHTML(r.confidence_note)}</p>` : ''}${consulted}${noFire}</div>`;
+  state.layers.ask?.clearLayers();
+  for (const lm of r.landmarks ?? []) {
+    const sub = lm.inside_fire_now ? 'inside now'
+      : lm.projected_arrival_min != null ? `~${Math.round(lm.projected_arrival_min)} min`
+      : `${Math.round(lm.distance_m)} m`;
+    L.marker([lm.latitude, lm.longitude], {
+      icon: L.divIcon({ className: 'ask-place', html: `<span>${escapeHTML(lm.name)}<b>${escapeHTML(sub)}</b></span>`, iconAnchor: [8, 8] }),
+    }).addTo(state.layers.ask).bindTooltip(
+      `${escapeHTML(lm.name)} — ${Math.round(lm.distance_m)} m` +
+      (lm.bearing_compass ? ` ${lm.bearing_compass} of the fire` : '') +
+      (lm.projected_arrival_min != null ? ` · projected arrival ~${Math.round(lm.projected_arrival_min)} min`
+        : lm.inside_fire_now ? ' · inside the fire now'
+        : lm.bearing_compass ? ' · not projected within the horizon' : ''));
+  }
+}
+
+/** Send the map-grounded question; live incidents resolve server-side, replay passes its own fire. */
+async function askIncident() {
+  const q = $('ask-input').value.trim();
+  if (q.length < 3) { toast('Type a question about the incident.'); return; }
+  $('ask-send').disabled = true;
+  try {
+    const body = { question: q, scenario: state.scenario };
+    if (state.mode === 'demo' && modelledFire()) {
+      const o = origin();
+      if (o) body.fire = { latitude: o[0], longitude: o[1] };
+      if (fireDetails()) body.details = fireDetails();
+    }
+    const r = await getJson('/api/ask', { method: 'POST', body, timeout: 100000 });
+    renderAsk(r);
+  } catch (e) {
+    const box = $('ask-answer');
+    box.hidden = false;
+    box.innerHTML = `<div class="ask-response"><p class="ask-a">${escapeHTML(e.status === 503 ? 'Gemini is not configured on the backend.' : e.message)}</p></div>`;
+  } finally { $('ask-send').disabled = false; }
+}
+
+/* Fictional wind variation for a live-feel demo: only reachable with
+   ?demo-wind in the URL, toggled from the conditions dialog, and labelled
+   fictional wherever it appears. Nothing about it is real wind. */
+const DEMO_WIND_FLAG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('demo-wind');
+let demoWindTimer = null, demoWindBase = null, demoWindT0 = 0;
+function setDemoWind(on) {
+  if (on) {
+    demoWindBase = { ...state.scenario };
+    demoWindT0 = performance.now();
+    toast('Fictional wind variation on — wind values are not real.');
+    demoWindTimer = setInterval(() => {
+      const t = (performance.now() - demoWindT0) / 1000;
+      state.scenario = {
+        ...state.scenario,
+        wind: Math.round(Math.max(0, Math.min(120, demoWindBase.wind + 18 * Math.sin(t / 7) + 6 * Math.sin(t / 2.3)))),
+        direction: Math.round((demoWindBase.direction + 28 * Math.sin(t / 11) + 360) % 360),
+      };
+      renderSpread(); refreshFireTiming(); markPlanDirty();
+    }, 800);
+  } else {
+    clearInterval(demoWindTimer);
+    demoWindTimer = null;
+    if (demoWindBase) {
+      state.scenario = { ...demoWindBase };
+      demoWindBase = null;
+      renderSpread(); refreshFireTiming();
+    }
+  }
+}
+
 /** Request a live or scenario-specific replay plan and preserve visible service errors. */
 async function generatePlan() {
   $('generate-plan').disabled = true; $('generate-plan').innerHTML = '<svg><use href="#i-spark"/></svg>Gemini is planning…';
@@ -719,6 +795,7 @@ async function toggleDemo() {
 function selectDemo(id) {
   state.demo.layer?.remove();
   state.demo.layer = L.layerGroup().addTo(state.map);
+  state.layers.ask?.clearLayers(); $('ask-answer').hidden = true;
   stopPeopleDemo();
   state.demo.marker = null; state.demo.pos = null; state.demo.located = false;
   setDemoVideo(null);
@@ -792,7 +869,7 @@ function selectDemo(id) {
 /** Stop simulations and restore saved live evidence, plan, basemap and polling state. */
 function exitDemo() {
   stopPeopleDemo();
-  state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.map.closePopup();
+  state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.layers.ask?.clearLayers(); $('ask-answer').hidden = true; state.map.closePopup();
   setDemoVideo(null); setBasemap(state.basemapBeforeDemo ?? 'osm'); setFollow(false);
   $('demo-toggle').innerHTML = 'Replay <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
   $('map-pill').textContent = 'Live';
@@ -917,6 +994,10 @@ function bindUi() {
     finally { $('analyze').disabled = false; renderAnalysis(); }
   };
   $('generate-plan').onclick = generatePlan;
+  $('ask-send').onclick = askIncident;
+  $('ask-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') askIncident(); });
+  if (DEMO_WIND_FLAG) $('demo-wind-row').hidden = false;
+  $('demo-wind').onchange = (e) => setDemoWind(e.target.checked);
   $('objective').onchange = markPlanDirty; $('notes').oninput = markPlanDirty;
   $('demo-toggle').onclick = toggleDemo; $('demo-fire').onchange = () => selectDemo($('demo-fire').value);
   for (const id of ['open-integrations', 'top-integrations']) $(id).onclick = () => { openDialog('integrations-dialog'); pollStatus().catch(() => {}); renderHistory().catch(() => { $('history-source').textContent = 'unavailable'; }); };
