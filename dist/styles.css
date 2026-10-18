@@ -179,7 +179,8 @@ body[data-mode=alert] .map-location .dot{color:var(--ember)}
 .leaflet-popup-content small{color:var(--muted)}
 .leaflet-control-scale{margin-bottom:6px!important;margin-right:12px!important}
 .leaflet-control-scale-line{font-family:var(--mono);font-size:10px;background:#FFFFFFCC;border-color:var(--ink-2)}
-.drone-icon-wrap,.fire-pin-wrap{background:none;border:0}
+.drone-icon-wrap,.fire-pin-wrap,.wind-arrow{background:none;border:0}
+.wind-arrow div{font-size:13px;line-height:14px;color:#4E6A70;text-shadow:0 0 3px var(--cream)}
 .drone-icon{position:relative;width:120px;height:120px;pointer-events:none}
 .drone-icon .drone-svg{position:absolute;inset:0;width:120px;height:120px;overflow:visible;filter:drop-shadow(var(--shadow-x,4px) var(--shadow-y,6px) 2px #0006)}
 .drone-cone{fill:#4fd1c5;fill-opacity:.32;stroke:#fff;stroke-opacity:.9;stroke-width:1}
