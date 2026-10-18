@@ -86,3 +86,34 @@ from the bridge's terminal with `--demo-flight` and a typed `FLY`.
 
 Dashboard token: `GET /api/status`, `/api/telemetry/latest`, `/api/incident`,
 `/api/flight`, `/api/analysis/latest`; `GET /api/video` streams the frames.
+
+## Connection status and recovery
+
+The Mac fire monitor posts health to authenticated `POST /api/ingest/vision`:
+`observed_at`, `model_status` (`ready|missing|error|disabled`), `camera_state`
+(`live|waiting|stale`), and optional `last_frame_at`, `last_detection_at`,
+`last_source` (`qr-test|yolo`), `error`. `/api/status.vision.fresh` expires
+after ten seconds. Health alone never creates an incident.
+
+QR and RGB classifications use the same detection endpoint and automatic
+analysis path. QR scenario positions use
+`fire.position_source=qr-scenario-site-not-measured` and
+`details.position_simulated=true`; these are configured test anchors, not GPS.
+Missing RGB fire coordinates remain null and do not suppress the incident UI.
+
+`GET /api/status` distinguishes stored evidence from a current connection.
+`available` still means a sample exists, including an old one. Each of
+`telemetry`, `camera` and `video` now includes `fresh`: telemetry expires at
+10 seconds, camera/video at 3 seconds. Timestamps more than 1 second ahead
+of the server are not fresh. Stale video reports zero FPS.
+
+`connection.connected` is true when fresh telemetry or video is arriving.
+`connection.state` is `live` (both), `telemetry-only`, `video-only`,
+`disconnected` (old evidence only), or `waiting` (no evidence yet). This
+reports received evidence, not an SDK handshake or permission to fly.
+An HTTP 200 or an old `available: true` alone never proves a live drone.
+
+The Mac observation supervisor retries Wi-Fi selection and starts a new SDK
+receiver after connection loss. The backend and existing video subscriptions
+remain running and accept the returning stream. Flight sessions do not
+automatically restart or re-arm.

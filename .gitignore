@@ -8,6 +8,7 @@ data/
 __pycache__/
 *.pyc
 node_modules/
+.venv/
 
 # local diagnostics
 diag_log.txt

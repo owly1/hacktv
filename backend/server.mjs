@@ -27,6 +27,8 @@ import {
   validateFrame,
   validateSnapshotEnvelope,
   validateTelemetry,
+  parseIsoTimestamp,
+  assertWithinClockWindow,
 } from './validation.mjs';
 
 const CONTRACT = 'emberwatch.v1';
@@ -35,7 +37,7 @@ const DEFAULT_HOST = '127.0.0.1';
 const MAX_JSON_BODY = 8 * 1024 * 1024; // fits a 5 MB base64 snapshot envelope
 const GEMINI_MIN_INTERVAL_MS = 30_000;  // one started analysis per 30 s
 const PLAN_MIN_INTERVAL_MS = 10_000;
-const GEMINI_UPSTREAM_TIMEOUT_MS = 20_000;
+const GEMINI_UPSTREAM_TIMEOUT_MS = 45_000;
 const INCIDENT_ACTIVE_MS = 30 * 60_000;  // a fire stays on the map 30 min after its last sighting
 const VIDEO_BOUNDARY = 'emberframe';
 
@@ -563,7 +565,7 @@ export function validatePlanContent(parsed) {
 // Overloaded (503), rate-limited (429) or failing (500) upstream models are
 // retried once, then the next model in `fallbackModels` is tried, so a busy
 // model does not take analysis down mid-demo.
-const RETRYABLE_UPSTREAM = new Set([429, 500, 503]);
+const RETRYABLE_UPSTREAM = new Set([429, 500, 502, 503, 504]);
 
 function upstreamMessage(status, detail) {
   let message = detail.slice(0, 200);
@@ -573,12 +575,12 @@ function upstreamMessage(status, detail) {
   return `Gemini upstream returned HTTP ${status}${message ? `: ${message}` : ''}`;
 }
 
-export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500 }) {
+export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500, timeoutMs = GEMINI_UPSTREAM_TIMEOUT_MS }) {
   async function callModel(name, requestBody) {
     const url =
       `https://generativelanguage.googleapis.com/v1beta/models/${name}:generateContent`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GEMINI_UPSTREAM_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetchImpl(url, {
         method: 'POST',
@@ -595,13 +597,17 @@ export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchI
         err.retryable = RETRYABLE_UPSTREAM.has(res.status);
         throw err;
       }
-      return res.json();
+      return await res.json();
     } catch (err) {
       if (err instanceof ApiError) throw err;
       if (err.name === 'AbortError') {
-        throw new ApiError(502, `Gemini upstream exceeded ${GEMINI_UPSTREAM_TIMEOUT_MS / 1000}s timeout`);
+        const timeout = new ApiError(502, `Gemini upstream exceeded ${timeoutMs / 1000}s timeout`);
+        timeout.retryable = true;
+        throw timeout;
       }
-      throw new ApiError(502, `Gemini request failed (no internet connection?): ${err.message}`);
+      const network = new ApiError(502, `Gemini request failed (no internet connection?): ${err.message}`);
+      network.retryable = true;
+      throw network;
     } finally {
       clearTimeout(timer);
     }
@@ -735,6 +741,7 @@ export function createApp({
     gemini: { lastError: null, lastErrorAt: null, lastOkAt: null, pending: false },
     flightEvents: [],
     autoTimer: null,
+    vision: null,
   };
 
   function requireAuth(req, kind) {
@@ -995,10 +1002,24 @@ export function createApp({
         // down — status is how the dashboard learns it is down.
       }
       const frame = state.latestFrame;
+      // Availability means a stored sample exists; freshness establishes a
+      // currently observed link and must expire even while HTTP stays healthy.
+      const fresh = (at, limit) => Number.isFinite(at) && at <= nowMs + 1000 && nowMs - at < limit;
+      const telemetryFresh = Boolean(latest && fresh(Date.parse(latest.observed_at), 10_000));
+      const cameraFresh = Boolean(state.latestSnapshot && fresh(state.latestSnapshot.capturedAtMs, 3000));
+      const videoFresh = Boolean(frame && fresh(frame.capturedAtMs, 3000));
       const lastFlight = state.flightEvents.at(-1) ?? null;
       sendJson(res, 200, {
         contract: CONTRACT,
         server_time: new Date(nowMs).toISOString(),
+        connection: {
+          connected: telemetryFresh || videoFresh,
+          state: telemetryFresh && videoFresh ? 'live' : telemetryFresh ? 'telemetry-only'
+            : videoFresh ? 'video-only' : latest || frame ? 'disconnected' : 'waiting',
+        },
+        vision: state.vision
+          ? { ...state.vision, fresh: fresh(Date.parse(state.vision.observed_at), 10_000) }
+          : { fresh: false, model_status: 'unknown', camera_state: 'waiting' },
         site,
         storage: { status: storage.status() },
         gemini: {
@@ -1010,19 +1031,38 @@ export function createApp({
           pending: state.gemini.pending,
         },
         telemetry: latest
-          ? { available: true, observed_at: latest.observed_at, age_ms: ageMs(Date.parse(latest.observed_at), nowMs) }
-          : { available: false },
+          ? { available: true, fresh: telemetryFresh, observed_at: latest.observed_at, age_ms: ageMs(Date.parse(latest.observed_at), nowMs) }
+          : { available: false, fresh: false },
         camera: state.latestSnapshot
-          ? { available: true, captured_at: new Date(state.latestSnapshot.capturedAtMs).toISOString(), age_ms: ageMs(state.latestSnapshot.capturedAtMs, nowMs) }
-          : { available: false },
+          ? { available: true, fresh: cameraFresh, captured_at: new Date(state.latestSnapshot.capturedAtMs).toISOString(), age_ms: ageMs(state.latestSnapshot.capturedAtMs, nowMs) }
+          : { available: false, fresh: false },
         video: frame
-          ? { available: true, captured_at: new Date(frame.capturedAtMs).toISOString(), age_ms: ageMs(frame.capturedAtMs, nowMs), fps: videoFps(), viewers: state.videoClients.size }
-          : { available: false },
+          ? { available: true, fresh: videoFresh, captured_at: new Date(frame.capturedAtMs).toISOString(), age_ms: ageMs(frame.capturedAtMs, nowMs), fps: videoFresh ? videoFps() : 0, viewers: state.videoClients.size }
+          : { available: false, fresh: false },
         detection: incident
           ? { active: incident.active, episode_id: incident.episode_id, last_seen_at: incident.last_seen_at }
           : { active: false },
         flight: lastFlight,
       });
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/ingest/vision') {
+      requireAuth(req, 'ingest');
+      const body = await readJson(req);
+      const at = parseIsoTimestamp(body?.observed_at, 'observed_at');
+      assertWithinClockWindow(at, now(), 'observed_at');
+      if (!['ready', 'missing', 'error', 'disabled'].includes(body.model_status)
+          || !['live', 'waiting', 'stale'].includes(body.camera_state)) {
+        throw new ApiError(400, 'invalid vision health state');
+      }
+      state.vision = { observed_at: new Date(at).toISOString(), model_status: body.model_status,
+        camera_state: body.camera_state,
+        last_frame_at: typeof body.last_frame_at === 'string' ? body.last_frame_at.slice(0, 40) : null,
+        last_detection_at: typeof body.last_detection_at === 'string' ? body.last_detection_at.slice(0, 40) : null,
+        last_source: ['qr-test', 'yolo'].includes(body.last_source) ? body.last_source : null,
+        error: typeof body.error === 'string' ? body.error.slice(0, 100) : null };
+      sendJson(res, 200, { accepted: true });
       return;
     }
 

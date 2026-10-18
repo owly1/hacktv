@@ -11,6 +11,14 @@ Read [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md) for decisions, architecture and th
 Its source is `scripts/Start-BOSCO.ps1`; it uses the saved backend
 configuration, SSH key and aircraft Wi-Fi profile. No API keys belong in Git.
 
+**MacBook + Pi:** follow [the Mac setup guide](docs/MAC_SETUP.md). Run
+`bash scripts/setup-mac.sh` once, then use `scripts/mac.py` to configure SSH,
+deploy a separate Mac receiver directory, and start observation or QR testing.
+Olympe runs on the Pi; the dashboard, RGB fire/smoke detector and QR preview
+run on the Mac. Observation mode automatically starts fire detection: show
+the [fire marker](http://127.0.0.1:8787/test-marker.html) to trigger the incident
+and automatic analysis. The separate QR flight rehearsal is only an animation.
+
 ## 1. Backend + dashboard (Windows or WSL, Node 22+)
 
 ```bash

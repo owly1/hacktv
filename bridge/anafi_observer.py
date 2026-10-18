@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import queue
+import sys
 import threading
 import time
 import urllib.error
@@ -55,6 +56,11 @@ def camera_width(value):
     if width != 0 and not 320 <= width <= 1920:
         raise argparse.ArgumentTypeError("camera width must be 0 (native) or 320-1920 pixels")
     return width
+
+
+def session_stalled(last_frame, started, now, timeout=15):
+    """A connected SDK without decoded frames also needs a fresh session."""
+    return now - (last_frame if last_frame is not None else started) > timeout
 
 
 def prepare_image(frame, cv2, sdk, width=640):
@@ -106,6 +112,18 @@ def main():
     frames = queue.Queue(maxsize=1)
     stop = threading.Event()
     snapshot_worker = None
+    last_frame = None
+    # Native SDK discovery/cleanup can hang after a power loss. This process
+    # only observes; the Mac supervisor starts a fresh process after exit 75.
+    progress = time.monotonic()
+
+    def watchdog():
+        while not stop.wait(1):
+            if time.monotonic() - progress > 90:
+                print("Observation SDK stalled; restarting reception.", flush=True)
+                os._exit(75)
+
+    threading.Thread(target=watchdog, daemon=True).start()
 
     def read_state(message):
         try:
@@ -114,8 +132,10 @@ def main():
             return {}
 
     def raw_frame(frame):
+        nonlocal last_frame
         if stop.is_set():
             return
+        last_frame = time.monotonic()
         frame.ref()
         try:
             frames.put_nowait((frame, utc_now()))
@@ -161,10 +181,13 @@ def main():
                 frame.unref()
 
     connected = False
+    result = 75
     try:
         if not controller.connect():
-            raise SystemExit("ANAFI connection failed. Do not infer a live link from this bridge running.")
+            print("ANAFI unavailable; waiting for the next connection attempt.")
+            return 75
         connected = True
+        started = time.monotonic()
         if args.camera:
             snapshot_worker = threading.Thread(target=snapshots, daemon=True)
             snapshot_worker.start()
@@ -178,6 +201,15 @@ def main():
                 print("Camera stream unavailable; telemetry reception continues.")
         print("Observation bridge running. Flight remains with the pilot. Ctrl+C stops observation only.")
         while controller.drone_connection_state():
+            progress = time.monotonic()
+            if args.camera and session_stalled(last_frame, started, progress):
+                print("Camera stopped delivering frames; reconnecting observation.")
+                break
+            if args.camera and session_stalled(last_frame, started, progress, timeout=3):
+                # get_state() is cached. Do not stamp those old values as fresh
+                # while waiting for the SDK to notice a dropped aircraft link.
+                time.sleep(1)
+                continue
             battery, altitude, speed, position = [read_state(x) for x in (BatteryStateChanged, AltitudeChanged, SpeedChanged, PositionChanged)]
             vx, vy = speed.get("speedX"), speed.get("speedY")
             ground_speed = math.hypot(vx, vy) if isinstance(vx, (int, float)) and isinstance(vy, (int, float)) else None
@@ -193,20 +225,39 @@ def main():
             except (urllib.error.URLError, TimeoutError):
                 print("Telemetry not acknowledged; backend may be offline. No fabricated replacement sent.")
             time.sleep(1)
-        print("Drone link lost; observation stopped.")
+        print("Drone link lost; observation needs reconnection.")
     except KeyboardInterrupt:
         print("Observation stopped by operator. No flight command sent.")
+        result = 0
+    except Exception as error:
+        print(f"Observation failed ({type(error).__name__}); reconnecting.")
     finally:
+        # Bound native cleanup independently of the stopped worker/watchdog.
+        cleanup_deadline = threading.Timer(15, lambda: os._exit(result))
+        cleanup_deadline.daemon = True
+        cleanup_deadline.start()
         stop.set()
         release_queued_frames()
         if snapshot_worker is not None:
             snapshot_worker.join(timeout=6)
-        if args.camera and connected:
-            controller.streaming.stop()
-        release_queued_frames()
-        if connected:
-            controller.disconnect()
+        try:
+            if args.camera and connected:
+                # Olympe can clear the streaming object itself on link loss.
+                streaming = controller.streaming
+                if streaming is not None:
+                    streaming.stop()
+        except Exception:
+            print("Camera already disconnected during cleanup.")
+        finally:
+            release_queued_frames()
+            try:
+                if connected:
+                    controller.disconnect()
+            except Exception:
+                print("Aircraft already disconnected during cleanup.")
+            cleanup_deadline.cancel()
+    return result
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -46,7 +46,7 @@ function setModePill(kind, text) { const p = $('mode-pill'); p.className = 'pill
 function activeFire() {
   if (state.mode === 'demo') return null;
   const inc = state.incident;
-  return inc && inc.active && inc.latest.fire.latitude != null ? inc : null;
+  return inc && inc.active ? inc : null;
 }
 
 function renderHeading() {
@@ -57,17 +57,22 @@ function renderHeading() {
     const d = inc.latest, det = d.details || {};
     $('incident-eyebrow').textContent = 'ACTIVE FIRE · ANAFI-01'; $('incident-dot').classList.add('alert');
     $('incident-title').textContent = det.name ? `${det.name} fire` : 'Fire detected'; $('incident-tag').hidden = false;
-    $('incident-sub').textContent = `First sighted ${fmtTime(inc.first_detected_at)} · ${inc.sightings} sighting${inc.sightings === 1 ? '' : 's'} · ${d.fire.latitude.toFixed(5)}, ${d.fire.longitude.toFixed(5)} · ${state.site.name}`;
+    const location = d.details?.position_simulated ? 'Scenario location · configured site, not measured GPS' : d.fire.latitude != null ? `${d.fire.latitude.toFixed(5)}, ${d.fire.longitude.toFixed(5)}` : 'Fire location unavailable';
+    $('incident-sub').textContent = `First sighted ${fmtTime(inc.first_detected_at)} · ${inc.sightings} sighting${inc.sightings === 1 ? '' : 's'} · ${location}`;
     const how = d.source === 'qr-test' ? 'test marker' : `fire model (${d.label})`;
-    setBanner('alert', `<strong>Fire detected at ${escapeHTML(fmtTime(d.detected_at))}</strong> by ANAFI-01 · ${escapeHTML(how)}, ${Math.round(d.confidence * 100)}% · ${d.fire.distance_m ?? '—'} m from the drone, bearing ${d.fire.bearing_deg ?? '—'}°. Spread projection, Gemini analysis and planning are active.`, true);
+    setBanner('alert', `<strong>Fire detected at ${escapeHTML(fmtTime(d.detected_at))}</strong> by ANAFI-01 · ${escapeHTML(how)}, ${Math.round(d.confidence * 100)}%. ${d.details?.position_simulated ? 'Spread uses the configured test location.' : d.fire.latitude == null ? 'Location unavailable; map projection is waiting.' : 'Fire location is available for the spread projection.'} Analysis and response tools are below.`, true);
     setModePill('alert-badge', 'Fire detected');
   } else {
     $('incident-eyebrow').textContent = 'LIVE MONITORING · ANAFI-01'; $('incident-dot').classList.remove('alert');
     $('incident-title').textContent = 'Monitoring for fire'; $('incident-tag').hidden = true;
     $('incident-sub').textContent = state.site.name;
     if (!state.connected) { setBanner('warn', '<strong>Backend unreachable.</strong> Start it with <code>npm start</code>, then reload.'); setModePill('demo', 'Offline'); }
-    else if (telemetryAge > STALE_MS) { setBanner('info', '<strong>Waiting for the drone.</strong> Start <code>bridge/anafi_bridge.py --backend http://127.0.0.1:8787</code> on the drone\'s Wi-Fi.'); setModePill('demo', 'Waiting for drone'); }
-    else { setBanner('info', '<strong>Live · monitoring.</strong> ANAFI-01 is streaming; the camera feed is checked for fire several times a second.'); setModePill('live-badge', 'Live · monitoring'); }
+    else if (telemetryAge > STALE_MS) { setBanner('info', '<strong>Waiting for the drone.</strong> Keep the observation receiver running; it reconnects when the drone returns.'); setModePill('demo', 'Waiting for drone'); }
+    else {
+      const v = state.status?.vision;
+      const vision = !v?.fresh ? 'Fire detector is offline; video reception is active.' : v.error ? 'Fire detector reported an error; check its terminal.' : v.camera_state !== 'live' ? 'Fire detector is waiting for fresh camera frames.' : v.model_status === 'ready' ? 'RGB fire/smoke classification and QR fire testing are active.' : 'QR fire testing is active; RGB fire model is unavailable.';
+      setBanner('info', `<strong>Live · monitoring.</strong> ${vision}`); setModePill('live-badge', 'Live · monitoring');
+    }
   }
 }
 
@@ -106,7 +111,7 @@ function renderDrone() {
 
 function origin() {
   if (state.mode === 'demo') { const f = state.demo.selected; return f && f !== 'flight' ? [f.lat, f.lon] : null; }
-  const inc = activeFire(); return inc ? [inc.latest.fire.latitude, inc.latest.fire.longitude] : null;
+  const inc = activeFire(); return inc?.latest.fire.latitude != null ? [inc.latest.fire.latitude, inc.latest.fire.longitude] : null;
 }
 
 /* Projected spread at the selected minute, drawn as layered intensity bands. */
@@ -117,7 +122,7 @@ function renderSpread() {
   $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}`;
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
   const o = origin();
-  if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? 'select a fire' : 'no fire detected'; return; }
+  if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? 'select a fire' : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
   let outline, ring = scale => [];
   if (state.mode === 'demo') {
     // Demo: replay the recorded burn growing from its ignition point over the timeline.
@@ -140,7 +145,7 @@ function renderSpread() {
 
 function renderFirePin() {
   state.layers.fire.clearLayers();
-  const inc = activeFire(); if (!inc) return;
+  const inc = activeFire(); if (!inc || !origin()) return;
   const d = inc.latest, det = d.details || {};
   L.marker([d.fire.latitude, d.fire.longitude], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})})
     .addTo(state.layers.fire)
@@ -265,7 +270,7 @@ function renderIncident() {
     state.detectedScenario = M.scenarioFrom(inc.latest.details);
     state.scenario = {...state.detectedScenario}; state.minute = 0;
     markPlanDirty(); renderFirePin(); renderSpread(); fitToFire();
-    toast(`Fire detected — ${inc.latest.details?.name || inc.latest.label}. Gemini is analyzing it.`);
+    toast(`Fire detected — ${inc.latest.details?.name || inc.latest.label}. See analysis and response below.`);
   } else renderFirePin();
   if (!inc && state.episodeSeen) { state.episodeSeen = null; renderSpread(); }
   if (inc) {
@@ -414,7 +419,9 @@ async function pollAnalysis() { const m = await getJson('/api/analysis/latest');
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
   const s = state.status; state.site = s.site || state.site; $('map-location').textContent = state.site.name;
-  $('parrot-status').textContent = s.video?.available && s.video.age_ms < 3000 ? `Live · ${Math.round(s.video.fps)} fps` : s.telemetry?.available ? 'Telemetry only' : 'Waiting';
+  const videoFresh = s.video?.fresh ?? (s.video?.available && s.video.age_ms < 3000);
+  const telemetryFresh = s.telemetry?.fresh ?? (s.telemetry?.available && s.telemetry.age_ms < STALE_MS);
+  $('parrot-status').textContent = videoFresh ? `Live · ${Math.round(s.video.fps)} fps` : telemetryFresh ? 'Telemetry only' : 'Disconnected · waiting for drone';
   $('tiger-status').textContent = s.storage?.status === 'postgres' ? 'Connected' : s.storage?.status === 'postgres-unavailable' ? 'Unavailable' : 'Memory only';
   $('gemini-status').textContent = !s.gemini?.configured ? 'Not configured' : s.gemini.last_error && (!s.gemini.last_ok_at || s.gemini.last_error_at > s.gemini.last_ok_at) ? 'Cannot connect' : s.gemini.last_ok_at ? 'Connected' : `Ready · ${s.gemini.model}`;
   renderHeading();

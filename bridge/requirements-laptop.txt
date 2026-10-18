@@ -1,0 +1,8 @@
+# macOS QR rehearsal and calibration tools; Olympe runs on the Linux Pi.
+opencv-python==4.11.0.86
+numpy==2.4.6
+segno==1.6.6
+# Shared RGB fire/smoke inference runs on the Mac, not the Pi.
+ultralytics==8.4.181
+torch==2.14.1
+torchvision==0.29.1

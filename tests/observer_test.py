@@ -16,7 +16,13 @@ spec.loader.exec_module(bridge)
 
 
 class BridgeContractTests(unittest.TestCase):
-    def run_bridge(self, camera=False):
+    def test_camera_watchdog_covers_startup_and_stalled_stream(self):
+        self.assertFalse(bridge.session_stalled(None, 100, 110))
+        self.assertTrue(bridge.session_stalled(None, 100, 116))
+        self.assertFalse(bridge.session_stalled(120, 100, 121))
+        self.assertTrue(bridge.session_stalled(120, 100, 136))
+
+    def run_bridge(self, camera=False, connect=True, lose_stream=False):
         modules = {}
         for name in ["olympe", "olympe.messages", "olympe.messages.common",
                      "olympe.messages.common.CommonState", "olympe.messages.ardrone3",
@@ -37,8 +43,16 @@ class BridgeContractTests(unittest.TestCase):
         }
         controller = Mock(spec=["connect", "disconnect", "get_state",
                                 "drone_connection_state", "streaming"])
-        controller.connect.return_value = True
-        controller.drone_connection_state.side_effect = [True, False]
+        controller.connect.return_value = connect
+        connection_states = iter([True, False])
+
+        def connection_state():
+            connected = next(connection_states)
+            if not connected and lose_stream:
+                controller.streaming = None
+            return connected
+
+        controller.drone_connection_state.side_effect = connection_state
         controller.get_state.side_effect = states.__getitem__
         modules["olympe"].Anafi = Mock(return_value=controller)
         modules["olympe"].SkyController3 = Mock()
@@ -67,8 +81,14 @@ class BridgeContractTests(unittest.TestCase):
              patch.object(bridge, "post_json") as post, \
              patch.object(bridge.time, "sleep"), \
              patch.object(bridge.threading, "Thread"), \
+             patch.object(bridge.threading, "Timer"), \
              contextlib.redirect_stdout(io.StringIO()):
-            bridge.main()
+            result = bridge.main()
+        self.assertEqual(result, 75, 'A lost link must request a new observation session')
+        if not connect:
+            controller.disconnect.assert_not_called()
+            post.assert_not_called()
+            return None, retained[0]
         controller.disconnect.assert_called_once()
         self.assertEqual(post.call_count, 1)
         self.assertEqual(post.call_args.args[2], "/api/ingest/telemetry")
@@ -86,6 +106,13 @@ class BridgeContractTests(unittest.TestCase):
         sample, references = self.run_bridge(camera=True)
         self.assertEqual(sample["battery_pct"], 80)
         self.assertEqual(references, 0)
+
+    def test_power_loss_can_clear_sdk_stream_before_cleanup(self):
+        _, references = self.run_bridge(camera=True, lose_stream=True)
+        self.assertEqual(references, 0)
+
+    def test_drone_off_at_start_requests_retry_without_fake_telemetry(self):
+        self.run_bridge(connect=False)
 
 
 if __name__ == "__main__":

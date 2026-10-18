@@ -48,6 +48,7 @@ async function startApp(options = {}) {
     geminiModel: 'fake-model',
     demoFires: [{ id: 'f1', name: 'Fire One' }],
     tileFetch: options.tileFetch,
+    now: options.now,
   });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -76,6 +77,59 @@ const waitFor = async (fn, ms = 3000) => {
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 25)); }
 };
 
+test('Gemini retries timed-out inference and keeps the response-body timeout active', async () => {
+  let calls = 0;
+  const transport = makeGeminiTransport({ apiKey:'test', model:'fake', retryDelayMs:0, timeoutMs:5,
+    fetchImpl: async (_url, {signal}) => {
+      calls++;
+      if (calls === 1) return {ok:true, json:() => new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('timeout','AbortError')), {once:true});
+      })};
+      return {ok:true, json:async()=>analysisReply};
+    } });
+  assert.deepEqual(await transport({}), analysisReply);
+  assert.equal(calls, 2);
+});
+
+test('connection freshness expires and recovers on the same backend and video subscription', async () => {
+  let clock = Date.now();
+  const t = await startApp({ noGemini: true, now: () => clock });
+  const abort = new AbortController();
+  try {
+    const status = async () => (await t.req('GET', '/api/status', { token: DASH })).json();
+    assert.equal((await status()).connection.state, 'waiting');
+    const viewer = await fetch(`${t.base}/api/video`, {
+      headers: { authorization: `Bearer ${DASH}` }, signal: abort.signal,
+    });
+    const reader = viewer.body.getReader();
+    const publish = async () => {
+      const at = new Date(clock).toISOString();
+      assert.equal((await t.req('POST', '/api/ingest/telemetry', {
+        token: INGEST, body: { provenance: 'live', drone_id: 'ANAFI-01', observed_at: at, battery_pct: 80 },
+      })).status, 200);
+      assert.equal((await t.req('POST', '/api/ingest/frame', {
+        token: INGEST, body: JPEG, headers: { 'content-type': 'image/jpeg', 'x-captured-at': at },
+      })).status, 204);
+      let payload = '';
+      while (!payload.includes('\xff\xd9')) payload += Buffer.from((await reader.read()).value).toString('latin1');
+      assert.ok(payload.includes(at));
+    };
+    await publish();
+    assert.deepEqual((await status()).connection, { connected: true, state: 'live' });
+    clock += 4000;
+    assert.equal((await status()).connection.state, 'telemetry-only');
+    clock += 7000;
+    const stale = await status();
+    assert.deepEqual(stale.connection, { connected: false, state: 'disconnected' });
+    assert.equal(stale.telemetry.available, true);
+    assert.equal(stale.telemetry.fresh, false);
+    assert.equal(stale.camera.fresh, false);
+    assert.equal(stale.video.fps, 0);
+    await publish();
+    assert.deepEqual((await status()).connection, { connected: true, state: 'live' });
+  } finally { abort.abort(); await t.close(); }
+});
+
 test('video frames are relayed to /api/video viewers with capture time and overlay boxes', async () => {
   const t = await startApp({ noGemini: true });
   try {
@@ -98,6 +152,38 @@ test('video frames are relayed to /api/video viewers with capture time and overl
     const status = await (await t.req('GET', '/api/status', { token: DASH })).json();
     assert.equal(status.video.available, true);
     assert.equal(status.camera.available, true); // the latest frame is also Gemini evidence
+  } finally { await t.close(); }
+});
+
+test('vision health is authenticated, expires, and never creates a fire by itself', async () => {
+  let clock = Date.now();
+  const t = await startApp({ noGemini: true, now: () => clock });
+  try {
+    const body = { observed_at: new Date(clock).toISOString(), model_status: 'ready', camera_state: 'live' };
+    assert.equal((await t.req('POST', '/api/ingest/vision', { token: DASH, body })).status, 401);
+    assert.equal((await t.req('POST', '/api/ingest/vision', { token: INGEST, body: {...body, model_status:'imaginary'} })).status, 400);
+    assert.equal((await t.req('POST', '/api/ingest/vision', { token: INGEST, body })).status, 200);
+    let status = await (await t.req('GET', '/api/status', { token: DASH })).json();
+    assert.equal(status.vision.fresh, true);
+    assert.equal(status.detection.active, false);
+    clock += 10001;
+    status = await (await t.req('GET', '/api/status', { token: DASH })).json();
+    assert.equal(status.vision.fresh, false);
+  } finally { await t.close(); }
+});
+
+test('RGB fire without GPS activates an incident and automatic analysis', async () => {
+  const t = await startApp({ replies: [analysisReply] });
+  try {
+    const post = await t.req('POST', '/api/ingest/detection', { token: INGEST,
+      body: detection({ source: 'yolo', episode_id: 'rgb-no-gps', details: null,
+        fire: { latitude: null, longitude: null, position_source: 'unavailable' } }) });
+    assert.equal(post.status, 200);
+    const incident = (await (await t.req('GET', '/api/incident', { token: DASH })).json()).incident;
+    assert.equal(incident.active, true);
+    assert.equal(incident.latest.fire.latitude, null);
+    await waitFor(async () => (await (await t.req('GET', '/api/analysis/latest', { token: DASH })).json()).analysis);
+    assert.equal(t.calls.length, 1);
   } finally { await t.close(); }
 });
 
