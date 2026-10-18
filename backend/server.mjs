@@ -355,6 +355,7 @@ export const ANALYSIS_INSTRUCTIONS = [
   'Direction convention: every direction in the data (wind_dir_deg, direction, toward_deg, bearing_deg) is the direction the fire spreads or the wind blows TOWARD, in degrees clockwise from north (60 = toward the east-northeast) — never the direction the wind comes from.',
   'List what this evidence cannot establish under "unknowns" and the specific observations that would overturn your assessment under "falsifiers".',
   'If only telemetry is supplied (no image), say plainly that this sample contains no visual fire evidence.',
+  'The drone has no wind sensor. You may still derive an APPROXIMATE wind vector from its stabilization behavior: while holding position a multirotor tilts so rotor thrust balances wind drag, so sustained non-zero pitch/roll in near-hover implies a wind load in the tilt direction; GPS wander while position-holding and disagreement between commanded and achieved ground track carry the same signal. Stabilization is only visible over time — call get_telemetry_history before estimating; a single sample is not evidence of stabilization. When you estimate wind this way, fill wind_estimate and state the method; it is a derived estimate, never a sensor measurement. If the telemetry lacks attitude data or enough history to observe stabilization, omit wind_estimate and list wind conditions under unknowns.',
 ].join(' ');
 
 const GEMINI_RESPONSE_SCHEMA = {
@@ -369,6 +370,17 @@ const GEMINI_RESPONSE_SCHEMA = {
       type: 'ARRAY',
       items: { type: 'STRING' },
       description: 'Specific evidence or observations that would overturn this assessment — the model states how it could be wrong.',
+    },
+    wind_estimate: {
+      type: 'OBJECT',
+      description: 'Wind vector derived from drone stabilization behavior (no wind sensor is fitted). A derived estimate — never report it as a sensor measurement.',
+      properties: {
+        speed_mps: { type: 'NUMBER', description: 'Approximate wind speed in m/s.' },
+        direction_deg: { type: 'NUMBER', description: 'Direction the wind blows TOWARD, degrees clockwise from north.' },
+        method: { type: 'STRING', description: 'The stabilization behavior the estimate was derived from (e.g. hover tilt, position-hold GPS wander, ground-track drift).' },
+        confidence: { type: 'STRING', description: 'low / medium / high, with the limiting factor.' },
+      },
+      required: ['method', 'confidence'],
     },
     limitations: { type: 'STRING' },
   },
@@ -462,6 +474,37 @@ function parseGeminiJson(apiResponse) {
 
 const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
+// Optional derived-wind block: absent is fine, present must be well-formed.
+// speed_mps / direction_deg stay optional inside it — a confident
+// "moving air, direction unknown" estimate is legitimate.
+function validateWindEstimate(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiError(502, 'Gemini output "wind_estimate" must be an object');
+  }
+  for (const key of ['method', 'confidence']) {
+    if (typeof value[key] !== 'string' || value[key].length === 0) {
+      throw new ApiError(502, `Gemini output "wind_estimate.${key}" must be a non-empty string`);
+    }
+  }
+  for (const key of ['speed_mps', 'direction_deg']) {
+    if (value[key] !== undefined && value[key] !== null
+        && (typeof value[key] !== 'number' || !Number.isFinite(value[key]))) {
+      throw new ApiError(502, `Gemini output "wind_estimate.${key}" must be a finite number or absent`);
+    }
+  }
+  if (value.direction_deg !== undefined && value.direction_deg !== null
+      && (value.direction_deg < 0 || value.direction_deg >= 360)) {
+    throw new ApiError(502, 'Gemini output "wind_estimate.direction_deg" must be 0–360');
+  }
+  return {
+    speed_mps: value.speed_mps ?? null,
+    direction_deg: value.direction_deg ?? null,
+    method: value.method,
+    confidence: value.confidence,
+  };
+}
+
 export function validateAnalysisContent(parsed) {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ApiError(502, 'Gemini output is not a JSON object');
@@ -475,6 +518,7 @@ export function validateAnalysisContent(parsed) {
   if (parsed.falsifiers !== undefined && !isStringArray(parsed.falsifiers)) {
     throw new ApiError(502, 'Gemini output "falsifiers" must be an array of strings');
   }
+  const wind = validateWindEstimate(parsed.wind_estimate);
   if (typeof parsed.limitations !== 'string' || parsed.limitations.length === 0) {
     throw new ApiError(502, 'Gemini output missing "limitations"');
   }
@@ -485,6 +529,7 @@ export function validateAnalysisContent(parsed) {
     spread_outlook: typeof parsed.spread_outlook === 'string' ? parsed.spread_outlook : null,
     unknowns: parsed.unknowns,
     falsifiers: parsed.falsifiers ?? [],
+    ...(wind ? { wind_estimate: wind } : {}),
     limitations: parsed.limitations,
   };
 }

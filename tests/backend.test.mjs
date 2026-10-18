@@ -326,6 +326,45 @@ test('telemetry-only analysis records provenance and evidence kind', async () =>
   assert.match(promptText, /Telemetry-only/);
 });
 
+test('wind_estimate passes through when Gemini derives one from stabilization', async () => {
+  nowMs += 31_000;
+  await req('POST', '/api/ingest/telemetry', { token: INGEST, body: goodTelemetry() });
+  fakeGeminiReplies = [geminiTextReply(JSON.stringify({
+    summary: 'Hover tilt suggests a light crosswind.',
+    unknowns: ['No anemometer — estimate is derived, not measured.'],
+    falsifiers: ['A ground wind reading contradicting the tilt direction.'],
+    wind_estimate: {
+      speed_mps: 4.5,
+      direction_deg: 225,
+      method: 'sustained pitch/roll tilt while position-holding',
+      confidence: 'low — tilt-to-wind mapping is uncalibrated for this airframe',
+    },
+    limitations: 'Derived from attitude history; not a sensor measurement.',
+  }))];
+  const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.deepEqual(json.wind_estimate, {
+    speed_mps: 4.5,
+    direction_deg: 225,
+    method: 'sustained pitch/roll tilt while position-holding',
+    confidence: 'low — tilt-to-wind mapping is uncalibrated for this airframe',
+  });
+});
+
+test('malformed wind_estimate surfaces as 502', async () => {
+  nowMs += 31_000;
+  await req('POST', '/api/ingest/telemetry', { token: INGEST, body: goodTelemetry() });
+  fakeGeminiReplies = [geminiTextReply(JSON.stringify({
+    summary: 'x',
+    unknowns: [],
+    wind_estimate: { speed_mps: 'fast' }, // no method/confidence, bad speed
+    limitations: 'x',
+  }))];
+  const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
+  assert.equal(res.status, 502);
+});
+
 test('second analyze inside 30s is rate limited to 429', async () => {
   nowMs += 1_000; // still inside window of previous start
   const res = await req('POST', '/api/analyze', { token: DASH, body: {} });
