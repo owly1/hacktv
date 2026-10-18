@@ -402,16 +402,25 @@ function envFactor(sc){
   var e = 1 + (sc.dryness-50)/200 + (sc.temp-20)/200 - (sc.rh-50)/300;
   return Math.max(0.6, Math.min(1.6, e));
 }
-/* Dashed wedge from ignition toward sc.direction — the SHAPE the future model emits. */
+/* Elliptical projection downwind — matches dist/model.js: convex wind rate,
+   12% back fire, length:width grows with wind, and self-intensification:
+   the fire travels faster as it rages on (rate feedback saturating +35%).
+   Infrastructure brakes apply at the UTSC site via BoscoFuels when loaded. */
 function modelZone(f, sc, innerScale){
   var t = Math.max(0.08, Math.min(1, sc.minutes/60));
-  var windStretch = 1 + sc.wind/65;      // dashboard footprint() parity
-  var halfAngle = Math.max(15, 45 - sc.wind*0.4);
-  var r = semiMajor(f)*1.25*t*windStretch*envFactor(sc)*(innerScale||1);
-  var pts = [[f.lat, f.lon]];
-  for(var tt=-1; tt<=1; tt+=0.125){
-    var brg = sc.direction + tt*halfAngle;
-    pts.push(destPoint(f.lat, f.lon, brg, r*(1-Math.abs(tt)*0.35)));
+  var lw = Math.min(4, 1 + sc.wind/35);
+  var rate = (1.5 + 0.505*Math.pow(Math.min(sc.wind,60), 1.2)) * envFactor(sc);
+  rate *= 1 + 0.35*Math.tanh(rate*sc.minutes/300);      // growth feedback
+  var reach = semiMajor(f)*0.9*t*(rate/20)*(innerScale||1); // normalised to the recorded burn
+  var head = reach, back = Math.max(reach*0.12, reach*0.02);
+  var a = (head+back)/2, b = Math.max(reach*0.15, a/lw);
+  var centre = destPoint(f.lat, f.lon, sc.direction, (head-back)/2);
+  var pts = [];
+  for(var i=0;i<64;i++){
+    var ang = i/64*Math.PI*2;
+    var wob = 1 + 0.06*Math.sin(ang*5 + sc.direction/40) + 0.035*Math.cos(ang*9);
+    var u = a*Math.cos(ang)*wob, v = b*Math.sin(ang)*wob;
+    pts.push(destPoint(centre[0], centre[1], sc.direction + Math.atan2(v,u)*180/Math.PI, Math.hypot(u,v)));
   }
   return pts;
 }
