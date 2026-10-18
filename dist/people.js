@@ -299,7 +299,7 @@ function withArrival(leads) {
   return leads.map(l => {
     const arrival = l.closed ? undefined : fireArrivalAt(l.latitude, l.longitude);
     const reasons = l.priority.reasons.filter(r => !/^fire projected to reach|^inside the projected fire|^AT THE FIRE/.test(r));
-    const atFire = peopleState.snap?.fleet_demo ? !l.closed && arrival === 0 : arrival === undefined ? l.at_fire : !l.closed && arrival != null && arrival <= 10;
+    const atFire = peopleState.snap?.simulated ? !l.closed && arrival === 0 : arrival === undefined ? l.at_fire : !l.closed && arrival != null && arrival <= 10;
     if (atFire) reasons.unshift(arrival === 0 || (arrival === undefined && l.fire_arrival?.minutes === 0) ? 'AT THE FIRE: inside the projected fire edge now' : `AT THE FIRE: the front reaches this spot in about ${arrival ?? l.fire_arrival?.minutes} min`);
     else if (arrival != null) reasons.unshift(`fire projected to reach this spot in about ${arrival} min`);
     const tier = atFire ? 0 : l.priority.base_tier ?? l.priority.tier;

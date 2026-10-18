@@ -1,10 +1,21 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import '../dist/model.js';
 import '../dist/demo-scout.js';
 import {FIRES} from '../examples/historical-fires.mjs';
 const S = globalThis.BoscoScout;
 
-test('historical cases orbit outside the evolving perimeter with continuous, coordinated descents', () => {
+/** Independently measure ground distance to the exact forecast polygon used by the map. */
+function borderDistance(scene, t, point) {
+  const polygon = S.outline(scene.fire, t, 20).map(([lat,lon]) => ({e:(lon-scene.lon)*111320*Math.cos(scene.lat*Math.PI/180),n:(lat-scene.lat)*111320}));
+  return Math.min(...polygon.map((a,i) => {
+    const b = polygon[(i+1)%polygon.length], dx=b.e-a.e, dy=b.n-a.n;
+    const k = Math.max(0,Math.min(1,((point.e-a.e)*dx+(point.n-a.n)*dy)/(dx*dx+dy*dy)));
+    return Math.hypot(point.e-a.e-k*dx,point.n-a.n-k*dy);
+  }));
+}
+
+test('historical cases pace the actual +20-minute border with continuous coordinated descents', () => {
   for (const f of FIRES) {
     const scene = S.create(f, 42, 1000);
     assert.equal(scene.drones.length, 4);
@@ -19,6 +30,9 @@ test('historical cases orbit outside the evolving perimeter with continuous, coo
         const v = -p.e * Math.cos(wd) + p.n * Math.sin(wd);
         assert.ok((u / a) ** 2 + (v / (a / 2.4)) ** 2 > 1, 'flight remains outside the current burning footprint');
         assert.ok(S.clearance(scene, t, p) > 110, 'drones retain over 110 m of ground clearance from the fire');
+        const distance = borderDistance(scene,t,p);
+        assert.ok(distance >= 40 && distance <= 107, `drone stays beside the +20-minute contour: ${distance}`);
+        assert.equal(globalThis.EmberModel.insidePolygon([p.lat,p.lon],S.outline(scene.fire,t,20)),false);
         assert.ok(Math.abs(p.climbRate) < 4, 'vertical speed is in simulation seconds');
         const next = S.pose(scene, t + .01, p.drone_id);
         assert.ok(Math.hypot(p.e - next.e, p.n - next.n) < .15);
@@ -44,7 +58,7 @@ test('every drone finds people for varied seeds and headings, with camera-derive
     assert.ok(snap.fleet.every(d => d.people > 0), 'all four cameras contribute');
     assert.equal(new Set(snap.leads.map(l => l.id)).size, snap.leads.length);
     for (const target of scene.targets) for (const s of target.samples) {
-      assert.ok(S.visible(S.pose(scene, s.t, s.drone_id), target));
+      assert.ok(S.visible(S.pose(scene, s.t, s.drone_id), target, scene));
     }
     for (const lead of snap.leads) {
       assert.equal(lead.provenance, 'demo-simulated');
@@ -57,6 +71,9 @@ test('every drone finds people for varied seeds and headings, with camera-derive
 test('all views of one person share one lead; POV changes preserve time and review state', () => {
   const fire = {lat: 43.78, lon: -79.19, directionDeg: 60};
   const scene = S.create(fire, 42, 1000), other = S.create(fire, 99, 1000);
+  // Overlapping camera coverage exercises identity fusion independently of mission scheduling.
+  scene.targets = scene.targets.filter(p => p.assignedDrone === 'ANAFI-01');
+  scene.drones[1].index = 0; scene.drones[1].firstSearch = scene.drones[0].firstSearch + 2;
   const snap = S.snapshot(scene, 310), lead = snap.leads.find(l => l.observed_by.length > 1);
   assert.ok(lead, 'cross-drone evidence exercises shared identity');
   assert.equal(snap.counts.open, scene.targets.length, 'repeated sightings never inflate the count');
@@ -74,6 +91,24 @@ test('all views of one person share one lead; POV changes preserve time and revi
   assert.ok(other.targets.every(x => !x.acknowledged && !x.closed));
   assert.throws(() => S.action(scene, lead.id, 'close', 'Commander', 'unsupported'));
   assert.throws(() => S.action(scene, lead.id, 'ack', ' '));
+});
+
+test('people are placed beside the forecast border and inside-fire objects never become detections', () => {
+  for (const fire of FIRES) {
+    const scene = S.create(fire,42);
+    for (const target of scene.targets) {
+      const drone = scene.drones.find(d=>d.id===target.assignedDrone), t=drone.firstSearch+22;
+      const distance=borderDistance(scene,t,target);
+      assert.ok(distance>15 && distance<33);
+      assert.ok(S.exterior(scene,t,target));
+    }
+    const bad = {id:'inside-fire',number:99,e:0,n:0,samples:[],seenBy:[],total:0,first:null};
+    scene.targets.push(bad);
+    const p = {...S.pose(scene,30),e:0,n:-20,alt:30,pitch:60,heading:0,depth:1};
+    assert.equal(S.visible(p,bad,scene),null);
+    assert.ok(!S.snapshot(scene,210).leads.some(l=>l.id===bad.id));
+    assert.equal(bad.samples.length,0);
+  }
 });
 
 test('displayed clearance measures the fire edge, with a negative distance inside it', () => {

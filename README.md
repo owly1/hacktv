@@ -44,8 +44,11 @@ Replay results stay out of live storage. The Windows wrapper is `.\demo.ps1 -Por
 
 Historical fire cases include a four-drone perimeter-search replay. Scroll
 the camera cards or click a map drone to choose its 3D POV and matching
-telemetry. Drones orbit the growing fire; one at a time descends beside its
-edge to find fictional people, then climbs back to observation. “Follow
+telemetry. Drones pace outside the evolving +20-minute forecast border; one at
+a time descends toward its exterior edge to find fictional people, then climbs
+back to observation. The map opens at +20 minutes and retains a teal patrol
+outline; solid red marks the current fire. Simulated sightings exclude people
+inside the current fire. “Follow
 searches” selects the active search drone automatically. The shared counter
 counts each fictional person once, retaining source drones and named review
 actions. Switching cases preserves each case's clock, leads and review state.

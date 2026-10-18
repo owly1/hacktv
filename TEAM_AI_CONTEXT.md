@@ -42,6 +42,11 @@ put procedures in the linked guides and explain local behavior at its function.
 aircraft, scrolling POV previews, coordinated exterior descents and shared
 fictional leads. See [the demo guide](docs/FLEET_DEMO.md). This browser replay
 does not implement per-drone live ingest or real fleet flight coordination.
+Fleet patrols follow the map's exact +20-minute forecast contour with exterior
+descent/search offsets. The teal patrol outline persists across timeline changes;
+solid red marks the current fire. Both hardcoded fleet and fire-first fixtures
+place people outside the forecast border and reject inside-current-fire targets.
+This demo restriction does not filter real person observations in live ingest.
 
 The shared replay/live UI no longer includes scene analysis, incident Q&A or
 response planning, and makes no Gemini requests. Backend automatic scene

@@ -39,13 +39,13 @@ const inArc = (deg, [a, b]) => { const x = wrap(deg - a), w = wrap(b - a); retur
 /* Ground truth in the fire's wind frame: u metres downwind of the fire, v metres across
    (to the right of the wind). Directions are relative to the wind. Never shown as truth. */
 const TARGETS = [
-  // Trapped at the fire's flank: the reason the search starts at the fire.
-  { id: 'trapped', /* Return the target's downwind position in metres at simulated time. */ u: () => 18, /* Return the target's crosswind position in metres at simulated time. */ v: () => 40, hiddenRel: [], thermal: 0.6, visible: 0.3 },   // inside the fire's edge
+  // Search bearings are projected onto the exterior +20-minute border below.
+  { id: 'trapped', /* Return the target's downwind bearing component. */ u: () => 18, /* Return the target's crosswind bearing component. */ v: () => 40, hiddenRel: [], thermal: 0.6, visible: 0.3 },
   { id: 'injured', /* Return the target's downwind position in metres at simulated time. */ u: () => 175, /* Return the target's crosswind position in metres at simulated time. */ v: () => -20, hiddenRel: [[135, 215]], thermal: 0.85, visible: 0.35 },
-  { id: 'walker', /* Return the target's downwind position in metres at simulated time. */ u: (t) => 230 + 55 * Math.min(1, t * 1.1 / 240), /* Return the target's crosswind position in metres at simulated time. */ v: (t) => 185 - 190 * Math.min(1, t * 1.1 / 240), hiddenRel: [], thermal: 0.8, visible: 0.5 },
+  { id: 'walker', /* Return the target's downwind bearing component. */ u: (t) => 230 + 55 * Math.min(1, t * 1.1 / 240), /* Keep the walking target separate from the injured person's border sector. */ v: (t) => 185 - 90 * Math.min(1, t * 1.1 / 240), hiddenRel: [], thermal: 0.8, visible: 0.5 },
   // A sun-heated rock: hot only on its downwind face, and the hot spot sits on a slope, so its
   // apparent ground position shifts with the viewing angle (it fails multi-view agreement).
-  { id: 'hot-rock', /* Return the target's downwind position in metres at simulated time. */ u: () => 131, /* Return the target's crosswind position in metres at simulated time. */ v: () => -18, seenFromRel: [-12, 12], thermal: 0.9, visible: 0, parallax: 7 },
+  { id: 'hot-rock', /* Return a separate false-positive sector's downwind component. */ u: () => 80, /* Return its crosswind component. */ v: () => -110, seenFromRel: [-65, -45], thermal: 0.9, visible: 0, parallax: 25 },
 ];
 
 /* The UTSC scenario: a small ravine fire near the Sam Ibrahim Building, spreading south-west. */
@@ -105,17 +105,46 @@ export class PersonSearchSim {
     this.fireEdge = EM.footprint(this.spread.origin, 0, this.spread.scenario, this.details)
       .filter((_, i) => i % 6 === 0).map(([la, lo]) => toLocal(this.origin, la, lo));
     this.fireEdge.push([...this.F]);
+    this.patrolEdge = EM.footprint(this.spread.origin, 20, this.spread.scenario, this.details).map(([la, lo]) => toLocal(this.origin, la, lo));
+    this.currentFire = EM.footprint(this.spread.origin, 0, this.spread.scenario, this.details);
     this.pos = this.launchPoint(); this.heading = 0; this.pitch = PITCH;
     this.orbit = this.planOrbit();
     this.legs = this.planSurvey(this.orbit.at(-1));
     this.waypoints = this.legs.flatMap((l) => [l.a, l.b]);
     this.ow = 0; this.wp = 0; this.phase = 'orbit'; this.mode = 'survey'; this.revisit = null; this.revisited = new Map();
     this.queue = []; this.log = []; this.track = []; this.lastSeen = new Map();
-    this.say(0, `Searching the fire first: circling it about ${Math.round(this.orbitRadius)} m out, outside the standoff, with the camera on its edge. Then its path: ${this.legs.length} legs across the wind, soonest-reached first.`);
+    this.say(0, `Searching the exterior +20-minute fire border first, with the camera on its outside edge. Then its path: ${this.legs.length} legs across the wind, soonest-reached first.`);
   }
 
   /** Local point from wind-frame (u downwind of the fire, v across). */
   wf(u, v) { return [this.F[0] + u * this.d[0] + v * this.p[0], this.F[1] + u * this.d[1] + v * this.p[1]]; }
+
+  /** Intersect a ray from the fire with its +20-minute polygon, then step outside it. */
+  borderPoint(angle, margin = 0) {
+    const dx = Math.sin(angle), dy = Math.cos(angle);
+    let distance = 0;
+    for (let i = 0; i < this.patrolEdge.length; i++) {
+      const a = this.patrolEdge[i], b = this.patrolEdge[(i + 1) % this.patrolEdge.length];
+      const ax = a[0] - this.F[0], ay = a[1] - this.F[1], ex = b[0] - a[0], ey = b[1] - a[1];
+      const denominator = dx * ey - dy * ex;
+      if (Math.abs(denominator) < 1e-8) continue;
+      const t = (ax * ey - ay * ex) / denominator, u = (ax * dy - ay * dx) / denominator;
+      if (t >= 0 && u >= 0 && u <= 1) distance = Math.max(distance, t);
+    }
+    return [this.F[0] + (distance + margin) * dx, this.F[1] + (distance + margin) * dy];
+  }
+
+  /** Keep fictional people on the exterior forecast border, not in the current fire. */
+  targetPosition(target, t) {
+    const [e, n] = this.wf(target.u(t), target.v(t));
+    return this.borderPoint(Math.atan2(e - this.F[0], n - this.F[1]), 18);
+  }
+
+  /** Reject inside-fire geometry before rendering or generating a person observation. */
+  exterior(e, n) {
+    return Math.hypot(e - this.F[0], n - this.F[1]) > EM.startRadius(this.details) + 5
+      && !EM.insidePolygon(this.ll(e, n), this.currentFire);
+  }
 
   /** Take off from the sector corner nearest the fire that is clear of it. */
   launchPoint() {
@@ -124,15 +153,14 @@ export class PersonSearchSim {
     return [...corners[0]];
   }
 
-  /** A full circle round the fire, pushed out wherever the standoff or the 10-minute front reaches further. */
+  /** Patrol outside the +20-minute border, retaining standoff and safe connecting hops. */
   planOrbit() {
-    const base = EM.startRadius(this.details) + STANDOFF_M;
     const start = Math.atan2(this.pos[0] - this.F[0], this.pos[1] - this.F[1]);
     const pts = [];
     let maxR = 0;
     for (let k = 0; k <= ORBIT_POINTS; k++) {
       const a = start + (k / ORBIT_POINTS) * 2 * Math.PI;
-      let r = base;
+      let r = Math.hypot(...this.borderPoint(a, 60).map((v, i) => v - this.F[i]));
       /** Convert an orbit angle into a waypoint around the simulated fire. */
       const at = (rr) => [this.F[0] + rr * Math.sin(a), this.F[1] + rr * Math.cos(a)];
       // Clear of the fire, and so is the straight hop from the previous orbit point.
@@ -141,7 +169,7 @@ export class PersonSearchSim {
       maxR = Math.max(maxR, r);
       pts.push([this.F[0] + r * Math.sin(a), this.F[1] + r * Math.cos(a)]);
     }
-    this.orbitRadius = base + 5;
+    this.orbitRadius = maxR;
     this.safeRadius = maxR + 10;   // the circle the drone uses to go round the fire
     return pts;
   }
@@ -261,14 +289,16 @@ export class PersonSearchSim {
   fly(target, t) {
     const dx = target[0] - this.pos[0], dy = target[1] - this.pos[1], d = Math.hypot(dx, dy);
     if (d > 0.5) this.heading = (Math.atan2(dx, dy) / RAD + 360) % 360;
-    if (d <= CRUISE) { this.pos = [...target]; return true; }
-    this.pos = [this.pos[0] + dx / d * CRUISE, this.pos[1] + dy / d * CRUISE];
-    return false;
+    const budget = this.moveBudget ?? CRUISE, travel = Math.min(d, budget);
+    if (d > 0) this.pos = [this.pos[0] + dx / d * travel, this.pos[1] + dy / d * travel];
+    this.moveBudget = Math.max(0, budget - travel);
+    return d <= budget;
   }
 
   /** Advance the simulated mission, sensor views, radio outage and revisit decisions. */
   step(t) {
     const previous = [...this.pos];
+    this.moveBudget = CRUISE;
     const nowMs = this.startMs + t * 1000;
     const linkUp = t < OUTAGE[0] || t >= OUTAGE[1];
     if (t === OUTAGE[0]) this.say(t, 'Radio link lost — the aircraft keeps searching and stores observations on board.');
@@ -276,13 +306,14 @@ export class PersonSearchSim {
 
     // ---- mission: survey, propose, revisit, resolve, report, continue
     if (this.mode === 'survey' && this.phase === 'orbit') {
-      // First: the fire itself. Circle it outside the standoff, camera on the fire's edge.
+      // First: the exterior forecast border, with the camera looking at its outside edge.
       const target = this.orbit[this.ow];
       if ((this.ow === 0 ? this.goTo(target, t) : this.fly(target, t))) this.ow++;
       const dx = this.F[0] - this.pos[0], dy = this.F[1] - this.pos[1];
       if (this.ow > 0) {
-        this.heading = wrap(Math.atan2(dx, dy) / RAD);
-        this.pitch = -Math.round(Math.atan2(ALT, Math.max(1, Math.hypot(dx, dy) - EM.startRadius(this.details) * 0.5)) / RAD);
+        const focus = this.borderPoint(Math.atan2(-dx, -dy), 18);
+        this.heading = wrap(Math.atan2(focus[0] - this.pos[0], focus[1] - this.pos[1]) / RAD);
+        this.pitch = -Math.atan2(ALT, Math.max(1, Math.hypot(focus[0] - this.pos[0], focus[1] - this.pos[1]))) / RAD;
       }
       if (this.ow >= this.orbit.length) {
         this.phase = 'legs'; this.pitch = PITCH;
@@ -290,7 +321,7 @@ export class PersonSearchSim {
         this.say(t, `Fire area searched from all sides. Now its path${first ? `: leg 1 is about ${first.arrival} min ahead of the front` : ''}.`);
       } else if (this.ow === 1 && !this.orbitStarted) {
         this.orbitStarted = true;
-        this.say(t, 'At the fire: circling it with the camera on its edge.');
+        this.say(t, 'At the +20-minute border: circling outside it with the camera on its exterior edge.');
       }
     } else if (this.mode === 'survey') {
       const lead = linkUp && this.pickRevisit();
@@ -333,7 +364,8 @@ export class PersonSearchSim {
     const wind = this.details.wind_dir_deg;
     for (const tg of TARGETS) {
       if (t - (this.lastSeen.get(tg.id) ?? -99) < 2) continue;
-      let [te, tn] = this.wf(tg.u(t), tg.v(t));
+      let [te, tn] = this.targetPosition(tg, t);
+      if (!this.exterior(te, tn)) continue;
       const lookAz = (Math.atan2(te - this.pos[0], tn - this.pos[1]) / RAD + 360) % 360;
       const from = wrap(lookAz + 180 - wind);   // where the drone is, relative to the wind
       if (tg.hiddenRel?.some((arc) => inArc(from, arc))) continue;
@@ -392,7 +424,8 @@ export class PersonSearchSim {
     const t = Math.max(0, this.t), wind = this.details.wind_dir_deg;
     const cam = {alt: ALT, heading: this.heading, pitch: this.pitch, hfov: HFOV, vfov: 2 * Math.atan(Math.tan(HFOV * RAD / 2) / ASPECT) / RAD};
     const objects = TARGETS.flatMap((target, index) => {
-      const [e, n] = this.wf(target.u(t), target.v(t));
+      const [e, n] = this.targetPosition(target, t);
+      if (!this.exterior(e, n)) return [];
       const from = wrap(Math.atan2(e - this.pos[0], n - this.pos[1]) / RAD + 180 - wind);
       if (target.hiddenRel?.some(arc => inArc(from, arc)) || (target.seenFromRel && !inArc(from, target.seenFromRel))) return [];
       if (!projectToImage(cam, e - this.pos[0], n - this.pos[1])) return [];

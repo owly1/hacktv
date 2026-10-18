@@ -40,11 +40,16 @@ acknowledgement, case switch, full screen and planning using an isolated fake
 Gemini transport. No aircraft or real Gemini service was used for this task's
 verification. This is no evidence of real fleet flight/ingest or person tracking.
 
-Follow-up: drones now stay more than 110 m from the rendered fire edge and
-fictional people remain at least 70 m beyond the maximum rendered fire. Cards,
-HUDs and telemetry show edge clearance. An imminent forecast no longer labels
-an exterior fictional person as already at the fire. Regression checks cover
-buffer clearance through maximum growth and long presentations.
+Current patrol follow-up: the former fixed maximum-fire buffer is replaced by
+the exact evolving +20-minute map contour. Fleet observation/search offsets are
+about 105/65 m outside that contour; people are placed 26–31 m outside it at
+their first search. The map opens at +20 minutes, with a persistent teal dashed
+patrol outline and a separate solid current-fire outline. Camera, map, telemetry
+and evidence use the same aircraft pose. Both hardcoded replay types suppress
+inside-current-fire targets before camera rendering or observation generation.
+Live person ingest is unchanged. Fire-first paths now search the exterior
++20-minute border, retain the false-positive/revisit/outage demonstration and
+share one 9 m movement budget per simulation step across route waypoints.
 
 Open issue / next step: integrate through review into `main`. Real fleet ingest,
 freshness isolation, multi-view boundary fusion and physical coordination remain
@@ -65,8 +70,13 @@ and loop restart clear incompatible camera state. The fake radio outage keeps
 the local onboard illustration while detections still follow delayed delivery.
 Thermal and false-positive examples remain explicitly fictional.
 
-Validation: 107 Node tests and 13 relevant Python checks passed. Added geometry
+Validation: 109 Node tests and 13 relevant Python checks passed. Added geometry
 checks for UTSC and every historical search case, telemetry/camera agreement,
 heading wrap, clearing a camera on case switch, and no UI AI requests. Browser
 verified both modes without Q&A/planning and the fire-first rendered camera,
 source labels, overlays, speed and battery. No aircraft or cloud inference used.
+The latest regression checks compare fleet paths against independently measured
++20-minute polygon distances across all nine cases, check continuous motion and
+all four search contributors, and inject inside-fire targets into both replay
+engines to prove they cannot produce sightings. Browser checks confirm the
++20-minute default/preset, visible patrol border and exterior leads.

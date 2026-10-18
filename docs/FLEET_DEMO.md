@@ -34,7 +34,9 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
    **Historical fleet perimeter search (simulated)** group contains all nine
    fleet cases. The older “Person search · fire first” fixtures and flight-pattern
    replay are separate demonstrations.
-2. Confirm four colored ANAFI markers around the current fire boundary.
+2. Confirm four colored ANAFI markers around the **+20-minute forecast border**.
+   The replay opens at +20 minutes. A dashed teal patrol outline stays visible
+   when you change the forecast slider; solid red marks the current fire.
    Their positions, heading cones and trails rotate with the same clock as
    the cameras. The forecast timeline changes the predicted fire horizon;
    it does not fast-forward the aircraft.
@@ -50,8 +52,11 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
    drones within about 50 seconds. Speed changes preserve the current clock.
 5. Watch cyan person boxes appear during low searches and **People found**
    increase. Each case randomly chooses 4–8 fixed fictional people, placed
-   at least 70 m beyond the largest fire rendered by the replay, so they remain
-   outside throughout the presentation. Drones keep over 110 m of ground clearance;
+   about 26–31 m outside the +20-minute border at their first scheduled search.
+   Drones pace about 105 m outside that contour, approaching about 65 m outside
+   it during descents. Camera observations reject targets inside the current
+   fire in either the map or rendered camera geometry. Drones keep over 110 m
+   of ground clearance from the current fire across the supplied cases;
    camera HUDs and cards display distance from the current fire edge. Leads include coordinates, illustrative uncertainty,
    capture times and source drone evidence. A named responder can acknowledge
    and close leads; closing removes a lead from the open counter.
@@ -69,7 +74,7 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
 ## Fire-first person-search replay
 
 The **Person search · fire first** selector group remains a distinct single-drone
-mission, with a fictional trapped-person scenario, uncertainty, revisits and
+mission, with fictional people outside its +20-minute border, uncertainty, revisits and
 simulated store-and-forward during a link outage. It previously drew a waiting
 placeholder instead of camera input. It now shows the same moving ANAFI-01 pose
 in the 3D camera, map and telemetry, including speed and battery.
@@ -87,10 +92,12 @@ while observations follow the existing delayed-delivery behavior.
 
 The fleet is rendered locally with a common clock and existing WebGL terrain,
 smoke, fire boxes and 3D camera projection. One aircraft at a time descends
-from 78–84 m to 36–39 m, searches an exterior buffer and ascends; the
+from 78–84 m to 36–39 m, searches outside the +20-minute border and ascends; the
 other three maintain observation. The repeatable schedule has small seeded
-gaps. Flights and people use the maximum rendered fire envelope to keep a
-visible buffer even as the fire grows. These dimensions and timings illustrate a presentation, not a validated
+gaps. Patrol positions use the exact same evolving contour as the map's
++20-minute prediction, with smooth outward offsets. People stay fixed after
+placement; detections are suppressed if a target is inside the current fire.
+These dimensions and timings illustrate a presentation, not a validated
 flight plan. WebGL is needed for the rendered terrain; satellite imagery needs
 network access or previously cached tiles.
 

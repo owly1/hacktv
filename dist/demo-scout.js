@@ -3,6 +3,7 @@
 (function (root) {
   const RAD = Math.PI / 180, START = 8, SLOT = 48, DESCENT = 18, SEARCH = 8;
   const COLORS = ['#61d6cc', '#eebf66', '#a8a4ff', '#f18dac'];
+  const PATROL_MINUTES = 20;
   /** Make repeatable replay randomness from a per-session unsigned seed. */
   function random(seed) {
     let n = seed >>> 0;
@@ -31,7 +32,34 @@
     const u = point.e * Math.sin(w) + point.n * Math.cos(w) - a * .45, v = -point.e * Math.cos(w) + point.n * Math.sin(w);
     return ((u / a) ** 2 + (v / (a / 2.4)) ** 2 < 1 ? -1 : 1) * distance;
   }
-  /** Put fictional people beyond the largest rendered fire so growth never engulfs them. */
+  /** Use the exact historical map outline for the requested forecast horizon. */
+  function outline(fire, t, minute = PATROL_MINUTES, scale = 1) {
+    const a = Math.min(300, 90 + t * .8), initialArea = Math.PI * a * a / 2.4, finalArea = fire.areaHa * 10000;
+    const k = Math.sqrt(initialArea * Math.pow(finalArea / initialArea, minute / 60) / finalArea) * scale;
+    return root.EmberModel.recordedPerimeter(fire).map(p => [fire.lat + (p[0] - fire.lat) * k, fire.lon + (p[1] - fire.lon) * k]);
+  }
+  /** Interpolate a point and outward normal on the same +20-minute contour shown on the map. */
+  function patrolPoint(scene, t, angle, offset = 0) {
+    const a = Math.min(300, 90 + t * .8), initialArea = Math.PI * a * a / 2.4;
+    const k = Math.sqrt(initialArea * Math.pow(scene.finalArea / initialArea, PATROL_MINUTES / 60) / scene.finalArea);
+    const index = ((angle / (Math.PI * 2) % 1 + 1) % 1) * scene.perimeter.length, i = Math.floor(index), u = index - i;
+    const p = scene.perimeter[i], q = scene.perimeter[(i + 1) % scene.perimeter.length];
+    const e = (p.e + (q.e - p.e) * u) * k, n = (p.n + (q.n - p.n) * u) * k;
+    const ne = p.ne + (q.ne - p.ne) * u, nn = p.nn + (q.nn - p.nn) * u, length = Math.hypot(ne, nn);
+    return {e: e + offset * ne / length, n: n + offset * nn / length};
+  }
+  /** Require exterior ground in both the rendered fire and its map footprint. */
+  function exterior(scene, t, target) {
+    const a = Math.min(300, 90 + t * .8), w = scene.direction * RAD;
+    const u = target.e * Math.sin(w) + target.n * Math.cos(w) - a * .45, v = -target.e * Math.cos(w) + target.n * Math.sin(w);
+    if ((u / (a + 5)) ** 2 + (v / (a / 2.4 + 5)) ** 2 <= 1) return false;
+    if (scene.fireCheck?.t !== t) {
+      const k = Math.sqrt(Math.PI * a * a / 2.4 / scene.finalArea);
+      scene.fireCheck = {t, polygon: scene.perimeter.map(p => [p.n * k, p.e * k])};
+    }
+    return !root.EmberModel.insidePolygon([target.n, target.e], scene.fireCheck.polygon);
+  }
+  /** Place fictional people outside the +20-minute border at their first scheduled search. */
   function create(fire, seed = Math.floor(Math.random() * 4294967296), startedAt = Date.now()) {
     const rng = random(seed), targets = [];
     const drones = COLORS.map((color, index) => ({id: `ANAFI-0${index + 1}`, index, color,
@@ -39,14 +67,26 @@
       slot: SLOT + Math.floor(rng() * 4)}));
     const scene = {seed, lat: fire.lat, lon: fire.lon, direction: fire.directionDeg, targets, drones,
       startedAt, sampled: -1, elapsed: 0, selectedId: drones[0].id, initialBattery: fire.drone?.telemetry.battery_pct ?? 90};
+    scene.fire = {...fire, areaHa: fire.areaHa > 0 ? fire.areaHa : 10000};
+    scene.finalArea = scene.fire.areaHa * 10000;
+    scene.perimeter = root.EmberModel.recordedPerimeter(scene.fire).map(([lat, lon]) => ({e: (lon - scene.lon) * 111320 * Math.cos(scene.lat * RAD), n: (lat - scene.lat) * 111320}));
+    for (let i = 0; i < scene.perimeter.length; i++) {
+      const p = scene.perimeter[i], before = scene.perimeter[(i + scene.perimeter.length - 1) % scene.perimeter.length], after = scene.perimeter[(i + 1) % scene.perimeter.length];
+      let ne = after.n - before.n, nn = -(after.e - before.e);
+      const centre = Math.sqrt(scene.finalArea * 2.4 / Math.PI) * .45, w = scene.direction * RAD;
+      if (ne * (p.e - centre * Math.sin(w)) + nn * (p.n - centre * Math.cos(w)) < 0) { ne = -ne; nn = -nn; }
+      const length = Math.hypot(ne, nn); p.ne = ne / length; p.nn = nn / length;
+    }
+    const maximumA = Math.pow(300 * 300 * Math.sqrt(scene.finalArea * 2.4 / Math.PI), 1 / 3);
+    scene.angularRate = 4 / (maximumA * 1.6);
     let start = START;
     for (const drone of drones) {
       drone.firstSearch = start;
       const t = start + DESCENT + SEARCH / 2;
-      const angle = drone.index * Math.PI / 2 + t * .018;
+      const angle = drone.index * Math.PI / 2 + t * scene.angularRate;
       const count = 1 + Math.floor(rng() * 2);
       for (let i = 0; i < count; i++) {
-        const {e, n} = boundary(scene, 300, angle + (i ? .10 : -.06), 75 + rng() * 5);
+        const {e, n} = patrolPoint(scene, t, angle + (i ? .012 : -.012), 26 + rng() * 5);
         targets.push({id: `fleet-${seed}-${targets.length + 1}`, number: targets.length + 1,
           e, n, assignedDrone: drone.id, samples: [], seenBy: [], total: 0, first: null,
           acknowledged: null, closed: null});
@@ -68,11 +108,11 @@
     if (s < DESCENT * 2 + SEARCH) return {phase: 'Ascending', depth: 1 - smooth((s - DESCENT - SEARCH) / DESCENT), next: scene.period - s};
     return {phase: 'Observing', depth: 0, next: scene.period - s};
   }
-  /** Orbit the maximum replay envelope; descend toward exterior people with 110+ m clearance. */
+  /** Pace the +20-minute contour and descend only toward its exterior border. */
   function position(scene, t, drone) {
-    const task = assignment(scene, t, drone), angle = drone.index * Math.PI / 2 + t * .018;
-    const {e, n} = boundary(scene, 300, angle, 210 - 90 * task.depth);
-    const edge = boundary(scene, 300, angle, 78), centre = boundary(scene, t, 0, -Math.min(300, 90 + t * .8));
+    const task = assignment(scene, t, drone), angle = drone.index * Math.PI / 2 + t * scene.angularRate;
+    const {e, n} = patrolPoint(scene, t, angle, 105 - 40 * task.depth);
+    const edge = patrolPoint(scene, t, angle, 28), centre = boundary(scene, t, 0, -Math.min(300, 90 + t * .8));
     const focus = {e: centre.e + (edge.e - centre.e) * task.depth, n: centre.n + (edge.n - centre.n) * task.depth};
     return {e, n, alt: 78 + drone.index * 2 - (42 + drone.index) * task.depth,
       heading: (Math.atan2(focus.e - e, focus.n - n) / RAD + 360) % 360,
@@ -85,15 +125,15 @@
     const p = position(scene, t, drone), next = position(scene, t + .01, drone);
     const {e, n} = p;
     const [lat, lon] = ll(scene, e, n);
-    const sector = (drone.index * 90 + t * .018 / RAD) % 360;
-    return {...p, lat, lon, drone_id: drone.id, color: drone.color, sector: `${Math.round(sector)}–${Math.round((sector + 90) % 360)}° sector`,
+    const sector = (drone.index * 90 + t * scene.angularRate / RAD) % 360;
+    return {...p, lat, lon, elapsed_s: t, patrol_minutes: PATROL_MINUTES, drone_id: drone.id, color: drone.color, sector: `${Math.round(sector)}–${Math.round((sector + 90) % 360)}° sector`,
       role: p.depth > 0 ? 'Perimeter person search' : 'Fire observation', reason: 'Scheduled sector revisit',
       range: Math.hypot(e, n), battery: Math.max(15, scene.initialBattery - drone.index * 3 - t / 40),
       speed: Math.hypot(next.e - e, next.n - n) / .01, climbRate: (next.alt - p.alt) / .01};
   }
   /** Project a fictional person through the same 69-degree camera used by the replay. */
-  function visible(p, target) {
-    if (p.alt > 55 || p.depth === 0) return null;
+  function visible(p, target, scene) {
+    if (!scene || p.alt > 55 || p.depth === 0 || !exterior(scene, p.elapsed_s, target)) return null;
     const yaw = p.heading * RAD, pitch = p.pitch * RAD, de = target.e - p.e, dn = target.n - p.n;
     const forward = (de * Math.sin(yaw) + dn * Math.cos(yaw)) * Math.cos(pitch) + p.alt * Math.sin(pitch);
     if (forward <= 0) return null;
@@ -108,7 +148,7 @@
     for (let s = scene.sampled + 1; s <= Math.floor(t); s++) {
       for (const drone of scene.drones) {
         const p = pose(scene, s, drone.id);
-        for (const target of scene.targets) if (visible(p, target)) {
+        for (const target of scene.targets) if (visible(p, target, scene)) {
           const az = (Math.atan2(target.e - p.e, target.n - p.n) / RAD + 360) % 360;
           const sample = {t: s, az, drone_id: drone.id, range: Math.hypot(target.e - p.e, target.n - p.n)};
           target.first ??= sample; target.total++;
@@ -140,7 +180,7 @@
         views: angles.length, angle_span_deg: span, view_azimuths_deg: angles, sensors: ['visible'], observations: target.total,
         movement: {status: 'stationary', detail: 'Simulated person at a fixed location'}, missed_looks: 0,
         delayed: {any: false, max_delay_s: 0}, fire_distance_m: Math.round(clearance(scene, t, target)),
-        fire_arrival: {minutes: null, basis: 'fictional person outside the maximum rendered replay fire'}, at_fire: false,
+        fire_arrival: {minutes: null, basis: 'fictional person on the exterior +20-minute forecast border'}, at_fire: false,
         priority: {tier: target.closed ? 9 : 0, base_tier: multi ? 2 : 4, reasons: ['SIMULATED: fictional person for presentation']},
         acknowledged: target.acknowledged, closed: target.closed, provenance: 'demo-simulated', next_look: null,
         evidence: samples.slice(-6).reverse().map(s => ({id: `${target.id}-${s.drone_id}-${s.t}`, drone_id: s.drone_id, at: time(s.t), sensor: 'visible', from: `${s.drone_id} camera`,
@@ -166,5 +206,5 @@
     else if (kind === 'close' && ['found', 'not-a-person', 'duplicate', 'handed-off'].includes(outcome)) target.closed = {...record, outcome};
     else throw new Error('Choose a supported lead action');
   }
-  root.BoscoScout = {START, create, pose, visible, snapshot, action, boundary, clearance};
+  root.BoscoScout = {START, create, pose, visible, snapshot, action, boundary, clearance, outline, patrolPoint, exterior, PATROL_MINUTES};
 })(globalThis);

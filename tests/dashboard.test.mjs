@@ -20,7 +20,7 @@ async function dashboard() {
   /** Build a chainable fake Leaflet layer for dashboard-state assertions. */
   const layer = () => ({
     addTo() {return this;}, remove() {}, clearLayers() {}, bindTooltip() {return this;},
-    bindPopup() {return this;}, setLatLng() {return this;}, setLatLngs() {return this;}, setOpacity() {return this;}, on() {return this;},
+    bindPopup() {return this;}, setLatLng() {return this;}, setLatLngs() {return this;}, setOpacity() {return this;}, on() {return this;}, bringToFront() {return this;},
   });
   const context = vm.createContext({
     console, performance, URLSearchParams, AbortSignal,
@@ -81,8 +81,8 @@ test('fire-first camera interpolation shares the map pose and uses the short hea
   const heading = run('peopleFrame(captureAt + 500).pose.heading');
   assert.ok(heading < .01 || heading > 359.99);
   run('renderPeopleCamera(captureAt + 500)');
-  assert.equal(capture[0].pose.e,4.5); assert.equal(capture[0].opts.speed,9);
-  assert.equal(run('state.demo.pos[0]'),43+4.5/111320);
+  assert.ok(Math.abs(capture[0].pose.e-4.5)<1e-10); assert.equal(capture[0].opts.speed,9);
+  assert.ok(Math.abs(run('state.demo.pos[0]')-(43+4.5/111320))<1e-10);
   assert.match(element('power').innerHTML,/80/);
   assert.match(element('video-status').textContent,/3D search replay/);
   run('selectDemo(state.demo.fires[0].id)');
