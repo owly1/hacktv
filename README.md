@@ -1,4 +1,4 @@
-# BOSCO / Emberwatch
+# BOSCO 
 
 Wildfire-monitoring prototype for a Parrot ANAFI: live camera and telemetry,
 fire detection, illustrative spread, Gemini analysis, and human-reviewed plans.
