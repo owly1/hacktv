@@ -112,3 +112,32 @@ from the bridge's terminal with `--demo-flight` and a typed `FLY`.
 
 Dashboard token: `GET /api/status`, `/api/telemetry/latest`, `/api/incident`,
 `/api/flight`, `/api/analysis/latest`; `GET /api/video` streams the frames.
+
+## Flight commands (dashboard → bridge, queue model)
+
+The dashboard never moves the drone directly. A viewer action queues a
+command; the bridge polls and executes it — the bridge stays the only
+process that can fly the aircraft.
+
+- `POST /api/commands` (dashboard token) — `{type: 'dive-surveillance', floor_agl_m?: 0.4, sweep_deg?: 360}` → `{id, status}`.
+- `GET /api/commands/next` (ingest token) — returns the oldest `pending`
+  command as `{command: {id, type, params}}` and marks it `delivered`
+  (`{command: null}` when empty). Poll ~1 Hz.
+- `POST /api/commands/<id>/ack` (ingest token) — `{status: 'in_progress'|'done'|'aborted'|'failed', note?}`.
+- `GET /api/commands` (dashboard token) — recent commands with status.
+
+`dive-surveillance`: descend to ~0.4 m AGL, yaw a 360° sweep for the
+backend person detector, climb back. Implementation lives in
+`bridge/dive_surveillance.py` (`DiveSurveillance`); wire `poll` in as a
+worker thread. Abort rules from the abort listener apply throughout.
+NOT hardware-tested yet — verify on the ANAFI before demoing.
+
+## Backend-side person CV
+
+The backend runs a pretrained person detector (coco-ssd, pure-JS tf.js,
+Apache-2.0) on relayed frames (~0.7 Hz). Detections appear as `cv: N
+persons` boxes in the video overlay and `cv-person`/`kind: 'person'`
+sightings feeding `/api/incident.persons` and Gemini context — same feed
+as EWP markers. It activates only when frames arrive; no bridge changes
+needed. Operator note: cv sightings are uncalibrated detections — verify
+on real frames before claiming the track in the pitch.

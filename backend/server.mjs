@@ -29,6 +29,7 @@ import {
   validateTelemetry,
 } from './validation.mjs';
 import { decodeQr, parseMarkerPayload, markerEpisodeId } from './qrscan.mjs';
+import { getPersonModel, detectPersons } from './personcv.mjs';
 
 const CONTRACT = 'emberwatch.v1';
 const DEFAULT_PORT = 8787;
@@ -43,6 +44,10 @@ const QR_CONFIRM_SCANS = 2;             // identical payload must decode twice b
 const QR_SIGHTING_MIN_MS = 5000;        // while a marker stays in view, log a sighting at most this often
 const QR_PERSON_FRESH_MS = 5 * 60_000;  // person markers count as "in the area" for 5 min after last seen
 const QR_OVERLAY_MS = 3000;             // marker bbox stays on the video overlay this long after last decode
+const CV_SCAN_INTERVAL_MS = 1500;      // person detector runs at most this often
+const CV_SIGHTING_MIN_MS = 4000;       // cv-person sighting rows at most this often
+const COMMAND_TYPES = new Set(['dive-surveillance']);
+const COMMAND_STATUSES = new Set(['in_progress', 'done', 'aborted', 'failed']);
 
 // Sam Ibrahim Building, University of Toronto Scarborough (north campus).
 export const DEFAULT_SITE = Object.freeze({
@@ -737,6 +742,7 @@ export function createApp({
   demoFires = [],
   tileFetch = fetch,
   autoAnalyze = true,
+  personDetector = 'auto', // 'auto' = lazy coco-ssd, an async (jpeg)=>persons fn, or null = off
 }) {
   if (!ingestToken || !dashboardToken || ingestToken === dashboardToken) {
     throw new Error('INGEST_TOKEN and DASHBOARD_TOKEN must be non-empty and different');
@@ -752,6 +758,8 @@ export function createApp({
     flightEvents: [],
     autoTimer: null,
     qr: { lastScanMs: -Infinity, pending: null, overlays: [] },
+    cv: { lastScanMs: -Infinity, lastSightingMs: -Infinity, model: null, modelChecked: false },
+    commands: [],
   };
 
   function requireAuth(req, kind) {
@@ -964,6 +972,58 @@ export function createApp({
     state.frameTimes.push(now());
     broadcastFrame(frame);
     scanFrameForMarkers(jpeg, capturedAtMs).catch(() => {}); // QR scan must never break ingest
+    scanFrameForPersons(jpeg, capturedAtMs).catch(() => {}); // same for person CV
+  }
+
+  // Backend-side person CV on relayed frames (coco-ssd, pure-JS tf.js).
+  // Real model output: boxes join the overlay, sightings land as
+  // 'cv-person'/kind 'person' rows feeding incident persons + Gemini context.
+  async function scanFrameForPersons(jpeg, capturedAtMs) {
+    const cv = state.cv;
+    if (capturedAtMs - cv.lastScanMs < CV_SCAN_INTERVAL_MS) return;
+    cv.lastScanMs = capturedAtMs;
+    let detect = null;
+    if (personDetector === 'auto') {
+      if (!cv.modelChecked) {
+        cv.modelChecked = true;
+        cv.model = await getPersonModel();
+      }
+      if (cv.model) detect = (buf) => detectPersons(cv.model, buf, { minScore: 0.5 });
+    } else if (typeof personDetector === 'function') {
+      detect = personDetector;
+    }
+    if (!detect) return;
+    const persons = await detect(jpeg);
+    if (!persons.length) return;
+    for (const p of persons.slice(0, 10)) {
+      const label = `person ${p.score.toFixed(2)}`;
+      state.qr.overlays.push({ text: `cv-${p.bbox.join(',')}`, label, confidence: p.score, bbox: p.bbox, untilMs: capturedAtMs + QR_OVERLAY_MS });
+    }
+    if (capturedAtMs - cv.lastSightingMs < CV_SIGHTING_MIN_MS) return;
+    cv.lastSightingMs = capturedAtMs;
+    const id = crypto.randomUUID();
+    const record = {
+      id,
+      detected_at: new Date(capturedAtMs).toISOString(),
+      episode_id: 'cv-people',
+      source: 'cv-person',
+      kind: 'person',
+      label: `cv: ${persons.length} person${persons.length > 1 ? 's' : ''}`,
+      confidence: Math.max(...persons.map((p) => p.score)),
+      bbox: persons[0].bbox,
+      fire: {
+        latitude: site.latitude,
+        longitude: site.longitude,
+        distance_m: null,
+        bearing_deg: null,
+        position_source: 'site-anchor estimate (no camera-pose calibration)',
+      },
+      drone: null,
+      details: { detector: 'coco-ssd lite_mobilenet_v2', count: persons.length, scores: persons.map((p) => +p.score.toFixed(3)) },
+      status: 'active',
+      image_path: await saveDetectionImage(id, jpeg),
+    };
+    await storage.insertDetection(record);
   }
 
   // Decode Emberwatch QR markers out of incoming camera frames. Throttled to
@@ -1292,6 +1352,78 @@ export function createApp({
       const updated = await storage.setEpisodeStatus(body.episode_id, 'false_alarm');
       if (updated === 0) throw new ApiError(404, 'no detection with that episode_id');
       sendJson(res, 200, { dismissed: true, sightings: updated });
+      return;
+    }
+
+    // ---- flight command queue ----
+    // The dashboard requests a maneuver; the bridge is the only process that
+    // can move the drone — it polls /next and acks the result. Commands are
+    // never auto-armed: the bridge decides (operator confirmation upstream).
+    if (req.method === 'POST' && pathname === '/api/commands') {
+      requireAuth(req, 'dashboard');
+      const body = await readJson(req);
+      if (!COMMAND_TYPES.has(body.type)) {
+        throw new ApiError(400, `type must be one of ${[...COMMAND_TYPES].join(', ')}`);
+      }
+      const params = {};
+      if (body.type === 'dive-surveillance') {
+        const agl = Number(body.floor_agl_m ?? 0.4);
+        if (!Number.isFinite(agl) || agl < 0.3 || agl > 2) {
+          throw new ApiError(400, 'floor_agl_m must be between 0.3 and 2');
+        }
+        const sweep = Number(body.sweep_deg ?? 360);
+        if (!Number.isFinite(sweep) || sweep < 45 || sweep > 720) {
+          throw new ApiError(400, 'sweep_deg must be between 45 and 720');
+        }
+        params.floor_agl_m = agl;
+        params.sweep_deg = sweep;
+      }
+      const cmd = {
+        id: crypto.randomUUID(),
+        type: body.type,
+        params,
+        created_at: new Date(now()).toISOString(),
+        status: 'pending',
+        delivered_at: null,
+        acked_at: null,
+        note: null,
+      };
+      state.commands.push(cmd);
+      if (state.commands.length > 50) state.commands.shift();
+      sendJson(res, 200, { id: cmd.id, status: cmd.status });
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/commands') {
+      requireAuth(req, 'dashboard');
+      sendJson(res, 200, { commands: state.commands.slice(-20) });
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/commands/next') {
+      requireAuth(req, 'ingest');
+      const cmd = state.commands.find((c) => c.status === 'pending') ?? null;
+      if (cmd) {
+        cmd.status = 'delivered';
+        cmd.delivered_at = new Date(now()).toISOString();
+      }
+      sendJson(res, 200, { command: cmd && { id: cmd.id, type: cmd.type, params: cmd.params } });
+      return;
+    }
+
+    const ackMatch = /^\/api\/commands\/([0-9a-f-]{36})\/ack$/.exec(pathname);
+    if (req.method === 'POST' && ackMatch) {
+      requireAuth(req, 'ingest');
+      const cmd = state.commands.find((c) => c.id === ackMatch[1]);
+      if (!cmd) throw new ApiError(404, 'no command with that id');
+      const body = await readJson(req);
+      if (!COMMAND_STATUSES.has(body.status)) {
+        throw new ApiError(400, `status must be one of ${[...COMMAND_STATUSES].join(', ')}`);
+      }
+      cmd.status = body.status;
+      cmd.acked_at = new Date(now()).toISOString();
+      cmd.note = typeof body.note === 'string' ? body.note.slice(0, 200) : null;
+      sendJson(res, 200, { acked: true });
       return;
     }
 

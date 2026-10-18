@@ -49,6 +49,7 @@ async function startApp(options = {}) {
     geminiModel: 'fake-model',
     demoFires: [{ id: 'f1', name: 'Fire One' }],
     tileFetch: options.tileFetch,
+    personDetector: options.personDetector ?? null,
   });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -422,5 +423,51 @@ test('unrelated QR payloads are ignored', async () => {
     assert.equal(bad, null);
     const { incident } = await (await t.req('GET', '/api/incident', { token: DASH })).json();
     assert.equal(incident, null);
+  } finally { await t.close(); }
+});
+
+test('flight command queue: dashboard posts, bridge polls and acks', async () => {
+  const t = await startApp({ noGemini: true });
+  try {
+    const bad = await t.req('POST', '/api/commands', { token: DASH, body: { type: 'loop-the-loop' } });
+    assert.equal(bad.status, 400);
+    const created = await (await t.req('POST', '/api/commands', { token: DASH, body: { type: 'dive-surveillance' } })).json();
+    assert.equal(created.status, 'pending');
+
+    const next = await (await t.req('GET', '/api/commands/next', { token: INGEST })).json();
+    assert.equal(next.command.id, created.id);
+    assert.equal(next.command.type, 'dive-surveillance');
+    assert.equal(next.command.params.floor_agl_m, 0.4);
+    assert.equal(next.command.params.sweep_deg, 360);
+    const empty = await (await t.req('GET', '/api/commands/next', { token: INGEST })).json();
+    assert.equal(empty.command, null);
+
+    const ack = await t.req('POST', `/api/commands/${created.id}/ack`, { token: INGEST, body: { status: 'done', note: 'swept 360' } });
+    assert.equal(ack.status, 200);
+    const list = await (await t.req('GET', '/api/commands', { token: DASH })).json();
+    assert.equal(list.commands.at(-1).status, 'done');
+    assert.equal(list.commands.at(-1).note, 'swept 360');
+
+    // dashboard cannot poll, ingest cannot command
+    assert.equal((await t.req('GET', '/api/commands/next', { token: DASH })).status, 401);
+    assert.equal((await t.req('POST', '/api/commands', { token: INGEST, body: { type: 'dive-surveillance' } })).status, 401);
+  } finally { await t.close(); }
+});
+
+test('person CV sightings from frames join the persons feed, not the fire incident', async () => {
+  const t = await startApp({ noGemini: true, personDetector: async () => [{ score: 0.9, bbox: [0.1, 0.1, 0.5, 0.5] }] });
+  try {
+    const t0 = Date.now();
+    // Inject a fake detector result via a frame that matches the fake trigger.
+    assert.equal((await postFrame(t, QR_FIRE, new Date(t0).toISOString())).status, 204);
+    assert.equal((await postFrame(t, QR_FIRE, new Date(t0 + 700).toISOString())).status, 204);
+    const withCv = await waitFor(async () => {
+      const b = await (await t.req('GET', '/api/incident', { token: DASH })).json();
+      return b.incident && b.persons.some((p) => p.episode_id === 'cv-people') ? b : null;
+    });
+    assert.equal(withCv.incident.episode_id, 'qrfire-alpha', 'CV persons never take over the incident');
+    const cv = (await (await t.req('GET', '/api/detections', { token: DASH })).json())
+      .detections.find((d) => d.source === 'cv-person');
+    assert.equal(cv.kind, 'person');
   } finally { await t.close(); }
 });

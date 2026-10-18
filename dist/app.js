@@ -456,6 +456,17 @@ function bindUi() {
   for (const [box, layer] of [['layer-spread', 'spread'], ['layer-fire', 'fire'], ['layer-drone', 'drone'], ['layer-wind', 'wind']]) $(box).onchange = () => $(box).checked ? state.map.addLayer(state.layers[layer]) : state.map.removeLayer(state.layers[layer]);
   $('zoom-in').onclick = () => state.map.zoomIn(); $('zoom-out').onclick = () => state.map.zoomOut(); $('zoom-reset').onclick = fitToFire;
   $('dismiss-fire').onclick = async () => { const inc = state.incident; if (!inc) return; try { await api('/api/incident/dismiss', {method: 'POST', body: {episode_id: inc.episode_id}}); toast('Marked as a false alarm.'); await pollIncident(); } catch (e) { toast(e.message); } };
+  // 'd' requests a dive-surveillance maneuver (descend to ~0.4 m AGL, 360°
+  // sweep for person detection, climb back). The request is only queued —
+  // the bridge decides whether and when to fly it.
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'd' || e.repeat) return;
+    const t = document.activeElement;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+    api('/api/commands', { method: 'POST', body: { type: 'dive-surveillance' } })
+      .then((r) => toast(`Dive-surveillance queued (${r.status}) — executes when the bridge accepts it.`))
+      .catch((err) => toast(err.message));
+  });
   $('analyze').onclick = async () => {
     $('analyze').disabled = true; $('analysis-source').textContent = 'ANALYZING…';
     try { state.analysis = await getJson('/api/analyze', {method: 'POST', body: {}, timeout: 90000}); state.analysisMeta = {...state.analysisMeta, error: null, pending: false}; toast('Gemini analysis updated.'); }
