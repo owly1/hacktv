@@ -37,7 +37,10 @@ const DEFAULT_HOST = '127.0.0.1';
 const MAX_JSON_BODY = 8 * 1024 * 1024; // fits a 5 MB base64 snapshot envelope
 const GEMINI_MIN_INTERVAL_MS = 30_000;  // one started analysis per 30 s
 const PLAN_MIN_INTERVAL_MS = 10_000;
-const GEMINI_UPSTREAM_TIMEOUT_MS = 45_000;
+// Per-call cap on one generateContent request; a tool-calling loop can exceed
+// shorter caps on a cold first call. Env override for slower upstreams.
+const GEMINI_UPSTREAM_TIMEOUT_MS =
+  Number(process.env.GEMINI_UPSTREAM_TIMEOUT_MS) || 60_000;
 const GEMINI_PLAN_TIMEOUT_MS = 45_000;    // plans are long structured outputs
 const INCIDENT_ACTIVE_MS = 30 * 60_000;  // a fire stays on the map 30 min after its last sighting
 const VIDEO_BOUNDARY = 'emberframe';
