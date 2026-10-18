@@ -264,6 +264,8 @@ function fireAgeMin() {
 }
 /** Model minutes for the rendered rings: fire age + the timeline lookahead. */
 const spreadMinutes = () => fireAgeMin() + state.minute;
+/** Incident identity for forecast-trail scoping; empty string when no fire. */
+const incIdentity = () => activeFire()?.episode_id || '';
 
 /* Projected spread at the selected minute, drawn as layered intensity bands. */
 function renderSpread() {
@@ -290,6 +292,22 @@ function renderSpread() {
     outline = ring(1);
     L.polygon(M.footprint(o, age, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip(age > .1 ? `Fire now — burning for ~${Math.round(age)} min` : 'Fire now');
   }
+  /* Forecast trail: a projection is only the forecast under the conditions
+     measured at that moment. When wind/direction shifts, the earlier outer
+     ring survives as a fading ghost — so the judge sees the +60 forecast from
+     15 min ago differ from the +45 computed under the veered wind. Buckets
+     keep the ticker-lerp from spamming ghosts on every tiny step. */
+  if (incIdentity() !== state.ghostEpisode) { state.ghosts = []; state.ghostEpisode = incIdentity(); state.prevSig = null; state.prevForecast = null; }
+  const sig = modelledFire() ? `${incIdentity()}|${Math.round(sc.wind / 4)}|${Math.round(sc.direction / 12)}` : null;
+  if (sig && state.prevForecast && sig !== state.prevSig) {
+    const ghosts = (state.ghosts || []).concat({pts: state.prevForecast, sig: state.prevSig});
+    state.ghosts = ghosts.slice(-4);
+  }
+  state.prevSig = sig; state.prevForecast = sig ? outline : null;
+  if (sig) (state.ghosts || []).forEach((g, i) => {
+    L.polygon(g.pts, {color: '#a8764a', weight: 1, dashArray: '2 6', fill: false, opacity: .18 + .1 * i})
+      .addTo(state.layers.spread).bindTooltip('Earlier forecast — superseded when conditions changed');
+  });
   // Contours morph between states: a fire's outline is (roughly) an ellipse,
   // so vertex-lerping the 72-point rings glides the zone instead of jumping.
   const targets = SPREAD_BANDS.map(([scale, color, opacity]) => ({
