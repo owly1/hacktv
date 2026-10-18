@@ -366,7 +366,7 @@ function renderPeopleMap(snap) {
     }
     L.polygon(ellipsePoints(l), {color: colour, weight: 1.6, fillColor: colour, fillOpacity: l.closed ? .05 : .16, dashArray: l.views >= 2 ? null : '5 4'}).addTo(lp)
       .bindTooltip(`${escapeHTML(l.title)} · 95% area ±${l.uncertainty.major_95_m} m`);
-    L.marker([l.latitude, l.longitude], {icon: L.divIcon({className: 'lead-pin-wrap', html: `<div class="lead-pin ${st.cls}${l.acknowledged ? ' is-ack' : ''}${l.at_fire ? ' at-fire' : ''}">${l.number}</div>`, iconSize: [28, 28], iconAnchor: [14, 14]}), zIndexOffset: 500})
+    L.marker([l.latitude, l.longitude], {title: `Person ${l.number}`, icon: L.divIcon({className: 'lead-pin-wrap', html: `<div class="lead-pin ${st.cls}${l.acknowledged ? ' is-ack' : ''}${l.at_fire ? ' at-fire' : ''}"><svg aria-hidden="true"><use href="#i-person"/></svg><span>${l.number}</span></div>`, iconSize: [42, 32], iconAnchor: [21, 16]}), zIndexOffset: 500})
       .addTo(lp).on('click', () => focusLead(l.id))
       .bindTooltip(`<b>${escapeHTML(l.title)}</b><br>${escapeHTML(l.status_text)}<br>Last seen ${fmtTime(l.last_seen_at)}`);
     if (l.next_look && !l.closed) {

@@ -108,3 +108,10 @@ telemetry, lead movement/reasons/logs, dropdown headings and forest popups.
 Layout, timing and aircraft/search behavior are unchanged. Raw demo/provenance
 fields and export metadata remain intact. Validation: 116 Node and 13 Python
 checks passed; browser verified forest holding/response and camera labels.
+
+Person map display follow-up: located rescue leads now use the existing person
+icon beside their lead number on the Fire Spread Explorer. Positions, detection
+timing, counts, review actions and unlocated observations are unchanged. Only
+the marker markup/style changed. Validation: 144 Node tests and 13 Python checks
+passed; a regression verifies exact marker coordinates, no markers before
+detection, and no invented map locations for camera-only sightings.
