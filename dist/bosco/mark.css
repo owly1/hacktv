@@ -1,0 +1,19 @@
+/* BoscoMark motion (see mark.js). The ring itself never spins. */
+.bx-mark { display: block; flex-shrink: 0; overflow: visible; }
+.bx-wordmark { display: flex; align-items: center; }
+.bx-wordmark .bx-mark { margin: 0 0.04em; }
+
+@keyframes bx-sway {
+  0%, 100% { transform: scale(1, 1) skewX(0deg); }
+  25% { transform: scale(.95, 1.06) skewX(-4deg); }
+  50% { transform: scale(1.03, .96) skewX(2.5deg); }
+  75% { transform: scale(.97, 1.04) skewX(-1.5deg); }
+}
+@keyframes bx-orbit { to { transform: rotate(360deg); } }
+
+.bx-mark.is-animated .bx-mark-flame { transform-origin: 50px 67px; animation: bx-sway 2.6s ease-in-out infinite; }
+.bx-mark.is-animated .bx-mark-orbit { transform-origin: 50px 50px; animation: bx-orbit 9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bx-mark .bx-mark-flame, .bx-mark .bx-mark-orbit { animation: none; }
+}
