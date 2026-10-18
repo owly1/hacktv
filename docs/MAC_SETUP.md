@@ -233,3 +233,22 @@ position and the normal fire-incident pipeline. `--execute` enables automatic
 takeoff on recognition; stop the observation supervisor first. It requires
 measured calibration and a current physical preflight. The observer remains
 read-only and is the only mode that restarts automatically.
+
+### Calibration capture with visible feedback
+
+Use the native-resolution observer. The browser capture page avoids a second
+interactive terminal and shows both the live image and the exact rejected or
+accepted photo:
+
+```sh
+.venv/bin/python bridge/calibrate_camera.py capture --web --directory anafi_out/calibration-browser
+```
+
+Open <http://127.0.0.1:8791/> and click **Capture photo** for each view. The supplied
+sheet is 10 squares across and 7 down (54 inner corners). Other board dimensions
+can be selected before the first accepted photo. Dimensions are saved with the
+session and automatically used by `fit --directory anafi_out/calibration-browser`.
+Rejected photos are displayed but never included in calibration. The terminal
+capture mode also saves `last-attempt.jpg` and prints its path on rejection.
+The detector uses CPU processing, lighting normalization and a classic-corner
+fallback. Calibration quality and physical verification requirements remain.
