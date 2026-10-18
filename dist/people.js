@@ -16,7 +16,7 @@ const LEAD_STATUS = {
 const CLOSE_OUTCOMES = [['found', 'Person found / reached'], ['not-a-person', 'Not a person'], ['duplicate', 'Duplicate of another lead'], ['handed-off', 'Handed off to another team']];
 const peopleState = {snap: null, listKey: '', covKey: '', demo: null, seen: new Set(), crops: new Map(), focus: null};
 
-const TRAIL = {fire: {color: '#E8562A', label: 'camera on the fire'}, path: {color: '#D9921E', label: "over the fire's 60-min path"}, other: {color: '#2F8F8A', label: 'elsewhere'}};
+const TRAIL = {fire: {color: '#E8562A', label: 'camera on the fire'}, path: {color: '#D9921E', label: "over the fire's 60-min path"}, other: {color: '#8C8679', label: 'elsewhere'}};
 const CAMERA_HFOV = 69, CAMERA_VFOV = 2 * Math.atan(Math.tan(CAMERA_HFOV * Math.PI / 360) / (16 / 9)) * 180 / Math.PI;
 const trailCache = new Map();
 
@@ -29,9 +29,9 @@ function fireArrivalAt(lat, lon) {
 }
 function arrivalText(min) {
   if (min === undefined) return '';
-  if (min === 0) return 'Inside the projected fire area now';
-  if (min === null) return 'Not in the projected path within 3 h';
-  return `Fire projected here in about ${min} min`;
+  if (min === 0) return 'Inside the fire';
+  if (min === null) return 'Not in its path';
+  return `Fire in ~${min} min`;
 }
 
 /* What the camera was doing at one live trail point: looking at the fire, looking at
@@ -164,6 +164,8 @@ function viewRose(lead) {
 function leadCard(l) {
   const st = LEAD_STATUS[l.status] || LEAD_STATUS['needs-another-view'];
   const mv = escapeHTML(l.movement.detail);
+  const notes = l.reasons.filter(r => !/^seen from|^seen in|m from the detected fire|^fire projected|^AT THE FIRE|^inside the projected|delayed/i.test(r))
+    .map(r => r.replace(/ — may be unable to move or call for help$/, ': may be unable to call for help').replace(/ \(within walking distance\)$/, ''));
   const sensors = l.sensors.map(s => s === 'thermal' ? 'thermal' : 'visible').join(' + ');
   const crops = l.evidence.filter(e => e.crop).slice(0, 3).map(e => `<img class="lead-crop" data-crop="${escapeHTML(e.id)}" alt="Camera crop, ${escapeHTML(e.sensor)}, ${fmtTime(e.at)}">`).join('');
   const ev = l.evidence.slice(0, 4).map(e => `<li><span>${fmtTime(e.at)}</span> ${escapeHTML(e.sensor)} from the ${escapeHTML(e.from)} · ${e.range_m} m · ±${e.individual_95_m} m${e.delayed ? ` <b class="delayed">delayed ${e.delay_s} s</b>` : ''}</li>`).join('');
@@ -175,19 +177,19 @@ function leadCard(l) {
     ? `<p class="lead-ack closed">Closed by <b>${escapeHTML(l.closed.by)}</b> · ${escapeHTML(CLOSE_OUTCOMES.find(o => o[0] === l.closed.outcome)?.[1] || l.closed.outcome)} · ${fmtTime(l.closed.at)}</p>`
     : `<span class="lead-close"><select data-close-for="${l.id}" aria-label="Close ${escapeHTML(l.title)} with outcome"><option value="">Close lead…</option>${CLOSE_OUTCOMES.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select><button class="button compact" data-action="close" data-id="${l.id}">Close</button></span>`;
   return `<article class="lead-card ${st.cls}${l.acknowledged ? ' is-ack' : ''}${l.atFire ? ' at-fire' : ''}" data-lead="${l.id}">
-    ${l.atFire ? '<p class="at-fire-banner">At the fire · search here first</p>' : ''}
-    <header><span class="lead-num">${l.number}</span><div><h3>${escapeHTML(l.title)}</h3><p class="lead-status"><span class="lead-chip">${st.label}</span>${escapeHTML(l.status_text)}</p></div>${viewRose(l)}</header>
+    ${l.atFire ? '<p class="at-fire-banner">At the fire</p>' : ''}
+    <header><span class="lead-num">${l.number}</span><div><h3>${escapeHTML(l.title)}</h3><p class="lead-status"><span class="lead-chip">${st.label}</span>${l.status === 'not-re-seen' ? `not seen on ${l.missed_looks} re-looks` : ''}</p></div>${viewRose(l)}</header>
     <dl class="lead-facts">
       <div><dt>Location</dt><dd><button class="linkish" data-action="locate" data-id="${l.id}" title="Show on the map">${fmtCoord(l)}</button> <button class="icon-btn" data-action="copy" data-id="${l.id}" aria-label="Copy coordinates" title="Copy coordinates"><svg><use href="#i-link"/></svg></button></dd></div>
-      <div><dt>Uncertainty</dt><dd>±${l.uncertainty.major_95_m} m <small>(95% area, ${l.uncertainty.major_95_m} × ${l.uncertainty.minor_95_m} m)</small></dd></div>
+      <div><dt>Accuracy</dt><dd>±${l.uncertainty.major_95_m} m</dd></div>
       <div><dt>Last seen</dt><dd>${fmtTime(l.last_seen_at)} <small>${fmtAgo(l.last_seen_age_s)}</small></dd></div>
       <div><dt>Evidence</dt><dd>${l.observations} sighting${l.observations === 1 ? '' : 's'} · ${l.views} angle${l.views === 1 ? '' : 's'}${l.views > 1 ? ` (${l.angle_span_deg}° apart)` : ''} · ${sensors}</dd></div>
       <div><dt>Movement</dt><dd>${mv}</dd></div>
-      ${l.fire_distance_m != null || l.arrival !== undefined ? `<div><dt>Fire</dt><dd>${l.arrival !== undefined ? `<b class="arrival${l.arrival != null && l.arrival <= 30 ? ' soon' : ''}">${arrivalText(l.arrival)}</b>${l.fire_distance_m != null ? ` · ` : ''}` : ''}${l.fire_distance_m != null ? `${l.fire_distance_m} m from the fire` : ''}${l.arrival != null && l.arrival > 0 ? ' <small>(projection at current conditions)</small>' : ''}</dd></div>` : ''}
+      ${l.fire_distance_m != null || l.arrival !== undefined ? `<div><dt>Fire</dt><dd>${l.arrival !== undefined ? `<b class="arrival${l.arrival != null && l.arrival <= 30 ? ' soon' : ''}">${arrivalText(l.arrival)}</b>${l.fire_distance_m != null ? ` · ` : ''}` : ''}${l.fire_distance_m != null ? `${l.fire_distance_m} m away` : ''}</dd></div>` : ''}
     </dl>
-    ${l.reasons.length ? `<ul class="lead-reasons">${l.reasons.map(r => `<li>${escapeHTML(r)}</li>`).join('')}</ul>` : ''}
-    ${l.delayed.any ? `<p class="lead-delayed">Includes observations stored during a link outage, delivered up to ${l.delayed.max_delay_s} s late. The person may have moved since.</p>` : ''}
-    ${nl && !l.closed ? `<div class="next-look"><strong>Suggested next look · from the ${escapeHTML(nl.from)}</strong><p>${escapeHTML(nl.reason)} About ${nl.flight_s} s away, ${nl.altitude_m} m up, camera ${nl.gimbal_pitch_deg}°.</p></div>` : ''}
+    ${notes.length ? `<ul class="lead-reasons">${notes.map(r => `<li>${escapeHTML(r)}</li>`).join('')}</ul>` : ''}
+    ${l.delayed.any ? `<p class="lead-delayed">Delayed up to ${l.delayed.max_delay_s} s (link outage)</p>` : ''}
+    ${nl && !l.closed ? `<p class="next-look" title="${escapeHTML(nl.reason)}"><strong>Next look</strong> from the ${escapeHTML(nl.from)} · ${nl.flight_s} s away</p>` : ''}
     ${crops ? `<div class="lead-crops">${crops}</div>` : ''}
     <details class="lead-evidence"><summary>Sightings</summary><ul>${ev}</ul></details>
     <footer>${ack}${close}</footer>
@@ -217,7 +219,7 @@ function renderLeadList(snap) {
   peopleState.listKey = key;
   const list = $('lead-list');
   if (!snap.leads.length) {
-    list.innerHTML = `<div class="lead-empty"><h3>No one found yet.</h3><p>${snap.simulated ? 'The simulated drone is surveying its sector. Candidates appear here as soon as it sees a person-shaped heat signature.' : 'When the drone sees a person-shaped heat signature or figure, it becomes a lead here. It shows where the person is, how sure that location is, and how many angles have confirmed it.'}</p></div>`;
+    list.innerHTML = '<div class="lead-empty"><h3>No one found yet</h3></div>';
     return;
   }
   list.innerHTML = leads.map(leadCard).join('');
@@ -244,7 +246,7 @@ function renderPeopleMap(snap) {
   const lp = state.layers.people, lm = state.layers.mission; lp.clearLayers(); lm.clearLayers();
   for (const l of snap.leads) {
     const st = LEAD_STATUS[l.status] || LEAD_STATUS['needs-another-view'];
-    const colour = l.closed ? '#8C8679' : l.status === 'possible-person' ? '#E8562A' : l.status === 'not-re-seen' ? '#5E5A50' : '#B8860B';
+    const colour = l.closed ? '#B9B3A6' : l.status === 'possible-person' || l.at_fire ? '#E8562A' : l.status === 'not-re-seen' ? '#8C8679' : '#3A372E';
     for (const e of l.evidence) {
       // "Seen from" spokes: back along each sighting's line of sight toward the drone.
       L.polyline([[l.latitude, l.longitude], M.destPoint(l.latitude, l.longitude, e.view_az_deg + 180, Math.min(e.range_m, 60))], {color: colour, weight: 1, opacity: .45, dashArray: '2 4', interactive: false}).addTo(lp);
@@ -256,8 +258,8 @@ function renderPeopleMap(snap) {
       .bindTooltip(`<b>${escapeHTML(l.title)}</b><br>${escapeHTML(l.status_text)}<br>Last seen ${fmtTime(l.last_seen_at)}`);
     if (l.next_look && !l.closed) {
       const v = [l.next_look.latitude, l.next_look.longitude];
-      L.polyline([v, [l.latitude, l.longitude]], {color: '#2F8F8A', weight: 1.5, dashArray: '6 5', interactive: false}).addTo(lm);
-      L.circleMarker(v, {radius: 6, color: '#2F8F8A', weight: 2, fillColor: '#FBF9F4', fillOpacity: 1}).addTo(lm)
+      L.polyline([v, [l.latitude, l.longitude]], {color: '#3A372E', weight: 1.5, dashArray: '6 5', interactive: false}).addTo(lm);
+      L.circleMarker(v, {radius: 6, color: '#3A372E', weight: 2, fillColor: '#FBF9F4', fillOpacity: 1}).addTo(lm)
         .bindTooltip(`Suggested look at Target ${l.number} from the ${escapeHTML(l.next_look.from)} · ${l.next_look.flight_s} s away`);
     }
   }
@@ -304,7 +306,7 @@ function renderCoverage(cov) {
   const ctx = canvas.getContext('2d'), img = ctx.createImageData(W, H);
   for (const [i, j, cls] of cells) {
     const k = ((j1 - j) * W + (i - i0)) * 4;
-    const rgba = cls === 2 ? [47, 143, 138, 80] : [255, 179, 71, 90];
+    const rgba = cls === 2 ? [58, 55, 46, 70] : [58, 55, 46, 30];
     img.data.set(rgba, k);
   }
   ctx.putImageData(img, 0, 0);
@@ -339,7 +341,7 @@ function renderMission(snap) {
     active = open.some(l => l.next_look) ? 'propose' : open.length ? 'report' : 'survey';
     log.innerHTML = open.length
       ? open.slice(0, 8).map(l => `<li><span>${fmtTime(l.last_seen_at)}</span> ${escapeHTML(l.title)}: ${escapeHTML(l.status_text.toLowerCase())}.</li>`).join('')
-      : '<li class="muted-text">No person detections yet. Coverage builds as the drone flies with its camera tilted down.</li>';
+      : '<li class="muted-text">No events yet</li>';
   }
   for (const li of steps.children) li.classList.toggle('active', li.dataset.step === active);
 }
@@ -393,7 +395,7 @@ function peopleBrief() {
     `- Status: ${l.status_text}`,
     `- Last seen: ${l.last_seen_at} · ${l.observations} sightings from ${l.views} angle(s) · ${l.sensors.join(' + ')}`,
     `- Movement: ${l.movement.detail}`,
-    (() => { const a = fireArrivalAt(l.latitude, l.longitude); return a === undefined ? null : `- Fire: ${arrivalText(a)}${a ? ' (projection at current conditions)' : ''}`; })(),
+    (() => { const a = fireArrivalAt(l.latitude, l.longitude); return a === undefined ? null : `- Fire: ${arrivalText(a)} (projection at current conditions)`; })(),
     l.delayed.any ? `- Includes observations delivered up to ${l.delayed.max_delay_s} s late (link outage)` : null,
     `- ${l.acknowledged ? `Acknowledged by ${l.acknowledged.by} at ${l.acknowledged.at}` : 'NOT YET ACKNOWLEDGED'}`,
   ].filter(Boolean).join('\n')).join('\n\n');
