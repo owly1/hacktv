@@ -626,8 +626,10 @@ function simPose(f, t) {
 function updateDemoScout(t = demoT()) {
   const f = demoCase(), scout = state.demo.scout;
   if (!f || !scout) return;
-  renderPeople(BoscoScout.snapshot(scout, t, surveyPose(f, BoscoScout.START)));
+  const snapshot = BoscoScout.snapshot(scout, t, surveyPose(f, BoscoScout.START));
+  renderPeople(snapshot);
   $('people-source').textContent = 'Simulated · case';
+  if (t >= BoscoScout.START) setBanner('demo', `<strong>Simulated rescue scout · ${escapeHTML(f.name)}.</strong> ${escapeHTML(simPose(f, t).phase)} · ${snapshot.leads.length} fictional people spotted. Map, camera and telemetry follow the same simulation.`);
 }
 /* The detector locks on over the first seconds, then firms up as the view opens out. */
 function simConfidence(f, t) {
@@ -748,7 +750,7 @@ function animateDemoCase(now) {
   $('altitude').innerHTML = `${p.alt.toFixed(1)} <small>m</small>`; $('ground-speed').innerHTML = `${p.speed.toFixed(1)} <small>m/s</small>`;
   $('power').innerHTML = `${Math.round(p.battery)} <small>%</small>`; $('flight-state').textContent = `${p.climbRate > .3 ? `Climbing ${p.climbRate.toFixed(1)} m/s` : 'Flying'} · ${p.phase.toLowerCase()}`;
   $('battery-value').innerHTML = `${Math.round(p.battery)}<span class="small-unit">%</span>`; $('battery-context').textContent = 'ANAFI-01 battery';
-  $('telemetry-note').textContent = `ANAFI-01 · GPS · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${Math.round(p.range)} m from ignition`;
+  $('telemetry-note').textContent = `ANAFI-01 · SIMULATED POSITION · ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)} · heading ${Math.round(p.heading)}° · camera ${-Math.round(p.pitch)}° · ${Math.round(p.range)} m from ignition`;
   $('detect-value').textContent = confirmed ? Math.round(conf * 100) : '…'; $('detect-unit').textContent = confirmed ? '%' : '';
   $('detect-context').textContent = confirmed ? `fire model · ${Math.round(p.range)} m · ${Math.floor(t * 4) + 1} sightings` : 'fire model · confirming possible fire…';
   $('camera-label').innerHTML = t >= BoscoScout.START ? '<i class="hot"></i> SIMULATED · PEOPLE SCOUT' : video ? '<i class="hot"></i> REFERENCE FOOTAGE · NOT ANAFI-01' : state.demo.inView && confirmed ? '<i class="hot"></i> FIRE IN VIEW' : '<i></i> POSSIBLE FIRE';
