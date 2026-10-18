@@ -432,7 +432,8 @@ test('demo fires are served from the examples dataset', async () => {
 });
 
 test('demo cases get live Gemini analysis and plans that are never stored', async () => {
-  const t = await startApp({ replies: [analysisReply, planReply] });
+  let clock = Date.now();
+  const t = await startApp({ replies: [analysisReply, planReply], now: () => clock });
   const demoCase = { id: 'jasper-2024', name: 'Jasper townsite complex', drone: { telemetry: { provenance: 'demo-simulated' } } };
   try {
     const analysis = await (await t.req('POST', '/api/demo/analyze', { token: DASH, body: { case: demoCase, scenario: { wind: 50 }, image: 'AAAA', trigger: 'auto-detection' } })).json();
@@ -449,6 +450,12 @@ test('demo cases get live Gemini analysis and plans that are never stored', asyn
 
     // Rate limit: one demo Gemini request per 10 s.
     assert.equal((await t.req('POST', '/api/demo/plan', { token: DASH, body: { case: demoCase } })).status, 429);
+
+    clock += 11_000;
+    const plan = await (await t.req('POST', '/api/demo/plan', {token: DASH, body: {case: demoCase}})).json();
+    assert.equal(plan.title, 'Initial attack — Alpha');
+    assert.equal(plan.provenance, 'gemini-demo');
+    assert.deepEqual(plan.wording_flags, []);
 
     const nothingStored = await (await t.req('GET', '/api/analysis/latest', { token: DASH })).json();
     assert.equal(nothingStored.analysis, null);
@@ -498,6 +505,29 @@ test('Gemini transport retries an overloaded model, then falls back', async () =
   assert.ok(reply.candidates);
   const failing = makeGeminiTransport({ apiKey: 'k', model: 'main', fetchImpl: async () => new Response('{"error":{"message":"bad key"}}', { status: 400 }), retryDelayMs: 1 });
   await assert.rejects(failing({}), /HTTP 400: bad key/);
+});
+
+test('Gemini transport moves past a silent model and skips it while it cools down', async () => {
+  const seen = [];
+  let clock = 0;
+  const fetchImpl = (url, { signal }) => {
+    const name = url.match(/models\/([^:]+)/)[1];
+    seen.push(name);
+    if (name === 'backup') return Promise.resolve(new Response(JSON.stringify(analysisReply)));
+    // 'main' never answers; only the transport's own timeout ends the request
+    return new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+  };
+  const transport = makeGeminiTransport({ apiKey: 'k', model: 'main', fallbackModels: ['backup'], fetchImpl, retryDelayMs: 1, timeoutMs: 20, now: () => clock });
+  assert.ok((await transport({})).candidates);
+  assert.deepEqual(seen, ['main', 'backup'], 'no second wait on the silent model');
+  assert.equal(transport.lastModel, 'backup');
+  await transport({});
+  assert.deepEqual(seen, ['main', 'backup', 'backup'], 'silent model skipped during cooldown');
+  clock += 6 * 60_000;
+  await transport({});
+  assert.deepEqual(seen.slice(-2), ['main', 'backup'], 'tried again after cooldown');
+  const allSilent = makeGeminiTransport({ apiKey: 'k', model: 'main', fallbackModels: ['other'], fetchImpl, retryDelayMs: 1, timeoutMs: 20 });
+  await assert.rejects(allSilent({}), /No Gemini model answered \(main, other\)/);
 });
 
 test('analysis prompt carries the detection context', () => {

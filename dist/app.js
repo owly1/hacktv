@@ -95,6 +95,8 @@ function initMap() {
   state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
   map.on('dragstart', () => setFollow(false));
+  state.layers.trail = L.layerGroup().addTo(state.layers.drone); // drone trail, coloured by what it was doing about the fire
+  peopleInitMap();
   window.addEventListener('resize', () => map.invalidateSize());
 }
 
@@ -147,12 +149,20 @@ function renderDrone() {
   const ll = [t.latitude, t.longitude];
   state.droneMarker.setLatLng(ll).setOpacity(1);
   setDronePose(state.droneMarker, t.extra?.heading_deg, t.altitude_m, t.state === 'landed');
-  state.layers.path.setLatLngs(state.flight.path.map(p => [p.latitude, p.longitude]));
+  drawTrail(state.layers.trail, liveTrail(state.flight.path));
   if (state.follow) state.map.panTo(ll);
   if (!state.centredOnDrone) { state.centredOnDrone = true; if (!activeFire()) state.map.setView(ll, 19); }
 }
 
+/* Detection details driving the spread model: the live detection, or the simulated search's fire. */
+function fireDetails() {
+  if (state.mode === 'demo') return state.demo.selected?.id === 'people' ? state.demo.selected.details ?? null : null;
+  return activeFire()?.latest.details ?? null;
+}
+const modelledFire = () => state.mode === 'live' ? !!activeFire() : !!(state.demo.selected?.id === 'people' && state.demo.selected.details);
+
 function origin() {
+  if (peopleDemoActive()) { const f = state.demo.selected; return f.lat != null ? [f.lat, f.lon] : null; }
   if (state.mode === 'demo') { const f = demoCase(); return f && state.demo.located ? [f.lat, f.lon] : null; }
   const inc = activeFire(); return inc?.latest.fire.latitude != null ? [inc.latest.fire.latitude, inc.latest.fire.longitude] : null;
 }
@@ -167,13 +177,13 @@ function renderSpread() {
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
   let outline, ring = scale => [];
-  if (state.mode === 'demo') {
+  if (state.mode === 'demo' && !peopleDemoActive()) {
     // Demo: the fire ANAFI-01 sees now, growing to the recorded burn over the timeline.
     const f = demoCase();
     ring = scale => demoOutline(f, t, scale);
     outline = ring(1);
   } else {
-    const details = activeFire().latest.details;
+    const details = fireDetails();
     ring = scale => M.footprint(o, t, sc, details, scale);
     outline = ring(1);
     L.polygon(M.footprint(o, 0, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip('Fire now');
@@ -182,7 +192,7 @@ function renderSpread() {
   const area = M.areaHa(outline);
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
   $('area-context').textContent = t < .5 ? 'now' : `projected at +${Math.round(t)} min`;
-  const reach = state.mode === 'demo' ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, activeFire().latest.details);
+  const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
   L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), M.destPoint(o[0], o[1], sc.direction, reach)], {color: '#4E6A70', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
 }
 
@@ -197,11 +207,12 @@ function renderFirePin() {
 }
 
 function fitToFire() {
+  if (peopleDemoActive() && fitPeople()) return;
   const o = origin();
   if (!o && demoCase()) { const f = demoCase(); state.map.fitBounds(L.latLng(f.lat, f.lon).toBounds(1100)); return; } // drone and fire, before geolocation
   if (!o) { const t = state.telemetry; if (t?.latitude != null) state.map.setView([t.latitude, t.longitude], 19); else state.map.setView([state.site.latitude, state.site.longitude], 17); return; }
   state.map.invalidateSize();
-  const pts = state.mode === 'demo' ? [...demoOutline(demoCase(), state.minute), state.demo.pos] : M.footprint(o, 30, state.scenario, activeFire().latest.details);
+  const pts = state.mode === 'demo' && !peopleDemoActive() ? [...demoOutline(demoCase(), state.minute), state.demo.pos] : M.footprint(o, 30, state.scenario, fireDetails());
   state.map.fitBounds(L.latLngBounds(pts).pad(.15), {maxZoom: 20});
 }
 
@@ -340,11 +351,11 @@ function renderAnalysis() {
   $('analysis-severity').hidden = !a.severity; $('analysis-severity').textContent = a.severity || ''; $('analysis-severity').className = 'severity ' + (a.severity || '');
   $('analysis-summary').textContent = a.summary;
   $('analysis-title').textContent = 'Spread outlook';
-  $('analysis-detail').textContent = a.spread_outlook || a.unknowns.join(' ');
+  $('analysis-detail').textContent = a.spread_outlook || (a.unknowns || []).join(' ');
   $('analysis-observations').innerHTML = (a.observations || []).slice(0, 4).map(o => `<li>${escapeHTML(o)}</li>`).join('');
   const w = a.wind_estimate;
   const windLine = w ? `Wind est. ${w.speed_mps != null ? `≈${w.speed_mps} m/s` : 'unknown speed'}${w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}° ${M.compass(w.direction_deg)}` : ''} — derived from drone stabilization, not a sensor (${w.confidence})` : null;
-  $('analysis-limit').textContent = [windLine, a.unknowns[0], a.limitations].filter(Boolean).join(' · ');
+  $('analysis-limit').textContent = [windLine, (a.unknowns || [])[0], a.limitations].filter(Boolean).join(' · ');
   applyWindEstimate(a);
 }
 
@@ -365,7 +376,7 @@ function applyWindEstimate(a) {
   if (deg !== null) state.scenario.direction = deg;
   state.windAuto = a.created_at; state.windDerived = w;
   if (changed) {
-    markPlanDirty(); renderSpread();
+    markPlanDirty(); renderSpread(); refreshFireTiming();
     toast(`Wind updated from drone stabilization — derived estimate, not a sensor reading.`);
   }
 }
@@ -373,8 +384,9 @@ function applyWindEstimate(a) {
 // ------------------------------------------------------------------ plan
 
 function projection() {
-  const o = origin(); if (!o || state.mode === 'demo') return null;
-  const details = activeFire().latest.details;
+  const o = origin(); if (!o) return null;
+  if (demoCase()) return demoProjection();
+  const details = fireDetails();
   return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(M.footprint(o, state.minute, state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(state.minute, state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1]}};
 }
 function markPlanDirty() { if (state.plan && !state.planDirty) { state.planDirty = true; const r = demoResults(); if (r) r.planDirty = true; renderPlan(); } }
@@ -385,7 +397,9 @@ function renderPlan(offline) {
   if (!p) { if (offline) $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}</div>`; return; }
   const list = (title, items) => items?.length ? `<h4>${title}</h4><ul>${items.map(i => `<li>${escapeHTML(i)}</li>`).join('')}</ul>` : '';
   const approved = p.approvedBy && !state.planDirty;
-  $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}<div class="draft-heading"><h3>${escapeHTML(p.title)}</h3><span class="pill ${approved ? 'live-badge' : 'soft-orange'}">${approved ? 'Approved' : 'Draft'}</span></div><p class="draft-meta">GEMINI · ${escapeHTML(p.objective)} · ${escapeHTML(new Date(p.created_at).toLocaleTimeString())}${p.projection ? ` · spread at +${p.projection.minutes_ahead} min` : ''}</p>${state.planDirty ? '<div class="notice plan-dirty">Conditions changed since this plan. Regenerate to use the latest picture.</div>' : ''}<div class="advantage"><strong>Operational advantage</strong><p>${escapeHTML(p.advantage)}</p></div><h4>Situation</h4><p class="plan-text">${escapeHTML(p.situation)}</p>${list('Objectives', p.objectives)}<h4>Actions</h4><table class="plan-actions"><thead><tr><th>#</th><th>Action</th><th>Owner</th><th>Timing</th></tr></thead><tbody>${p.actions.map(a => `<tr><td>${a.priority}</td><td>${escapeHTML(a.action)}${a.rationale ? `<small>${escapeHTML(a.rationale)}</small>` : ''}</td><td>${escapeHTML(a.owner || '—')}</td><td>${escapeHTML(a.timing || '—')}</td></tr>`).join('')}</tbody></table>${list('Resources & staging', p.resources)}${list('Re-planning triggers', p.triggers)}${list('Risks', p.risks)}${p.next_update ? `<h4>Next update</h4><p class="plan-text">${escapeHTML(p.next_update)}</p>` : ''}<div class="reviewer-row"><input id="reviewer-name" aria-label="Approver name" maxlength="80" placeholder="Incident commander" value="${escapeHTML(p.approvedBy || '')}" ${approved ? 'disabled' : ''}><button class="button primary" id="approve-plan" ${approved || state.planDirty ? 'disabled' : ''}>Approve plan</button></div>${approved ? `<p class="microcopy">Approved by ${escapeHTML(p.approvedBy)} at ${escapeHTML(new Date(p.approvedAt).toLocaleString())}.</p>` : ''}<div class="draft-buttons"><span class="microcopy">${p.provenance === 'gemini-demo' ? 'Incident replay — kept in this session.' : 'Stored in TigerData with the detection it was built on.'}</span><button class="button" id="export-plan">Export plan ↓</button></div></div>`;
+  // The drone cannot certify ground as safe: point out any wording that claims it.
+  const wording = p.wording_flags?.length ? `<div class="gemini-offline"><strong>Check the wording before approving</strong><p>This plan describes ground as safe or cleared (${p.wording_flags.map(w => `“${escapeHTML(w)}”`).join(', ')}). BOSCO cannot verify that. Restate it as observed hazards and when they were seen.</p></div>` : '';
+  $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}${wording}<div class="draft-heading"><h3>${escapeHTML(p.title)}</h3><span class="pill ${approved ? 'live-badge' : 'soft-orange'}">${approved ? 'Approved' : 'Draft'}</span></div><p class="draft-meta">GEMINI · ${escapeHTML(p.objective)} · ${escapeHTML(new Date(p.created_at).toLocaleTimeString())}${p.projection ? ` · spread at +${p.projection.minutes_ahead} min` : ''}</p>${state.planDirty ? '<div class="notice plan-dirty">Conditions changed since this plan. Regenerate to use the latest picture.</div>' : ''}<div class="advantage"><strong>Operational advantage</strong><p>${escapeHTML(p.advantage)}</p></div><h4>Situation</h4><p class="plan-text">${escapeHTML(p.situation)}</p>${list('Objectives', p.objectives)}<h4>Actions</h4><table class="plan-actions"><thead><tr><th>#</th><th>Action</th><th>Owner</th><th>Timing</th></tr></thead><tbody>${p.actions.map(a => `<tr><td>${a.priority}</td><td>${escapeHTML(a.action)}${a.rationale ? `<small>${escapeHTML(a.rationale)}</small>` : ''}</td><td>${escapeHTML(a.owner || '—')}</td><td>${escapeHTML(a.timing || '—')}</td></tr>`).join('')}</tbody></table>${list('Resources & staging', p.resources)}${list('Re-planning triggers', p.triggers)}${list('Risks', p.risks)}${p.next_update ? `<h4>Next update</h4><p class="plan-text">${escapeHTML(p.next_update)}</p>` : ''}<div class="reviewer-row"><input id="reviewer-name" aria-label="Approver name" maxlength="80" placeholder="Incident commander" value="${escapeHTML(p.approvedBy || '')}" ${approved ? 'disabled' : ''}><button class="button primary" id="approve-plan" ${approved || state.planDirty ? 'disabled' : ''}>Approve plan</button></div>${approved ? `<p class="microcopy">Approved by ${escapeHTML(p.approvedBy)} at ${escapeHTML(new Date(p.approvedAt).toLocaleString())}.</p>` : ''}<div class="draft-buttons"><span class="microcopy">${p.provenance === 'gemini-demo' ? 'Incident replay — kept in this session.' : 'Stored in TigerData with the detection it was built on.'}</span><button class="button" id="export-plan">Export plan ↓</button></div></div>`;
   $('approve-plan').onclick = () => { const name = $('reviewer-name').value.trim(); if (!name) { toast('Enter the approving incident commander.'); return; } p.approvedBy = name; p.approvedAt = new Date().toISOString(); renderPlan(); toast('Plan approved.'); };
   $('export-plan').onclick = () => download(`bosco-plan-${p.id.slice(0, 8)}.json`, JSON.stringify(p, null, 2), 'application/json');
 }
@@ -395,7 +409,7 @@ async function generatePlan() {
   try {
     const r = demoResults();
     if (state.mode === 'demo') { const plan = await demoGemini('plan'); if (!plan) return; r.plan = plan; r.planDirty = false; if (demoResults() !== r) return; state.plan = plan; }
-    else state.plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 60000});
+    else state.plan = await getJson('/api/plan', {method: 'POST', body: {objective: $('objective').value, notes: $('notes').value, scenario: state.scenario, projection: projection()}, timeout: 100000});
     state.planDirty = false; renderPlan(); toast('Operational plan ready.');
   } catch (e) {
     if (e.status === 429) toast(e.message);
@@ -410,8 +424,13 @@ const PANEL_DEFAULTS = {};
 function savePanelDefaults() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit', 'draft-area']) PANEL_DEFAULTS[id] = $(id).innerHTML; }
 function resetAnalysisPanel() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit']) $(id).innerHTML = PANEL_DEFAULTS[id]; $('analysis-severity').hidden = true; $('analysis-offline').hidden = true; }
 function resetPlanPanel() { $('draft-area').innerHTML = PANEL_DEFAULTS['draft-area']; }
-const demoCase = () => state.mode === 'demo' && state.demo.selected && state.demo.selected !== 'flight' ? state.demo.selected : null;
-const demoResults = () => { const f = demoCase(); return f ? (state.demo.results[f.id] ??= {analysis: null, plan: null, planDirty: false}) : null; };
+const demoCase = () => state.mode === 'demo' && state.demo.selected && state.demo.selected !== 'flight' && state.demo.selected.id !== 'people' ? state.demo.selected : null;
+const demoResults = () => {
+  const f = state.mode === 'demo' && state.demo.selected;
+  if (!f || f === 'flight') return null;
+  const key = f.id === 'people' ? `people:${f.scenario}` : f.id;
+  return (state.demo.results[key] ??= {analysis: null, plan: null, planDirty: false});
+};
 
 /* Show the selected case's own Gemini results, or empty panels until Gemini is asked. */
 function showDemoResults() {
@@ -420,7 +439,10 @@ function showDemoResults() {
   state.analysisMeta = {configured: state.status?.gemini?.configured ?? true, pending: false, error: null};
   resetAnalysisPanel(); resetPlanPanel();
   if (!r) { $('analysis-summary').textContent = 'Select an incident; Gemini analyzes it once ANAFI-01 geolocates the fire.'; $('analysis-source').textContent = 'WAITING'; return; }
-  if (!state.analysis) { $('analysis-summary').textContent = `Gemini analyzes ${demoCase().name} automatically once ANAFI-01 geolocates it.`; $('analysis-detail').textContent = 'Gemini receives the drone camera frame, telemetry and observed conditions.'; }
+  if (!state.analysis) {
+    $('analysis-summary').textContent = peopleDemoActive() ? 'Analyze current view to review the simulated fire and rescue leads.' : `Gemini analyzes ${demoCase().name} automatically once ANAFI-01 geolocates it.`;
+    $('analysis-detail').textContent = peopleDemoActive() ? 'Gemini receives simulated observations; results stay in this replay session.' : 'Gemini receives the drone camera frame, telemetry and observed conditions.';
+  }
   renderAnalysis(); if (state.plan) renderPlan();
 }
 
@@ -584,9 +606,14 @@ function cameraFrame() {
 }
 
 async function demoGemini(kind, trigger = 'manual') {
-  const f = demoCase(); if (!f) { toast('Select an incident first.'); return null; }
+  const f = demoCase(), snap = peopleDemoActive() ? peopleState.snap : null;
+  if (!f && !snap?.simulated) { toast('Select an incident and wait for its observations first.'); return null; }
+  const incident = f ? simCase(f) : {
+    id: `people:${state.demo.selected.scenario}`, name: state.demo.selected.name,
+    provenance: 'simulated', fire: snap.fire, drone: snap.drone, rescue_leads: snap.leads,
+  };
   const a = state.analysis;
-  return getJson(`/api/demo/${kind}`, {method: 'POST', timeout: 60000, body: {case: simCase(f), scenario: state.scenario, ...(kind === 'analyze' ? {image: cameraFrame(), trigger} : {}), ...(kind === 'plan' ? {objective: $('objective').value, notes: $('notes').value, projection: demoProjection(), analysis: a && {summary: a.summary, severity: a.severity, spread_outlook: a.spread_outlook}} : {})}});
+  return getJson(`/api/demo/${kind}`, {method: 'POST', timeout: 100000, body: {case: incident, scenario: state.scenario, ...(kind === 'analyze' ? {...(f ? {image: cameraFrame()} : {}), trigger} : {}), ...(kind === 'plan' ? {objective: $('objective').value, notes: $('notes').value, projection: projection(), analysis: a && {summary: a.summary, severity: a.severity, spread_outlook: a.spread_outlook}} : {})}});
 }
 
 async function toggleDemo() {
@@ -603,15 +630,44 @@ async function toggleDemo() {
   $('incident-eyebrow').textContent = 'INCIDENT REPLAY'; $('incident-title').textContent = 'Incident replay'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
   $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'watching the camera feed';
   const sel = $('demo-fire'); sel.hidden = false;
-  sel.innerHTML = '<option value="flight">ANAFI-01 flight pattern · UTSC</option>' + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${escapeHTML(f.startDate.slice(0, 4))}</option>`).join('');
-  state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.path.setLatLngs([]);
+  const yr = f => escapeHTML(f.startDate.slice(0, 4));
+  sel.innerHTML = '<optgroup label="Person search · fire first (simulated)"><option value="people">UTSC · Highland Creek ravine</option>'
+    + state.demo.fires.map(f => `<option value="people:${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>'
+    + '<optgroup label="Recorded burns"><option value="flight">ANAFI demo flight pattern · UTSC</option>'
+    + state.demo.fires.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>';
+  state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.trail.clearLayers();
+  state.layers.path.setLatLngs([]);
   for (const f of state.demo.fires) L.circleMarker([f.lat, f.lon], {radius: 6, color: '#d9480f', weight: 2, fillColor: '#d9480f', fillOpacity: .85}).addTo(state.layers.demo).bindTooltip(f.name).on('click', () => { sel.value = f.id; selectDemo(f.id); });
-  selectDemo(state.demo.fires[0]?.id ?? 'flight'); sel.value = state.demo.selected?.id ?? 'flight';
+  selectDemo('people'); sel.value = 'people';
 }
 
 function selectDemo(id) {
   state.demo.layer?.remove();
   state.demo.layer = L.layerGroup().addTo(state.map);
+  stopPeopleDemo();
+  state.demo.marker = null; state.demo.pos = null; state.demo.located = false;
+  setDemoVideo(null);
+  state.layers.fire.clearLayers();
+  if (id === 'people' || id.startsWith('people:')) {
+    // Simulated search: at UTSC, or at one of the historical fires' ignition points.
+    // The fire's position and conditions arrive with the first snapshot; spread grows from it.
+    const scenarioId = id === 'people' ? 'utsc' : id.slice(7);
+    const fire = state.demo.fires.find(f => f.id === scenarioId);
+    state.demo.selected = {id: 'people', scenario: scenarioId, name: fire?.name ?? 'UTSC · Highland Creek ravine', lat: null, lon: null, areaHa: 3, directionDeg: fire?.directionDeg ?? 225};
+    state.scenario = {...M.BASE, wind: fire?.drivers?.windKmh ?? 24, direction: fire?.directionDeg ?? 225}; state.minute = 20;
+    setBanner('demo', `<strong>Demo mode · simulated person search${fire ? ` at ${escapeHTML(fire.name)}` : ''}.</strong> The fire is searched first: the drone circles it outside the standoff with the camera on its edge, then sweeps its path, soonest-reached ground first. A hot rock never confirms, and a radio outage delays some alerts. ${fire ? 'Recorded location, wind and weather; spread speed scaled to a drone-sized area. ' : ''}Nothing here is live.`);
+    $('incident-eyebrow').textContent = 'DEMO · SIMULATED SEARCH'; $('incident-title').textContent = fire ? `Person search · ${fire.name}` : 'Person search replay';
+    $('incident-sub').textContent = fire ? `${fire.region} · ignition point of the ${fire.startDate.slice(0, 4)} fire · first minutes, simulated` : 'Simulated wildfire person search at UTSC · seeded, the same every run';
+    $('map-subtitle').textContent = 'Fire searched first, then its path: rescue leads, observed ground, next looks';
+    $('map-location').textContent = fire ? fire.name : 'UTSC · Highland Creek ravine';
+    showDemoResults();
+    startPeopleDemo();
+    if (fire) state.map.setView([fire.lat, fire.lon], 16); else state.map.setView([state.site.latitude - .0012, state.site.longitude + .0018], 17);
+    renderSpread(); return;
+  }
+  setBanner('demo', '<strong>Demo mode.</strong> Recorded historical fires from <code>examples/</code> and a replay of the ANAFI demo flight pattern. Live data resumes when you exit.');
+  $('incident-eyebrow').textContent = 'DEMO · HISTORICAL CASES'; $('incident-title').textContent = 'Demo replay';
+  $('map-subtitle').textContent = 'Recorded fires replayed from ignition, plus the drone flight pattern';
   if (id === 'flight') {
     state.demo.selected = 'flight'; state.demo.started = performance.now();
     const s = [state.site.latitude, state.site.longitude], side = 2 * Math.sin(Math.PI / 8);
@@ -661,6 +717,7 @@ function selectDemo(id) {
 }
 
 function exitDemo() {
+  stopPeopleDemo();
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.map.closePopup();
   setDemoVideo(null); setBasemap(state.basemapBeforeDemo ?? 'osm'); setFollow(false);
   $('demo-toggle').innerHTML = 'Replay <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
@@ -671,6 +728,7 @@ function exitDemo() {
   Object.assign(state, state.live ?? {}); resetAnalysisPanel(); resetPlanPanel(); renderAnalysis(); if (state.plan) renderPlan();
   state.windAuto = state.windManual = state.windDerived = null;
   renderIncident(); renderDrone(); renderSpread(); renderTelemetry(); renderFlight(); fitToFire();
+  pollPeople().catch(() => {});
 }
 
 function animateDemoFlight(now) {
@@ -713,7 +771,7 @@ async function pollTelemetry() {
 }
 async function pollIncident() { state.incident = (await getJson('/api/incident')).incident; renderIncident(); }
 async function pollFlight() { state.flight = await getJson('/api/flight'); renderFlight(); renderDrone(); }
-async function pollAnalysis() { if (state.mode === 'demo') return; const m = await getJson('/api/analysis/latest'); if (state.mode === 'demo') return; state.analysisMeta = m; if (m.analysis) state.analysis = m.analysis; renderAnalysis(); }
+async function pollAnalysis() { if (state.mode === 'demo') return; const m = await getJson('/api/analysis/latest'); if (state.mode === 'demo') return; state.analysisMeta = m; if (typeof m.analysis?.summary === 'string') state.analysis = m.analysis; renderAnalysis(); }
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
   const s = state.status; state.site = s.site || state.site; if (state.mode !== 'demo') $('map-location').textContent = state.site.name;
@@ -752,7 +810,7 @@ function bindUi() {
   $('scenario-open').onclick = () => { pending = {...state.scenario}; scenarioControls(pending); $('scenario-intro').textContent = state.detectedScenario ? 'Started from the conditions reported with the detected fire. Adjust them to see how the spread changes.' : 'These conditions drive the projected spread on the map.'; openDialog('scenario-dialog'); };
   for (const [id, key] of [['wind-input', 'wind'], ['direction-input', 'direction'], ['dry-input', 'dryness'], ['temp-input', 'temp'], ['rh-input', 'rh']]) $(id).oninput = () => { pending[key] = +$(id).value; scenarioControls(pending); };
   $('reset-scenario').onclick = () => { pending = {...(state.detectedScenario || M.BASE)}; scenarioControls(pending); };
-  $('apply-scenario').onclick = () => { state.scenario = {...pending}; state.windManual = state.analysis?.created_at ?? 'manual'; state.windDerived = null; markPlanDirty(); renderSpread(); $('scenario-dialog').close(); };
+  $('apply-scenario').onclick = () => { state.scenario = {...pending}; state.windManual = state.analysis?.created_at ?? 'manual'; state.windDerived = null; markPlanDirty(); renderSpread(); refreshFireTiming(); $('scenario-dialog').close(); };
   $('play').onclick = () => { state.playing = !state.playing; setPlayButton(); };
   $('speed').onclick = () => { state.speed = state.speed === 4 ? 1 : state.speed * 2; $('speed').textContent = state.speed + '×'; };
   $('timeline').oninput = () => { state.playing = false; setPlayButton(); state.minute = +$('timeline').value; renderSpread(); };
@@ -783,10 +841,11 @@ function bindUi() {
 function exportBrief() {
   const inc = activeFire(), a = state.analysis, p = state.plan, proj = projection();
   const lines = ['# BOSCO incident brief', '', `Generated: ${new Date().toISOString()}`, `Site: ${state.site.name} (${state.site.latitude}, ${state.site.longitude})`, `Mode: ${state.mode === 'demo' ? 'incident replay' : state.mode}`, '',
+    '## People · rescue leads', peopleBrief(), '',
     '## Fire', inc ? [`Detected ${inc.first_detected_at} by ANAFI-01 (${inc.latest.source}, ${inc.latest.label}, max confidence ${Math.round(inc.max_confidence * 100)}%), ${inc.sightings} sightings.`, `Position: ${inc.latest.fire.latitude}, ${inc.latest.fire.longitude} — ${inc.latest.fire.distance_m} m from the drone, bearing ${inc.latest.fire.bearing_deg}° (${inc.latest.fire.position_source}).`, `Details: ${JSON.stringify(inc.latest.details)}`].join('\n') : 'No active fire.', '',
     '## Projected spread', proj ? `At +${proj.minutes_ahead} min: ${proj.area_ha} ha, head ${proj.head_distance_m} m toward ${proj.toward} at ${proj.spread_rate_m_per_min} m/min.\nConditions: ${JSON.stringify(state.scenario)}` : '—', '',
     '## Drone telemetry', state.telemetry ? '```json\n' + JSON.stringify(state.telemetry, null, 2) + '\n```' : 'No telemetry.', '',
-    '## Gemini analysis', a ? `${a.summary}\n\nSeverity: ${a.severity ?? '—'}\nSpread outlook: ${a.spread_outlook ?? '—'}\nUnknowns: ${a.unknowns.join('; ')}\nLimitations: ${a.limitations}\n(${a.model}, ${a.created_at})` : 'None yet.', '',
+    '## Gemini analysis', a ? `${a.summary}\n\nSeverity: ${a.severity ?? '—'}\nSpread outlook: ${a.spread_outlook ?? '—'}\nUnknowns: ${(a.unknowns || []).join('; ') || '—'}\nLimitations: ${a.limitations ?? '—'}\n(${a.model}, ${a.created_at})` : 'None yet.', '',
     '## Operational plan', p ? `${p.title}\n\n${p.situation}\n\nAdvantage: ${p.advantage}\n\n${p.actions.map(x => `${x.priority}. ${x.action} — ${x.owner || ''} (${x.timing || ''})`).join('\n')}\n\n${p.approvedBy ? `Approved by ${p.approvedBy} at ${p.approvedAt}` : 'Not yet approved.'}${state.planDirty ? '\n(Conditions changed after this plan was generated.)' : ''}` : 'None yet.'];
   download('bosco-incident-brief.md', lines.join('\n'), 'text/markdown'); toast('Incident brief exported.');
 }
@@ -803,7 +862,7 @@ async function connect() {
   if (started) return; started = true;
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
-  every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
+  every(2000, 'people', pollPeople); every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
   try { const {plan} = await getJson('/api/plan/latest'); if (plan) { state.plan = plan; renderPlan(); } } catch {}
   streamVideo();
 }
@@ -813,6 +872,7 @@ function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
   if (state.playing) { state.minute = (state.minute + delta * .002 * state.speed) % 60; if (now - lastSpread > 66) { lastSpread = now; renderSpread(); } }
   animateDemoFlight(now); animateDemoCase(now);
+  tickPeopleDemo(now);
   requestAnimationFrame(animate);
 }
 

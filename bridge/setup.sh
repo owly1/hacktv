@@ -19,5 +19,10 @@ mkdir -p "$MODEL_DIR"
   https://huggingface.co/rabahdev/fire-smoke-yolov8n/resolve/main/best.pt
 python -c "from ultralytics import YOLO; print('fire model classes:', YOLO('$MODEL_DIR/fire-smoke-yolov8n.pt').names)"
 
+# COCO YOLOv8n for the person search (class "person"). Visible-light; use a
+# thermal-trained model with --person-model for a thermal stream.
+[ -s "$MODEL_DIR/yolov8n.pt" ] || curl -fsSL -o "$MODEL_DIR/yolov8n.pt" \
+  https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
+
 python "$HERE/make_test_marker.py"
-echo "Bridge ready. Model: $MODEL_DIR/fire-smoke-yolov8n.pt"
+echo "Bridge ready. Models: $MODEL_DIR/fire-smoke-yolov8n.pt, $MODEL_DIR/yolov8n.pt"

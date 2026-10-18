@@ -1,8 +1,8 @@
 # Maxim: start here on main
 
-Updated 17 October 2026 after merging `feat/qr-orbit-rehearsal` into main.
+Updated 17 October 2026 after integrating person search and incident replay.
 
-This is the shared dashboard, Pi observation and QR preset codebase. The historical-case Gemini routes and person-search feature remain on their separate branches.
+The shared codebase includes the dashboard, Pi observation, existing QR preset workflow, historical-case Gemini routes and person search.
 
 ## The project in plain English
 
@@ -42,6 +42,31 @@ prove that every teammate's credentials work or that the entire flight/fire
 pipeline has been tested. The standalone short-hover success belongs to the
 QR feature work. The actual QR circle and X-key landing still need physical verification; merging source does not establish flight acceptance.
 
+## Person search
+
+- `bridge/anafi_bridge.py` adds a person detector, simple tracking, timestamped
+  camera/drone pose, small crops and an on-disk retry outbox for disconnected
+  observations. Standard ANAFI Extended supplies visible RGB, not thermal;
+  a thermal model flag does not create a thermal sensor.
+- `backend/people.mjs` turns observations into uncertain rescue leads. It
+  combines viewing angles and location-error estimates, records negative
+  looks, suggests another viewpoint, and requires a responder to acknowledge
+  or close a lead. A candidate is not a confirmed person or diagnosis.
+- Leads persist in `data/people/state.json`, **not TigerData**. Crops, delayed
+  observations, coverage and lead state use the branch's people API routes.
+- `dist/people.js` draws lead cards, uncertainty/coverage and review controls.
+- `backend/people-sim.mjs` simulates a search that circles outside the fire
+  first, then surveys its projected path. It includes a stationary person,
+  walker, hot-rock distractor and radio outage, at UTSC and example fires.
+  These suggested/replayed routes do not command a real aircraft.
+- The shared spread model estimates fire arrival at leads. This is a
+  projection, not a validated arrival-time forecast. Terrain is flat unless
+  supplied; no real canopy reconstruction or breathing radar is implemented.
+- Gemini transport has a configurable 60-second analysis timeout (45 seconds for plans), fallback-model retries
+  and a five-minute cooldown for a model that stopped responding. Planning
+  includes leads and flags claims that an area or route is safe/clear.
+
+
 ## Where the data goes
 
 ```text
@@ -69,6 +94,18 @@ no Google Maps API key is required for that implementation. Tiles need
 Internet until cached. `dist/model.js` grows a wind-driven ellipse using
 spread/weather inputs; Gemini does not generate the map animation.
 
+## Try the feature without an aircraft
+
+After configuration, open the dashboard's Demo controls and select
+**Person search - fire first** (the displayed separator may be a middle dot).
+Try UTSC and one historical fire. Follow one candidate through multiple
+angles, its location uncertainty, delayed alert and responder acknowledgement.
+This is seeded simulation through the people pipeline, not a live rescue.
+
+`.env.example` adds `SEARCH_SECTOR` (south,west,north,east coordinates),
+`CAMERA_HFOV_DEG` and `COVERAGE_CELL_M`. Leave a sector unset until the team
+has an agreed test area. Model names/fallback order are local configuration;
+use a model enabled for your key and prove it with a current round trip.
 
 ## First run on your laptop
 
@@ -109,6 +146,14 @@ green configured badge.
 | [dist/app.js](dist/app.js), [dist/model.js](dist/model.js) | Dashboard and spread illustration |
 | [docs/VERIFIED.md](docs/VERIFIED.md) | Recorded cloud-service verification |
 
+| [docs/PERSON_SEARCH.md](docs/PERSON_SEARCH.md) | Detailed behavior, assumptions and missing work |
+| [backend/people.mjs](backend/people.mjs) | Geolocation, uncertainty, fusion and lead state |
+| [backend/people-sim.mjs](backend/people-sim.mjs) | Simulated scenarios and fire-first route |
+| [dist/people.js](dist/people.js) | Lead cards and map overlays |
+| [bridge/anafi_bridge.py](bridge/anafi_bridge.py) | Detector, crops and retry outbox |
+| [tests/people.test.mjs](tests/people.test.mjs) | Tests with synthetic observations |
+| [docs/BRIDGE_CONTRACT.md](docs/BRIDGE_CONTRACT.md) | Added person-ingest contract |
+
 ## Your next tasks
 
 1. Start the backend, then follow the restart guide with the hardware owner.
@@ -117,8 +162,8 @@ green configured badge.
    owner. Record results and evidence timestamps; never paste keys into chat.
 3. Review `handoff.md` and `docs/QR_PRESET_DEMO.md`, then record physical
    terminal-landing and circle checks before treating the QR flight as verified.
-4. Review `democases` and `person-search` as separate integrations. Their
-   backend/frontend/bridge changes can overlap; resolve and test those together.
+4. Exercise the person-search demo, lead acknowledgement and restart persistence.
+   Hardware detector accuracy and geographic uncertainty still need field evidence.
 5. Keep response plans visibly subject to human review and spread outputs
    labeled as projections. Do not promote synthetic scenario locations to GPS.
 
@@ -126,13 +171,10 @@ green configured badge.
 
 | Branch | Purpose |
 |---|---|
-| `main` | Shared dashboard/backend, Pi observation, QR rehearsal and opt-in preset flight |
-| `democases` | No-drone historical-fire presentation with live Gemini calls |
-| `person-search` | Person observations, uncertain rescue leads, coverage and simulated search |
-Older `master` and `combining-everything` code is already incorporated or superseded in main; archive tags preserve their branch-specific onboarding documents.
+| `main` | Dashboard/backend, Pi observation, existing QR preset, historical-fire replay and person search |
+| `codex/qr-code-circle-flight` | Separate QR circle-flight work; deliberately excluded from this integration |
 
-These documents describe each branch at its own tip; they do not merge its
-feature code into the others. To receive the documentation, use
+The integrated features above are available on main. To receive the code, use
 `git pull --ff-only` from a clean checkout of your branch. If Git reports local
 changes or divergent history, preserve that work and coordinate with its owner.
 Do not reset a teammate's checkout to make the instructions fit.

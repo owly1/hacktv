@@ -92,6 +92,15 @@ DETECTION_JPEG_QUALITY = 85
 DEFAULT_HOME = (43.7866, -79.1903)  # Sam Ibrahim Building, UTSC
 DEFAULT_MODEL = os.path.expanduser("~/emberwatch-models/fire-smoke-yolov8n.pt")
 QR_PREFIX = "EW1:"
+DEFAULT_PERSON_MODEL = os.path.expanduser("~/emberwatch-models/yolov8n.pt")  # COCO: class "person"
+
+# Person search (see docs/PERSON_SEARCH.md)
+PERSON_EVERY_N = 2            # run the person model on every 2nd detector pass (~2.5 Hz)
+PERSON_MIN_HITS = 2           # a track needs this many hits before it is reported
+PERSON_POST_S = 2.0           # one observation per track at most this often
+PERSON_TRACK_END_S = 5.0
+PERSON_CROP_PX = 160
+OUTBOX_MAX = 500              # observations kept on disk while the backend is unreachable
 
 # Detection episode rules
 DETECT_HZ = 5.0
@@ -142,6 +151,16 @@ class Publisher:
         self.last_error = None
         self.last_snapshot_file = 0.0
         os.makedirs(out_dir, exist_ok=True)
+        # Store-and-forward: person observations that could not be delivered, oldest first.
+        # Kept on disk so a bridge restart during an outage loses nothing.
+        self.outbox_path = os.path.join(out_dir, "person_outbox.jsonl")
+        self.outbox_lock = threading.Lock()
+        self.outbox = []
+        if os.path.exists(self.outbox_path):
+            with open(self.outbox_path, encoding="utf-8") as f:
+                self.outbox = [json.loads(line) for line in f if line.strip()][-OUTBOX_MAX:]
+            if self.outbox:
+                print(f"[*] {len(self.outbox)} stored person observations waiting to be delivered")
 
     # -- files
     def _write_atomic(self, name, data):
@@ -173,6 +192,7 @@ class Publisher:
                 conn.request("POST", path, body=body, headers=hdrs)
                 resp = conn.getresponse()
                 data = resp.read()
+                self.local.status = resp.status
                 if resp.status >= 400:
                     try:
                         why = json.loads(data).get("error", "")
@@ -186,6 +206,7 @@ class Publisher:
                 return json.loads(data) if data else {}
             except (OSError, http.client.HTTPException) as e:
                 self.local.conn = None
+                self.local.status = None  # network failure, not a rejection
                 if attempt == 2:
                     self._log_error(f"{path}: {e!r}")
         return None
@@ -200,7 +221,46 @@ class Publisher:
         line = json.dumps(sample)
         self._write_atomic("telemetry.json", (line + "\n").encode())
         self._append("telemetry.jsonl", sample)
-        self._post("/api/ingest/telemetry", line.encode())
+        if self._post("/api/ingest/telemetry", line.encode()) is not None and self.outbox:
+            self.flush_outbox()  # the link is back: deliver what was stored
+
+    # -- person search: small alert first, crop after, store-and-forward on failure
+    def person(self, obs, crop_jpeg=None):
+        self._append("people.jsonl", obs)
+        item = {"obs": obs, "crop_b64": base64.b64encode(crop_jpeg).decode() if crop_jpeg else None}
+        if self.url and not self._send_person(item):
+            with self.outbox_lock:
+                self.outbox.append(item)
+                del self.outbox[:-OUTBOX_MAX]
+                self._save_outbox()
+            print(f"[!] Person observation stored for later ({len(self.outbox)} waiting)")
+
+    def _send_person(self, item):
+        """True when the backend has it (or rejected it for good); False to retry later."""
+        res = self._post("/api/ingest/person", json.dumps(item["obs"]).encode())
+        if res is None:
+            status = getattr(self.local, "status", None)
+            return status is not None and 400 <= status < 500 and status != 429
+        if item.get("crop_b64"):
+            self._post(f"/api/ingest/person/crop?obs_id={urllib.parse.quote(item['obs']['obs_id'])}",
+                       base64.b64decode(item["crop_b64"]), "image/jpeg")
+        if res.get("new_lead"):
+            print(f"[!!] New rescue lead: Target {res.get('lead_number')} ({res.get('status')})")
+        return True
+
+    def flush_outbox(self):
+        with self.outbox_lock:
+            sent = 0
+            while self.outbox and self._send_person(self.outbox[0]):
+                self.outbox.pop(0)
+                sent += 1
+            self._save_outbox()
+        if sent:
+            print(f"[+] Delivered {sent} stored person observations (the backend marks them delayed)")
+
+    def _save_outbox(self):
+        self._write_atomic("person_outbox.jsonl",
+                           "".join(json.dumps(i) + "\n" for i in self.outbox).encode())
 
     def frame(self, jpeg, captured_at, overlay):
         self._post("/api/ingest/frame", jpeg, "image/jpeg",
@@ -223,11 +283,54 @@ class Publisher:
 
 # ---------------------------------------------------------------- detection
 
+class PersonDetector:
+    """People in the camera frame: a COCO YOLO model's "person" class.
+
+    Visible-light model by default. For the thermal stream of an ANAFI USA /
+    Thermal, pass a thermal-trained model with --person-model and --sensor thermal.
+    """
+
+    def __init__(self, model_path, conf):
+        self.conf = conf
+        self.model = None
+        self.cls = None
+        try:
+            from ultralytics import YOLO
+            self.model = YOLO(model_path)
+            ids = [k for k, v in self.model.names.items() if v == "person"]
+            self.cls = ids[0] if ids else None
+            if self.cls is None:
+                print(f"[!] Person model {model_path} has no 'person' class; person search off")
+                self.model = None
+            else:
+                print(f"[*] Person model loaded: {model_path}")
+        except Exception as e:
+            print(f"[!] Person model unavailable ({e!r}); person search off")
+
+    def detect(self, bgr):
+        if self.model is None:
+            return []
+        result = self.model(bgr, imgsz=640, conf=self.conf, classes=[self.cls], verbose=False)[0]
+        return [{"bbox": [round(v, 4) for v in box], "score": round(float(score), 3)}
+                for box, score in zip(result.boxes.xyxyn.tolist(), result.boxes.conf.tolist())]
+
+
+def iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
 # ---------------------------------------------------------------- bridge
 
 class AnafiBridge:
-    def __init__(self, args, publisher, detector):
+    def __init__(self, args, publisher, detector, person_detector=None):
         self.args = args
+        self.person_detector = person_detector
+        self.person_tracks = []  # dict(id, bbox, hits, last_seen, last_post)
+        self.person_pass = 0
         self.controller_kind = getattr(args, "controller", "direct")
         self.ip = args.ip or ("192.168.53.1" if self.controller_kind == "skycontroller3" else DEFAULT_DRONE_IP)
         self.publisher = publisher
@@ -461,6 +564,13 @@ class AnafiBridge:
             time.sleep(max(0.0, period - (time.time() - started)))
 
     def _detect_step(self, img, captured):
+        if self.person_detector is not None:
+            self.person_pass += 1
+            if self.person_pass % PERSON_EVERY_N == 0:
+                try:
+                    self._person_step(img, captured)
+                except Exception as e:
+                    print(f"[!] Person detection error: {e!r}")
         hit = self.detector.detect(img)
         now = time.time()
         if hit is None:
@@ -501,6 +611,64 @@ class AnafiBridge:
             "details": details,
             "frame_jpeg_base64": base64.b64encode(buf.tobytes()).decode() if ok else None,
         })
+
+    # ---------- person search ----------
+
+    def _person_step(self, img, captured):
+        """Track people across frames; report each track with the pose it was seen from."""
+        boxes = self.person_detector.detect(img)
+        now = time.time()
+        self.person_tracks = [t for t in self.person_tracks if now - t["last_seen"] < PERSON_TRACK_END_S]
+        for det in boxes:
+            track = max(self.person_tracks, key=lambda t: iou(t["bbox"], det["bbox"]), default=None)
+            if track is None or iou(track["bbox"], det["bbox"]) < 0.3:
+                track = {"id": f"pt-{int(now)}-{secrets.token_hex(2)}", "hits": 0, "last_post": 0.0}
+                self.person_tracks.append(track)
+            track.update(bbox=det["bbox"], last_seen=now, score=det["score"])
+            track["hits"] += 1
+            self.overlay = [*[o for o in self.overlay if o.get("label") != "person"],
+                            {"source": "yolo", "label": "person", "confidence": det["score"], "bbox": det["bbox"]}]
+            self.overlay_time = now
+            if track["hits"] >= PERSON_MIN_HITS and now - track["last_post"] >= PERSON_POST_S:
+                if self._report_person(track, det, img, captured):
+                    track["last_post"] = now
+
+    def _report_person(self, track, det, img, captured):
+        t = self.telemetry or {}
+        extra = t.get("extra") or {}
+        pitch = extra.get("gimbal_pitch_deg")
+        heading = extra.get("heading_deg")
+        if t.get("latitude") is None or not t.get("altitude_m") or pitch is None or heading is None:
+            return False  # without a full pose the detection cannot be placed on the ground
+        h, w = img.shape[:2]
+        x1, y1, x2, y2 = det["bbox"]
+        pad_x, pad_y = (x2 - x1) * 0.3, (y2 - y1) * 0.3
+        crop = img[int(max(0, y1 - pad_y) * h):int(min(1, y2 + pad_y) * h),
+                   int(max(0, x1 - pad_x) * w):int(min(1, x2 + pad_x) * w)]
+        crop_jpeg = None
+        if crop.size:
+            scale = PERSON_CROP_PX / max(crop.shape[:2])
+            if scale < 1:
+                crop = cv2.resize(crop, (max(1, int(crop.shape[1] * scale)), max(1, int(crop.shape[0] * scale))))
+            ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            crop_jpeg = buf.tobytes() if ok else None
+        obs = {
+            "obs_id": f"{self.args.drone_id}-{int(captured * 1000)}-{secrets.token_hex(3)}",
+            "observed_at": utc_iso(captured),
+            "provenance": "live",
+            "sensor": self.args.sensor,
+            "label": "person",
+            "detector": os.path.basename(self.args.person_model)[:40],
+            "detector_score": det["score"],
+            "track_id": track["id"],
+            "bbox": det["bbox"],
+            "drone": {"latitude": t["latitude"], "longitude": t["longitude"], "altitude_m": t["altitude_m"],
+                      "heading_deg": heading, "gimbal_pitch_deg": pitch,
+                      "position_source": extra.get("position_source") or "gps"},
+            "camera": {"hfov_deg": self.args.hfov, "aspect": w / h},
+        }
+        self.publisher.person(obs, crop_jpeg)
+        return True
 
     # ---------- video publishing (own thread) ----------
 
@@ -899,6 +1067,12 @@ def argument_parser():
     parser.add_argument("--detect-smoke", action="store_true",
                         help="also alert on smoke-only detections (off by default: prone to false alarms)")
     parser.add_argument("--no-yolo", action="store_true", help="QR test marker only (skip the fire model)")
+    parser.add_argument("--person-model", default=os.environ.get("EMBERWATCH_PERSON_MODEL", DEFAULT_PERSON_MODEL),
+                        help="YOLO model with a 'person' class for the person search (default: COCO yolov8n)")
+    parser.add_argument("--person-conf", type=float, default=0.4, help="minimum person detector score (default 0.4)")
+    parser.add_argument("--no-person", action="store_true", help="turn the person search off")
+    parser.add_argument("--sensor", choices=("visible", "thermal"), default="visible",
+                        help="which camera stream this is (ANAFI USA/Thermal: thermal)")
     parser.add_argument("--hfov", type=float, default=69.0, help="camera horizontal field of view, degrees")
     parser.add_argument("--marker-size", type=float, default=0.18,
                         help="printed QR marker side in metres, used for range (default 0.18)")
@@ -928,7 +1102,8 @@ def main():
     print(f"[*] Writing telemetry, snapshots and detections to {os.path.abspath(args.out_dir)}")
     if args.backend:
         print(f"[*] Posting to backend at {args.backend}")
-    AnafiBridge(args, publisher, detector).run()
+    person_detector = None if args.no_person else PersonDetector(args.person_model, args.person_conf)
+    AnafiBridge(args, publisher, detector, person_detector).run()
 
 
 if __name__ == "__main__":
