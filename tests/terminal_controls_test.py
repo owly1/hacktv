@@ -41,7 +41,14 @@ class InputTests(unittest.TestCase):
                     with immediate_keys(stream):
                         self.assertFalse(termios.tcgetattr(slave)[3] & termios.ICANON)
                         raise RuntimeError("operator loop stopped")
-                self.assertEqual(termios.tcgetattr(slave), original)
+                restored = termios.tcgetattr(slave)
+                # Darwin sets PENDIN when restoring canonical mode so queued
+                # input can be retyped. This is kernel state, not an unrestored
+                # operator setting; still compare every other flag and byte.
+                if sys.platform == "darwin":
+                    restored[3] &= ~termios.PENDIN
+                    original[3] &= ~termios.PENDIN
+                self.assertEqual(restored, original)
         finally:
             os.close(master)
             os.close(slave)

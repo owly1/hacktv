@@ -10,7 +10,7 @@
   function syncMode() {
     const pill = $('mode-pill'), mapPill = $('map-pill');
     let mode = 'idle';
-    if (mapPill && mapPill.textContent.trim() === 'Demo') mode = 'demo';
+    if (mapPill && mapPill.textContent.trim() === 'Replay') mode = 'demo';
     else if (pill.classList.contains('alert-badge')) mode = 'alert';
     else if (pill.classList.contains('live-badge')) mode = 'live';
     document.body.dataset.mode = mode;

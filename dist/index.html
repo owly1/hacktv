@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="styles.css">
-  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script><script defer src="bosco.js"></script>
+  <script defer src="vendor/leaflet/leaflet.js"></script><script defer src="model.js"></script><script defer src="demo-cases.js"></script><script defer src="sim-camera.js"></script><script defer src="app.js"></script><script defer src="fullscreen.js"></script><script defer src="bosco.js"></script>
 </head>
 <body data-mode="idle">
 <svg class="sprite" aria-hidden="true"><defs>
@@ -51,7 +51,7 @@
   <a class="wordmark" href="#overview" title="Back to the overview">BOSCO<span aria-hidden="true">/</span><small>Incident workspace</small></a>
   <div class="top-right">
    <span class="pill demo" id="mode-pill" role="status"><span class="dot"></span> Connecting…</span>
-   <button class="mode-switch" id="demo-toggle" title="Load the historical fires from examples/ and the flight-pattern replay">Demo <svg><use href="#i-play"/></svg></button>
+   <button class="mode-switch" id="demo-toggle" title="Replay historical fires and the drone flight pattern through the full pipeline">Replay <svg><use href="#i-play"/></svg></button>
    <button class="service-strip" id="top-integrations" title="Open integrations" aria-label="Integrations: ANAFI, TigerData and Gemini status">
     <span class="svc" data-svc="parrot-status"><i></i>ANAFI</span>
     <span class="svc" data-svc="tiger-status"><i></i>TigerData</span>
@@ -77,9 +77,9 @@
     <div class="map-frame">
      <div class="map-viewport" id="map-viewport">
       <div id="map" role="application" aria-label="Map of the drone, the detected fire and its projected spread"></div>
-      <div class="map-top"><span class="map-location"><span class="dot"></span> <span id="map-location">UTSC</span></span><div class="map-top-right"><select id="demo-fire" class="demo-select" aria-label="Demo case" hidden></select><button class="map-tool" id="layers-open" aria-label="Map layers" aria-expanded="false" aria-controls="layer-menu"><svg><use href="#i-layers"/></svg></button></div></div>
-      <div class="layer-menu" id="layer-menu" hidden><strong>Map layers</strong><label><input type="checkbox" id="layer-spread" checked> Projected spread</label><label><input type="checkbox" id="layer-fire" checked> Fire position</label><label><input type="checkbox" id="layer-drone" checked> Drone + flight path</label><label><input type="checkbox" id="layer-wind" checked> Wind direction</label></div>
-      <div class="map-zoom"><button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button id="zoom-reset" aria-label="Centre on the drone and fire" title="Centre on the drone and fire"><svg><use href="#i-target"/></svg></button></div>
+      <div class="map-top"><span class="map-location"><span class="dot"></span> <span id="map-location">UTSC</span></span><div class="map-top-right"><select id="demo-fire" class="demo-select" aria-label="Incident replay" hidden></select><button class="map-tool" id="layers-open" aria-label="Map layers" aria-expanded="false" aria-controls="layer-menu"><svg><use href="#i-layers"/></svg></button></div></div>
+      <div class="layer-menu" id="layer-menu" hidden><strong>Map layers</strong><label><input type="checkbox" id="layer-spread" checked> Projected spread</label><label><input type="checkbox" id="layer-fire" checked> Fire position</label><label><input type="checkbox" id="layer-drone" checked> Drone + flight path</label><label><input type="checkbox" id="layer-wind" checked> Wind direction</label><label><input type="checkbox" id="layer-sat"> Satellite imagery</label></div>
+      <div class="map-zoom"><button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button id="zoom-reset" aria-label="Centre on the drone and fire" title="Centre on the drone and fire"><svg><use href="#i-target"/></svg></button><button id="zoom-drone" aria-label="Follow the drone" title="Follow the drone"><svg><use href="#i-drone"/></svg></button></div>
       <div class="map-bottom"><div class="legend"><span>Relative spread intensity</span><i></i><div><span>Low</span><span>High</span></div></div><div class="map-disclaimer" id="map-disclaimer">© OpenStreetMap contributors</div></div>
       <div id="map-empty" class="map-chip" hidden><svg><use href="#i-info"/></svg><span><strong id="map-empty-title"></strong> <span id="map-empty-text"></span></span></div>
      </div>
