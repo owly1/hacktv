@@ -4,6 +4,13 @@
   const RAD = Math.PI / 180, START = 8, SLOT = 48, DESCENT = 18, SEARCH = 8;
   const COLORS = ['#61d6cc', '#eebf66', '#a8a4ff', '#f18dac'];
   const PATROL_MINUTES = 20;
+  const APPROACH_RATE = 2;
+  /** Fast-forward only the approach, then spend remaining replay time at the normal rate. */
+  function advanceClock(scene, from, seconds) {
+    const remaining = scene?.manual && scene.detectedAt != null ? Math.max(0, scene.detectedAt + scene.transitDuration - from) : 0;
+    const accelerated = Math.min(seconds, remaining / APPROACH_RATE);
+    return from + accelerated * APPROACH_RATE + seconds - accelerated;
+  }
   /** Make a fictional forest case without changing the historical incident dataset. */
   function forestCase(template) {
     return {...template, id: 'forest-detection', name: 'Forest patrol · button detection', manualDetection: true,
@@ -253,5 +260,5 @@
     else if (kind === 'close' && ['found', 'not-a-person', 'duplicate', 'handed-off'].includes(outcome)) target.closed = {...record, outcome};
     else throw new Error('Choose a supported lead action');
   }
-  root.BoscoScout = {START, create, pose, visible, snapshot, action, boundary, clearance, outline, patrolPoint, exterior, PATROL_MINUTES, forestCase, fireTime, detect};
+  root.BoscoScout = {START, create, pose, visible, snapshot, action, boundary, clearance, outline, patrolPoint, exterior, PATROL_MINUTES, forestCase, fireTime, detect, advanceClock, APPROACH_RATE};
 })(globalThis);

@@ -47,11 +47,13 @@ restart the backend and use Ctrl+Shift+R to refresh browser assets.
    cumulative count of people it spotted. The large feed and detailed
    telemetry belong to the selected drone. Card counts overlap when drones
    see the same person; the shared counter counts each fictional person once.
-4. Leave **Follow searches** enabled. At 2×, ANAFI-01 starts descending after
-   about four seconds. Terrain perspective, camera pitch/bank and altitude
+4. Leave **Follow searches** enabled. At the default 8×, ANAFI-01 starts
+   descending after about one second. Terrain perspective, camera pitch/bank and altitude
    change together. It searches the perimeter, ascends, then resumes observing.
-   Other drones take turns. Choose 4× to see the first searches from all four
-   drones within about 50 seconds. Speed changes preserve the current clock.
+   Other drones take turns while all four keep orbiting the roughly predicted
+   +20-minute boundary. The first searches finish within about 25 seconds.
+   Choose 1×/2×/4× to slow down. Speed changes preserve the current clock;
+   colored trails show only where drones have flown, with no prewritten route.
 5. Watch cyan person boxes appear during low searches and **People found**
    increase. Each case randomly chooses 4–8 fixed fictional people, placed
    about 26–31 m outside the +20-minute border at their first scheduled search.
@@ -101,9 +103,12 @@ person lead until you press **Detected**, next to the dropdown.
 Press the button to reveal a fictional fire near ANAFI-01. All four drones move
 continuously from their current positions toward the incident, with a bounded
 12 m/s approach and 2 m/s maximum descent; there is no teleport or camera swap. Select different aircraft
-to compare their terrain, tree perspective, heading and distance. Choose 4× to
-watch the whole approach in roughly 70 seconds, followed by exterior searches
-and the existing people counter/review controls. The forest geometry, fire,
+to compare their terrain, tree perspective, heading and distance. The default
+8× patrol replay uses a clearly labeled 16× approach, taking about 17 seconds
+to converge before returning to 8× orbital patrol and exterior searches.
+Telemetry remains in simulation metres/seconds. Detection immediately opens
+the +30-minute spread prediction; arrival reframes the map around the fleet.
+The existing people counter/review controls remain available. The forest geometry, fire,
 people and flight are simulated. The background satellite imagery is geographic
 context, not recorded drone footage. Reselect this case to reset and rearm the
 button; switching to another case or live mode hides the trigger.

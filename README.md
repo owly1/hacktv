@@ -53,13 +53,17 @@ inside the current fire. “Follow
 searches” selects the active search drone automatically. The shared counter
 counts each fictional person once, retaining source drones and named review
 actions. Switching cases preserves each case's clock, leads and review state.
-Replay defaults to 2×; choose 4× to see every drone search in about 50 seconds.
+Replay defaults to 8× to make orbiting visible; all four initial searches take
+about 25 seconds. Choose 1×/2×/4× for slower presentations. Only flown trails
+are drawn; there is no prewritten patrol line.
 Demo observations never enter live storage. See the [fleet demo testing
 guide](docs/FLEET_DEMO.md) for launch instructions and a walkthrough.
 The same dropdown includes **Forest patrol · press Detected**: four drones
 hold widely separated positions at 150–210 m without a fire until the presenter
 presses **Detected**. A fire then
-appears near ANAFI-01 and the fleet flies toward it before perimeter searches.
+appears near ANAFI-01 with a +30-minute prediction. The fleet converges in about
+17 seconds at the default rate, then orbits the predicted +20-minute boundary
+throughout descents, searches and ascents. The map reframes on arrival.
 Reselecting the case resets the exercise. All camera footage is rendered replay.
 If another checkout already serves port 8787, the launcher reports that
 mismatch; use port 9000 or stop the old backend before relaunching.

@@ -176,7 +176,8 @@ test('forest camera suppresses fire and smoke inputs until the button and uses m
   assert.ok(frames[1].opts.fire.a>0);
   assert.equal(run('simCase(demoCase()).drone.detection.fire.latitude'),56.65);
   assert.equal(run('simCase(demoCase()).drone.detection.fire.longitude'),-111.50);
-  assert.equal(run('state.minute'),0);
+  assert.equal(run('state.minute'),30);
+  assert.ok(run('projection().area_ha') > run('simCase(demoCase()).estimated_area_ha'), 'the trigger displays a future prediction, not just the current footprint');
 });
 
 test('exterior fleet leads are not labeled at the fire merely because it could arrive soon', async () => {
@@ -270,4 +271,28 @@ test('camera-only person evidence stays unlocated in cards and the exported brie
   run("state.mode = 'live'; peopleState.snap = {leads:[],unlocated_sightings:[cameraNote]}");
   assert.match(run('peopleBrief()'), /Camera person sighting \(unlocated\)/);
   assert.match(run('peopleBrief()'), /no geographic pose available/);
+});
+
+
+test('forest arrival reframes once and scenario changes clear the accelerated clock', async () => {
+  const {run,context,element}=await dashboard();
+  let now=1000;
+  context.performance={now:()=>now};
+  run("selectDemo('forest-detection'); detectForestFire(); setDronePose=()=>{}; var fits=0; fitToFire=()=>fits++;");
+  assert.equal(run('state.demo.playbackRate'),8);
+  now+=5000;
+  assert.ok(Math.abs(run('demoT()')-80)<1e-8);
+  element('fleet-rate').value='4';
+  run("$('fleet-rate').onchange()");
+  assert.ok(Math.abs(run('demoT()')-80)<1e-8,'speed change does not jump');
+  now+=30000;
+  run('animateDemoCase(performance.now())');
+  assert.equal(run('fits'),1);
+  now+=1000;
+  run('animateDemoCase(performance.now())');
+  assert.equal(run('fits'),1);
+  assert.match(run('projection().basis'),/illustrative forest/);
+  run('selectDemo(state.demo.fires[0].id)');
+  assert.equal(run('state.demo.responseClock'),null);
+  assert.ok(run('demoT()')<.001);
 });

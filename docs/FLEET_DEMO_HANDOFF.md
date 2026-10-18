@@ -12,7 +12,7 @@ Changed files and behavior:
   camera-visible observations, shared identities and bounded evidence.
 - `dist/app.js`, `index.html`, `styles.css`, `fullscreen.js`: scrolling per-drone
   camera previews, selected full POV/telemetry, automatic search following,
-  1×/2×/4× common clock, map focus and bounded colored trails. Forecast controls
+  1×/2×/4×/8× common clock, map focus and bounded colored trails. Forecast controls
   and scenario camera/review state remain available; all AI panels are removed.
 - `dist/sim-camera.js`: bank-aware 3D projection and other aircraft drawn at
   their world positions/heights. Existing fire and person overlays remain.
@@ -27,7 +27,7 @@ simulated fleet and source-attributed leads; the dashboard sends no Gemini reque
 The prediction remains the existing illustrative model, shared across views.
 The older backend person-search fixtures and pad flight replay stay separate.
 
-Checks run (including skips): `npm test` (107 passed); Windows-compatible Python
+Checks run (including skips): `npm test` (116 passed); Windows-compatible Python
 fire-monitor (10 passed) and fire-marker checks (3 passed). New coverage exercises all nine historical
 geometries, 100 seeds/headings, all four detection contributors, exterior paths,
 vertical speed/continuity, coordinated coverage, shared identities, bounded
@@ -94,3 +94,10 @@ aircraft command paths are unchanged. Tests cover indefinite waiting, one-shot
 trigger, continuity, separation, altitude/speed bounds, eventual people sightings,
 camera fire suppression and case reset. Browser checks cover the real dropdown,
 button, high-altitude holds, fire reveal and rendered camera response.
+
+Forest response/orbit follow-up: 8× default patrol with 2× additional approach
+boost (16× shown), continuous time across the handoff and rate changes, about
+17 seconds to converge, immediate +30-minute fictional forecast, and one map
+refit on arrival. Exact +20-minute route geometry remains; no prewritten line
+is drawn. Added regression checks for stage timing, continuous per-phase motion,
+forecast activation, clock isolation and one-time arrival framing.

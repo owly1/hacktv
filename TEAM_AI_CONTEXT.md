@@ -161,3 +161,9 @@ Open issue / next step:
 
 Current assignment and temporary notes belong in the chat or a handoff; avoid
 copying dated test counts, active branch lists or machine logs into this file.
+
+Fleet pacing follow-up: default 8× (1/2/4/8 selectable), with a 16× manual
+forest approach completing in about 17 presentation seconds. Detection opens
+a +30-minute forecast; arrival refits the map. Drones continuously orbit the
+roughly +20-minute forecast contour even during searches; only actual flown
+trails are drawn, never a prewritten patrol ring. Live aircraft are unaffected.

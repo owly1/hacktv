@@ -165,3 +165,31 @@ test('long presentations bound evidence storage and retain original sighting and
   const counts = new Set(Array.from({length: 20}, (_, seed) => S.create({lat: 43, lon: -79, directionDeg: 60}, seed).targets.length));
   assert.ok(counts.size > 1);
 });
+
+
+test('forest approach reaches patrol within 17 presentation seconds and hands off without a clock jump', () => {
+  const scene = S.create(S.forestCase(FIRES[0]),42);
+  assert.equal(S.advanceClock(scene,100,8),108,'holding time advances normally');
+  S.detect(scene,100);
+  const arrival = 100 + scene.transitDuration, wallArrival = scene.transitDuration / 16;
+  assert.ok(wallArrival < 17);
+  assert.ok(S.advanceClock(scene,100,(wallArrival-.01)*8) < arrival);
+  assert.ok(Math.abs(S.advanceClock(scene,100,(wallArrival+.01)*8) - (arrival+.08)) < 1e-8);
+  const mid = S.advanceClock(scene,100,8*5);
+  assert.ok(Math.abs(S.advanceClock(scene,mid,8*20)-S.advanceClock(scene,100,8*25))<1e-8,'rebasing the clock preserves the handoff');
+  assert.equal(S.advanceClock(S.create(FIRES[0],42),100,8),108,'historical patrol never receives an approach boost');
+});
+
+test('all four aircraft keep traveling around the contour throughout descents, searches and ascents', () => {
+  const scene = S.create(FIRES[0],42);
+  for(const d of scene.drones) {
+    const phases = new Set();
+    for(let t=1;t<210;t++) {
+      const a=S.pose(scene,t,d.id), b=S.pose(scene,t+1,d.id);
+      if(a.phase!==b.phase) continue;
+      phases.add(a.phase);
+      assert.ok(Math.hypot(a.e-b.e,a.n-b.n)>.01,'aircraft keeps moving during each mission phase');
+    }
+    for(const phase of ['Observing','Descending','Searching perimeter','Ascending']) assert.ok(phases.has(phase));
+  }
+});
