@@ -24,6 +24,8 @@ const state = {
   // created_at of the analysis whose derived wind last set scenario.wind, the
   // analysis the user manually overrode, and the estimate shown in the UI
   windAuto: null, windManual: null, windDerived: null,
+  // Per-drone FC wind samples -> BoscoFleet.windConsensus (one drone today)
+  windSamples: {},
   video: {lastAt: 0, decoding: false, times: []},
   demo: {fires: [], selected: null, started: 0, videos: null},
   map: null, layers: {}, tiles: {}, basemap: 'osm', follow: false, droneMarker: null, tilesOk: false, tileErrors: 0, centredOnDrone: false,
@@ -241,7 +243,9 @@ function renderSpread() {
   renderDetectionDetails();
   $('time-label').textContent = `T + ${Math.round(t)} min`; $('timeline').value = t;
   document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - t) < .5));
-  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '');
+  const consensus = globalThis.BoscoFleet?.windConsensus(Object.values(state.windSamples));
+  const fleetTag = consensus && consensus.samples > 1 ? ` · fleet ×${consensus.samples} ±${consensus.sigma_dir_deg}°` : '';
+  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '') + fleetTag;
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
@@ -296,8 +300,19 @@ function fitToFire() {
 // ------------------------------------------------------------- telemetry
 
 /** Display measured drone values and mark missing or stale live telemetry clearly. */
+/* Collect each drone's FC wind vector (NED m/s) into the fleet sample set. */
+function updateWindSamples() {
+  const t = state.telemetry, extra = t?.extra || {};
+  const mps = Number(extra.fc_wind_speed_mps), deg = Number(extra.fc_wind_direction_deg);
+  if (!t || !Number.isFinite(mps)) return;
+  const id = t.drone_id || 'ANAFI-01', d = (Number.isFinite(deg) ? deg : 0)*Math.PI/180;
+  state.windSamples[id] = {drone_id: id, north: mps*Math.cos(d), east: mps*Math.sin(d),
+    captured_at: Date.parse(t.observed_at) || Date.now(), flight_state: t.state};
+}
+
 function renderTelemetry() {
   if (state.mode === 'demo') return;
+  updateWindSamples();
   const t = state.telemetry;
   if (!t) { for (const id of ['altitude', 'ground-speed', 'power']) $(id).innerHTML = `— <small>${id === 'power' ? '%' : id === 'altitude' ? 'm' : 'm/s'}</small>`; $('flight-state').textContent = '—'; return; }
   const age = Math.max(0, (Date.now() - Date.parse(t.observed_at)) / 1000), stale = age * 1000 > STALE_MS;
