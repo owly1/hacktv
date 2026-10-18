@@ -277,10 +277,13 @@ function renderSpread() {
     outline = ring(1);
     L.polygon(M.footprint(o, 0, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip('Fire now');
   }
-  for (const [scale, color, opacity] of SPREAD_BANDS) {
-    const poly = L.polygon(ring(scale), {stroke: scale === 1, color: '#ec9d33', weight: 1.2, dashArray: '5 4', fillColor: color, fillOpacity: opacity}).addTo(state.layers.spread);
-    if (scale === 1 && modelledFire()) poly.bindTooltip(`Projected head ≈${M.spreadRate(sc, fireDetails()).toFixed(0)} m/min toward ${M.compass(sc.direction)} — illustrative`);
-  }
+  // Contours morph between states: a fire's outline is (roughly) an ellipse,
+  // so vertex-lerping the 72-point rings glides the zone instead of jumping.
+  const targets = SPREAD_BANDS.map(([scale, color, opacity]) => ({
+    scale, color, opacity, pts: ring(scale),
+    tooltip: scale === 1 && modelledFire() ? `Projected head ≈${M.spreadRate(sc, fireDetails()).toFixed(0)} m/min toward ${M.compass(sc.direction)} — illustrative` : null,
+  }));
+  morphSpread(targets);
   /* Standoff orbit track: the drone's contour follows the fire's perimeter,
      sliding outward at the fire's own advance speed. Circumference scales
      with fire size — a soccer-ball fire means tight orbits, a block-wide
@@ -289,9 +292,11 @@ function renderSpread() {
   if (fleet && modelledFire()) {
     const margin = 40;
     const retreat = fleet.orbitSpeedMps(o, t, sc, fireDetails(), sc.direction, margin, M);
-    L.polyline(fleet.offsetContour(outline, margin), {color: '#2f7fd1', weight: 1.5, dashArray: '6 5', opacity: .85})
+    const orbitPts = fleet.offsetContour(outline, margin);
+    const poly = L.polyline(state.orbitCur || orbitPts, {color: '#2f7fd1', weight: 1.5, dashArray: '6 5', opacity: .85})
       .addTo(state.layers.orbit)
       .bindTooltip(`Drone orbit — ${margin} m standoff · retreats ≈${retreat ? retreat.toFixed(1) : '—'} m/s as the fire advances`);
+    morphTarget({poly, pts: orbitPts, key: 'orbitCur'});
   }
   const area = M.areaHa(outline);
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
@@ -1211,14 +1216,65 @@ async function connect() {
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
   every(2000, 'people', pollPeople); every(2000, 'analysis', pollAnalysis); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
+  // Explorer refresh: recompute the zone from the latest conditions every 30 s.
+  setInterval(renderSpread, 30000);
   try { const {plan} = await getJson('/api/plan/latest'); if (state.mode === 'live' && plan && (!activeFire() || plan.episode_id === activeFire().episode_id)) { state.plan = plan; renderPlan(); } } catch {}
   streamVideo();
 }
 
-let lastFrame = 0, lastSpread = 0;
+let lastFrame = 0, lastSpread = 0, lastWind = 0;
+/** Animate the band rings/orbit from their last rendered positions to `targets`.
+   Vertex counts are fixed (72), so index-wise lat/lon lerp glides the shape. */
+const raf = globalThis.requestAnimationFrame ?? (cb => setTimeout(() => cb(performance.now()), 16));
+const caf = globalThis.cancelAnimationFrame ?? clearTimeout;
+let morphAnims = [];
+function morphTarget(t) {
+  const prev = state[t.key] || t.pts;
+  const t0 = performance.now(), DUR = 1400;
+  caf(t.raf);
+  const step = now => {
+    const k = Math.min(1, (now - t0) / DUR), e = k * k * (3 - 2 * k);
+    t.poly.setLatLngs(t.pts.map((p, j) => { const f = prev[j] || p; return [f[0] + (p[0] - f[0]) * e, f[1] + (p[1] - f[1]) * e]; }));
+    const lls = t.poly.getLatLngs(), flat = Array.isArray(lls[0]) ? lls[0] : lls; // polygon nests rings; polyline is flat
+    state[t.key] = flat.map(ll => [ll.lat, ll.lng]);
+    if (k < 1) t.raf = raf(step);
+  };
+  t.raf = raf(step);
+}
+function morphSpread(targets) {
+  caf(state.spreadRaf);
+  morphAnims = targets.map((t, i) => {
+    const poly = L.polygon(state.spreadCur?.[i] || t.pts, {stroke: t.scale === 1, color: '#ec9d33', weight: 1.2, dashArray: '5 4', fillColor: t.color, fillOpacity: t.opacity}).addTo(state.layers.spread);
+    if (t.tooltip) poly.bindTooltip(t.tooltip);
+    return {poly, pts: t.pts};
+  });
+  const from = state.spreadCur || targets.map(t => t.pts);
+  const t0 = performance.now(), DUR = 1400;
+  const step = now => {
+    const k = Math.min(1, (now - t0) / DUR), e = k * k * (3 - 2 * k);
+    morphAnims.forEach((t, i) => {
+      const f = from[i] || t.pts;
+      t.poly.setLatLngs(t.pts.map((p, j) => { const g = f[j] || p; return [g[0] + (p[0] - g[0]) * e, g[1] + (p[1] - g[1]) * e]; }));
+    });
+    state.spreadCur = morphAnims.map(t => t.poly.getLatLngs()[0].map(ll => [ll.lat, ll.lng]));
+    if (k < 1) state.spreadRaf = raf(step);
+  };
+  state.spreadRaf = raf(step);
+}
+
 /** Advance active spread/replay animations and schedule the next browser frame. */
 function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
+  // 100 ms wind ticker: the readout counts smoothly toward the scenario wind
+  // (FC landings, conditions, sweeps) instead of stepping to each new value.
+  if (now - lastWind >= 100) {
+    lastWind = now;
+    if (state.windShown == null) state.windShown = state.scenario.wind;
+    state.windShown += (state.scenario.wind - state.windShown) * .2;
+    const el = $('wind-value');
+    if (Math.abs(state.windShown - state.scenario.wind) < .05) state.windShown = state.scenario.wind;
+    if (el && el.textContent !== String(Math.round(state.windShown))) el.textContent = Math.round(state.windShown);
+  }
   if (state.playing) { state.minute = (state.minute + delta * .002 * state.speed) % 60; if (now - lastSpread > 66) { lastSpread = now; renderSpread(); } }
   animateDemoFlight(now); animateDemoCase(now);
   tickPeopleDemo(now);

@@ -42,6 +42,33 @@ const HOST = process.env.HOST || '127.0.0.1';
  * impacts: null = not reliably reported; figures marked approximate in UI.
  * ------------------------------------------------------------------ */
 export const FIRES = [
+  /* TEMPORARY demo entries for the small-vs-big orbit preview — not committed. */
+  {
+    id: 'demo-utsc-small',
+    name: 'DEMO · small fire (UTSC)',
+    region: 'Simulated — Toronto, Canada',
+    startDate: '2026-10-17',
+    cause: 'Simulated demo ignition',
+    lat: 43.7866, lon: -79.1903,
+    areaHa: 0.5,
+    directionDeg: 90,
+    drivers: { tempC: 24, windKmh: 25, rhPct: 30, fuel: 'Grass / light brush' },
+    impacts: { structures: 0, evacuated: 0, deaths: 0, costCad: 0 },
+    notes: 'TEMPORARY demo case — small ignition for orbit-size contrast.',
+  },
+  {
+    id: 'demo-utsc-big',
+    name: 'DEMO · large fire (UTSC)',
+    region: 'Simulated — Toronto, Canada',
+    startDate: '2026-10-17',
+    cause: 'Simulated demo ignition',
+    lat: 43.7866, lon: -79.1903,
+    areaHa: 40,
+    directionDeg: 90,
+    drivers: { tempC: 30, windKmh: 40, rhPct: 15, fuel: 'Cured brush / ravine fuel' },
+    impacts: { structures: 0, evacuated: 0, deaths: 0, costCad: 0 },
+    notes: 'TEMPORARY demo case — large ignition for orbit-size contrast.',
+  },
   {
     id: 'horse-river-2016',
     name: 'Horse River (Fort McMurray)',
