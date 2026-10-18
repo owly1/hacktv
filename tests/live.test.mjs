@@ -5,10 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp, MemoryStorage, makeGeminiTransport, buildAnalysisParts } from '../backend/server.mjs';
+import { FIRE_MARKER_DETAILS, FIRE_MARKER_PAYLOAD } from '../backend/validation.mjs';
 
 const INGEST = 'ingest-token-aaa';
 const DASH = 'dashboard-token-bbb';
@@ -68,7 +69,7 @@ const detection = (over = {}) => ({
   bbox: [0.4, 0.4, 0.6, 0.6],
   fire: { latitude: 43.7866, longitude: -79.1902, distance_m: 1.7, bearing_deg: 94, position_source: 'home+odometry+marker-size' },
   drone: { latitude: 43.7866, longitude: -79.1903, altitude_m: 1 },
-  details: { name: 'Alpha', area_ha: 120, spread_m_per_min: 35, wind_kmh: 30, wind_dir_deg: 60 },
+  details: { ...FIRE_MARKER_DETAILS },
   frame_jpeg_base64: JPEG.toString('base64'),
   ...over,
 });
@@ -312,10 +313,45 @@ test('malformed detections are rejected', async () => {
       detection({ confidence: 1.5 }),
       detection({ detected_at: new Date(Date.now() - 120_000).toISOString() }),
       detection({ frame_jpeg_base64: Buffer.from('png?').toString('base64') }),
+      // Only the FireSimulationDemo marker counts as a qr-test fire.
+      detection({ details: { ...FIRE_MARKER_DETAILS, name: 'Ravine' } }),
+      detection({ details: { ...FIRE_MARKER_DETAILS, area_ha: 300 } }),
+      detection({ details: { ...FIRE_MARKER_DETAILS, extra: 1 } }),
+      detection({ details: null }),
     ]) {
       const res = await t.req('POST', '/api/ingest/detection', { token: INGEST, body });
       assert.equal(res.status, 400, JSON.stringify(await res.json()));
     }
+  } finally { await t.close(); }
+});
+
+test('bridge, marker generator and backend agree on the single fire QR payload', async () => {
+  assert.equal(FIRE_MARKER_PAYLOAD, 'EW1:Alpha|120|X|35|M|30|60|31|18|18');
+  for (const file of ['bridge/fire_detection.py', 'bridge/make_test_marker.py']) {
+    const src = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    assert.ok(src.includes(`FIRE_MARKER_PAYLOAD = "${FIRE_MARKER_PAYLOAD}"`), file);
+  }
+  const selected = await readFile(new URL('../bridge/orbit-marker.txt', import.meta.url), 'utf8');
+  assert.equal(selected.trim(), FIRE_MARKER_PAYLOAD);
+});
+
+test('the fire marker may carry the scenario-site notes from fire_monitor', async () => {
+  const t = await startApp({ noGemini: true });
+  try {
+    const res = await t.req('POST', '/api/ingest/detection', {
+      token: INGEST, body: detection({ details: { ...FIRE_MARKER_DETAILS, position_simulated: true, location_note: 'Configured scenario site' } }),
+    });
+    assert.ok(res.status < 300, JSON.stringify(await res.json()));
+  } finally { await t.close(); }
+});
+
+test('yolo detections are not held to the fire marker details', async () => {
+  const t = await startApp({ noGemini: true });
+  try {
+    const res = await t.req('POST', '/api/ingest/detection', {
+      token: INGEST, body: detection({ source: 'yolo', episode_id: 'ep-yolo-1', confidence: 0.7, details: { area_ha: 0.01 } }),
+    });
+    assert.ok(res.status < 300, JSON.stringify(await res.json()));
   } finally { await t.close(); }
 });
 

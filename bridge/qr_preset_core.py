@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import math
 import time
 
+from fire_detection import FIRE_MARKER_PAYLOAD
 from qr_orbit_core import polygon, vehicle_reason
 
 
@@ -15,8 +16,8 @@ class Recognition:
 class RecognitionTrigger:
     """An explicit arm and five fresh QR frames trigger one session, once."""
     def __init__(self, expected, arm_seconds=20):
-        if not expected.startswith("EW1:") or len(expected) > 512:
-            raise ValueError("Select an Emberwatch EW1 marker")
+        if expected != FIRE_MARKER_PAYLOAD:
+            raise ValueError(f"Only the fire marker {FIRE_MARKER_PAYLOAD} can be selected")
         self.expected, self.arm_seconds = expected, arm_seconds
         self.state, self.reason = "disarmed", "operator has not armed the preset"
         self.arm_at = self.first = self.last_at = None

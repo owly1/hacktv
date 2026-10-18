@@ -214,6 +214,17 @@ export function validateSnapshotEnvelope(body, nowMs) {
 
 export const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const DETECTION_SOURCES = new Set(['yolo', 'qr-test']);
+// The one QR code the drone treats as a fire (the FireSimulationDemo printout).
+// The bridge accepts only FIRE_MARKER_PAYLOAD; a 'qr-test' sighting must carry
+// exactly the fire it decodes to. Must match bridge/fire_detection.py.
+export const FIRE_MARKER_PAYLOAD = 'EW1:Alpha|120|X|35|M|30|60|31|18|18';
+export const FIRE_MARKER_DETAILS = Object.freeze({
+  name: 'Alpha', area_ha: 120, intensity: 'extreme', spread_m_per_min: 35,
+  fuel: 'dry mixed forest and grass', wind_kmh: 30, wind_dir_deg: 60, temp_c: 31, rh_pct: 18,
+  marker_size_m: 0.18, test_marker: true,
+});
+// Notes bridge/fire_monitor.py adds when it pins the marker to a scenario site.
+const FIRE_MARKER_ANNOTATIONS = new Set(['position_simulated', 'location_note']);
 const FLIGHT_PHASES = new Set([
   'preflight', 'takeoff', 'climb', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
 ]);
@@ -274,6 +285,14 @@ export function validateDetection(body, nowMs) {
     if (body[key] !== undefined && body[key] !== null
         && (typeof body[key] !== 'object' || Array.isArray(body[key]))) {
       throw new ApiError(400, `${key} must be a JSON object when present`);
+    }
+  }
+  if (body.source === 'qr-test') {
+    const details = body.details ?? {};
+    const fireKeys = Object.keys(FIRE_MARKER_DETAILS);
+    if (!fireKeys.every((k) => details[k] === FIRE_MARKER_DETAILS[k])
+        || !Object.keys(details).every((k) => k in FIRE_MARKER_DETAILS || FIRE_MARKER_ANNOTATIONS.has(k))) {
+      throw new ApiError(400, `qr-test details must match the fire marker ${FIRE_MARKER_PAYLOAD}`);
     }
   }
   let jpeg = null;

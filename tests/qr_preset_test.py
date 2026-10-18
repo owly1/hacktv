@@ -26,6 +26,11 @@ class RecognitionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             trigger.arm(11)
 
+    def test_only_the_fire_marker_can_be_selected(self):
+        for other in ("EW1:Ravine|300|X|35|M|45|90|31|18|18", TEXT + " ", "https://example.com"):
+            with self.assertRaises(ValueError):
+                RecognitionTrigger(other)
+
     def test_wrong_stale_future_and_prearm_frames_do_not_count(self):
         for observation in (None, Recognition(11, "EW1:other"), Recognition(9, TEXT),
                             Recognition(12, TEXT), Recognition(10, TEXT)):

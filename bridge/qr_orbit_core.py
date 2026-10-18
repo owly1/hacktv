@@ -3,6 +3,8 @@ from dataclasses import dataclass
 import math
 import time
 
+from fire_detection import FIRE_MARKER_PAYLOAD
+
 
 @dataclass(frozen=True)
 class Limits:
@@ -85,8 +87,8 @@ class Trigger:
     consumes this instance; restart and explicitly arm again for another attempt.
     """
     def __init__(self, expected, limits):
-        if not expected.startswith("EW1:") or len(expected) > 512:
-            raise ValueError("Select an Emberwatch EW1 marker payload")
+        if expected != FIRE_MARKER_PAYLOAD:
+            raise ValueError(f"Only the fire marker {FIRE_MARKER_PAYLOAD} can be selected")
         self.expected, self.limits = expected, limits
         self.state = "disarmed"
         self.arm_at = self.last_at = None

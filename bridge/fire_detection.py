@@ -1,10 +1,15 @@
-"""Shared RGB fire/smoke and EW1 QR detector; no aircraft SDK or controls."""
+"""Shared RGB fire/smoke and EW1 fire-marker QR detector; no aircraft SDK or controls."""
 import math
 import os
 import cv2
 import numpy as np
 
 QR_PREFIX = "EW1:"
+# The one QR code the drone treats as a fire: the printed FireSimulationDemo
+# marker (dist/test-marker.html, bridge/orbit-marker.txt). Any other code,
+# including other EW1: payloads, is ignored. Must match
+# bridge/make_test_marker.py and backend/validation.mjs.
+FIRE_MARKER_PAYLOAD = "EW1:Alpha|120|X|35|M|30|60|31|18|18"
 
 # YOLO false-alarm filters
 DEFAULT_CONF = 0.65           # minimum YOLO score
@@ -24,12 +29,14 @@ FUEL_CODES = {"F": "dry conifer forest", "G": "cured grass", "M": "dry mixed for
 
 
 def parse_marker(text):
-    """Decode an Emberwatch QR test marker into fire details, or None.
+    """Decode the Emberwatch fire marker into fire details, or None.
 
+    Only FIRE_MARKER_PAYLOAD is accepted, byte for byte; every other QR code
+    (other EW1: payloads included) returns None and is never reported as a fire.
     Payload (kept short so the code has few, large modules and reads from ~2 m):
     EW1:name|area_ha|intensity|spread_m_per_min|fuel|wind_kmh|toward_deg|temp_c|rh_pct|side_cm
     """
-    if not text or not text.startswith(QR_PREFIX):
+    if text != FIRE_MARKER_PAYLOAD:
         return None
     fields = text[len(QR_PREFIX):].split("|")
     if len(fields) != 10:

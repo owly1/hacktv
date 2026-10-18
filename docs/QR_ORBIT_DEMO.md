@@ -42,8 +42,10 @@ dashboard at <http://127.0.0.1:8787/> and the receiver unchanged.
    0.8 seconds start the animated **simulated** orbit on the companion page.
 4. Reset permits another software rehearsal. No motor movement occurs.
 
-The selected code must match `bridge/orbit-marker.txt` exactly. A different
-QR code cannot trigger this session. Expiry consumes the current arming.
+The selected code must match `bridge/orbit-marker.txt` exactly, and that file
+must hold the FireSimulationDemo fire marker (`FIRE_MARKER_PAYLOAD` in
+`bridge/fire_detection.py`); any other selection is refused at startup. A
+different QR code cannot trigger this session. Expiry consumes the current arming.
 Stale video does not count. Rehearsal permits up to two seconds of camera age;
 the flight experiment uses stricter freshness limits.
 

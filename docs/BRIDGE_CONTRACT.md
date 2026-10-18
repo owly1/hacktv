@@ -74,7 +74,24 @@ the box width at that range.
 `EW1:name|area_ha|intensity|spread_m_per_min|fuel|wind_kmh|toward_deg|temp_c|rh_pct|side_cm`
 — intensity `L/M/H/X`, fuel `F` conifer forest, `G` grass, `M` mixed, `S`
 brush. Kept short so the code has few, large modules (QR version 3).
-Generate with `python3 bridge/make_test_marker.py [--name … --area … --wind … --dir …]`.
+
+**Scope: exactly one QR code is a fire.** The drone reacts only to the
+FireSimulationDemo printout, whose payload is
+
+`EW1:Alpha|120|X|35|M|30|60|31|18|18`
+
+(Alpha, 120 ha, extreme, 35 m/min, dry mixed forest and grass, wind 30 km/h
+toward 60°, 31 °C, 18 % RH, 18 cm side). The bridge compares the decoded text
+byte for byte with `FIRE_MARKER_PAYLOAD` (`bridge/fire_detection.py`); any other QR code, including other
+`EW1:` payloads, is ignored and never posted. The backend rejects (400) a
+`qr-test` detection whose `details` are not exactly that fire (only the
+`position_simulated` / `location_note` scenario notes may be added). The QR
+orbit, preset and hover flows refuse to arm for any other selected marker. The
+payload is pinned in `bridge/fire_detection.py` (the bridge, observer, monitor
+and orbit/preset cores all use it), `bridge/make_test_marker.py`,
+`bridge/orbit-marker.txt` and `backend/validation.mjs`, and a test keeps them in
+step; changing the fire means changing all of them and reprinting. Regenerate
+the printout with `python3 bridge/make_test_marker.py` (no options).
 
 ## Flight events — `POST /api/ingest/flight`
 

@@ -41,6 +41,11 @@ class TriggerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             t.arm(11)
 
+    def test_only_the_fire_marker_can_be_selected(self):
+        for other in ("EW1:Ravine|300|X|35|M|45|90|31|18|18", TEXT + " ", "https://example.com"):
+            with self.assertRaises(ValueError):
+                Trigger(other, LIMITS)
+
     def test_cached_frames_cannot_accumulate_hits(self):
         t = Trigger(TEXT, LIMITS)
         t.arm(10)
