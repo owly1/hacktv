@@ -1,0 +1,94 @@
+/* BOSCO Home page (index.html). Values follow bosco-handoff/reference/home.dc.html. */
+.home {
+  position: relative; min-height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--bg); color: var(--text);
+}
+
+/* Faint contour lines that slowly breathe. */
+.home-contours { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.home-contours g { fill: none; stroke: var(--text); stroke-opacity: 0.06; stroke-width: 1.2; }
+@keyframes bx-contour { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.04) rotate(-1deg); } }
+.home-contours path { transform-origin: 1000px 470px; animation: bx-contour 9s ease-in-out infinite; }
+
+.home-body { position: relative; flex-grow: 1; display: flex; flex-direction: column; }
+.home-wrap { width: 100%; max-width: 1280px; margin: 0 auto; padding-left: 32px; padding-right: 32px; }
+
+.home-header {
+  padding-top: 28px; padding-bottom: 28px;
+  display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between;
+}
+.home-header .brand { font-size: 20px; letter-spacing: 0.02em; }
+.status-light {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label);
+}
+.status-light::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--drone-blue); }
+
+.home-main { padding-top: 72px; padding-bottom: 80px; flex-grow: 1; display: flex; flex-direction: column; justify-content: center; }
+.hero-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 40px; }
+.hero-title {
+  margin: 0; font-size: clamp(76px, 12vw, 184px); line-height: 0.86; letter-spacing: -0.01em; color: var(--text);
+}
+
+/* Drone chip: borderless clip that fades out at its edges. */
+.drone-chip {
+  all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px;
+  border-radius: 4px;
+}
+.drone-chip:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 6px; }
+.drone-chip-media { position: relative; display: block; width: 240px; height: 135px; overflow: hidden; }
+@keyframes bx-hover { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.drone-chip video {
+  display: block; width: 100%; height: 100%; object-fit: cover;
+  animation: bx-hover 3.2s ease-in-out infinite;
+  -webkit-mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 55%, transparent 100%);
+}
+.bracket { position: absolute; width: 12px; height: 12px; border: 0 solid var(--text); }
+.bracket.tl { left: 8px; top: 8px; border-left-width: 1.5px; border-top-width: 1.5px; }
+.bracket.tr { right: 8px; top: 8px; border-right-width: 1.5px; border-top-width: 1.5px; }
+.bracket.bl { left: 8px; bottom: 8px; border-left-width: 1.5px; border-bottom-width: 1.5px; }
+.bracket.br { right: 8px; bottom: 8px; border-right-width: 1.5px; border-bottom-width: 1.5px; }
+.drone-chip-id {
+  position: absolute; right: 26px; top: 10px; display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; color: var(--text);
+}
+.drone-chip-id::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--drone-blue); }
+.drone-chip-cta {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label);
+}
+.drone-chip:hover .drone-chip-cta { color: var(--text); }
+
+.acronym { margin: 48px 0 0; font-size: clamp(20px, 2.2vw, 30px); font-weight: 600; line-height: 1.3; color: var(--text); }
+.acronym b { font-weight: inherit; color: var(--accent); }
+.home-rule { height: 1px; background: var(--rule); margin: 56px 0; }
+.cta-row { display: flex; flex-wrap: wrap; gap: 32px; align-items: center; justify-content: space-between; }
+.cta-row p { margin: 0; flex: 1 1 420px; max-width: 560px; font-size: 20px; line-height: 1.55; color: var(--muted); }
+
+.btn-start {
+  display: inline-flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 30px;
+  border-radius: var(--radius-pill); background: var(--accent); color: var(--on-accent);
+  font-weight: 700; font-size: 18px; text-decoration: none;
+  transition: transform .15s ease, filter .15s ease;
+}
+.btn-start:hover { color: var(--on-accent); filter: brightness(1.08); transform: translateX(2px); }
+.btn-start svg { width: 18px; height: 18px; }
+.btn-start.is-small { min-height: 48px; padding: 0 24px; font-size: 16px; gap: 10px; }
+.btn-start.is-small svg { width: 16px; height: 16px; }
+
+.home-footer {
+  padding-bottom: 28px; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+}
+
+@media (max-width: 560px) {
+  .home-wrap { padding-left: 20px; padding-right: 20px; }
+  .home-main { padding-top: 40px; padding-bottom: 56px; }
+  .cta-row p { flex-basis: 100%; font-size: 18px; }
+  .home-rule { margin: 40px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-contours path, .drone-chip video { animation: none; }
+}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#08080A">
+<meta name="description" content="BOSCO: Bushfire Observation, Simulation and Coordination Operations. Drone observation, fire-spread simulation and human-reviewed briefings in one wildfire workspace.">
+<title>BOSCO</title>
+<link rel="icon" href="assets/bosco-mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="mark.css">
+<link rel="stylesheet" href="home.css">
+<script defer src="mark.js"></script>
+<script defer src="home.js"></script>
+</head>
+<body>
+<div class="home" id="home">
+  <svg class="home-contours" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <g>
+      <path d="M560 900 C 470 600, 600 220, 900 90 S 1400 40, 1400 40"/>
+      <path style="animation-delay:-2s" d="M660 900 C 590 640, 700 300, 980 180 S 1340 140, 1360 380 S 1180 760, 1000 900"/>
+      <path style="animation-delay:-4s" d="M760 860 C 720 640, 800 380, 1050 290 S 1300 300, 1270 470 S 1080 700, 960 700"/>
+      <path style="animation-delay:-6s" d="M850 760 C 840 600, 900 440, 1080 400 S 1230 430, 1190 520 S 1060 620, 990 600"/>
+    </g>
+  </svg>
+
+  <div class="home-body" id="home-body">
+    <header class="home-header home-wrap">
+      <span class="brand t-wide">BOSCO</span>
+      <span class="status-light">Training exercise</span>
+    </header>
+
+    <main class="home-main home-wrap">
+      <div class="hero-row">
+        <h1 class="hero-title t-wide" data-bosco-wordmark>BOSCO</h1>
+
+        <button type="button" class="drone-chip" id="open-teardown" aria-label="Open the BOSCO drone teardown" aria-haspopup="dialog">
+          <span class="drone-chip-media">
+            <video id="drone-video" src="assets/drone-hover.mp4" poster="assets/drone-hover-poster.jpg" muted loop playsinline autoplay preload="auto" aria-hidden="true"></video>
+            <span class="bracket tl" aria-hidden="true"></span><span class="bracket tr" aria-hidden="true"></span>
+            <span class="bracket bl" aria-hidden="true"></span><span class="bracket br" aria-hidden="true"></span>
+            <span class="drone-chip-id">BSC-01</span>
+          </span>
+          <span class="drone-chip-cta">Take it apart
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+          </span>
+        </button>
+      </div>
+
+      <p class="acronym"><b>B</b>ushfire <b>O</b>bservation, <b>S</b>imulation and <b>C</b>oordination <b>O</b>perations</p>
+
+      <div class="home-rule" aria-hidden="true"></div>
+
+      <div class="cta-row">
+        <p>Drone observation, fire-spread simulation and human-reviewed briefings in one wildfire workspace.</p>
+        <a class="btn-start" href="dashboard.html" data-transition="to-dashboard">Get started
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+    </main>
+
+    <footer class="home-footer home-wrap">
+      <span>Observe · Simulate · Coordinate</span>
+      <span>A person decides</span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

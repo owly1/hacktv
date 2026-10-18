@@ -35,6 +35,9 @@
   --selected-soft: rgba(236, 235, 231, 0.08);
   --overlay: rgba(17, 17, 20, 0.88);   /* chips floating on the map */
   --overlay-strong: rgba(17, 17, 20, 0.92);
+  --rule: rgba(236, 235, 231, 0.12);   /* Home divider, teardown callout ring */
+  --ring-soft: rgba(236, 235, 231, 0.2);
+  --callout-bg: rgba(17, 17, 20, 0.86);
   --drone-blue: #4C7DFF;         /* logo orbit dot and Home status lights only */
 
   /* Fleet greys: drones are told apart by lightness, never by hue. */
