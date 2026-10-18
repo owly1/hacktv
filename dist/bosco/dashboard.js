@@ -566,6 +566,20 @@
     download(`bosco-search-log-${F.incident.id}.txt`, rows.map(e => `${e.time}\t${e.kind}\t${e.text}`).join('\n') + '\n');
   }
 
+  // ---------------------------------------------------------------- theme
+
+  const THEME_KEY = 'bx-theme';
+  /** Switch the Dashboard between dark and light tokens and remember the choice (best effort). */
+  function setTheme(theme) {
+    const root = document.documentElement;
+    if (theme === 'light') root.dataset.theme = 'light'; else delete root.dataset.theme;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = getComputedStyle(root).getPropertyValue('--bg').trim();
+    const btn = $('theme-toggle');
+    btn.setAttribute('aria-pressed', String(theme === 'light'));
+    try { localStorage.setItem(THEME_KEY, theme); } catch (err) { /* storage blocked: the theme still applies for this visit */ }
+  }
+
   // ---------------------------------------------------------------- rail
 
   /** Mark the rail link for the section currently in view. */
@@ -595,6 +609,8 @@
   renderAll();
   const sectionObserver = watchSections();
 
+  $('theme-toggle').setAttribute('aria-pressed', String(document.documentElement.dataset.theme === 'light'));
+  $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'));
   $('live-toggle').addEventListener('click', () => set({ mode: state.mode === 'live' ? 'replay' : 'live' }));
   $('cond-toggle').addEventListener('click', () => set({ showCond: !state.showCond }));
   $('minute').addEventListener('input', e => set({ minute: Number(e.target.value) }));

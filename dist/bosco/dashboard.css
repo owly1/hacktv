@@ -64,6 +64,12 @@
 }
 .rail-badge[hidden] { display: none; }
 
+/* Theme toggle: shows a sun in dark mode (switch to light) and a moon in light mode. */
+.theme-btn { border-radius: 50%; }
+.theme-btn .i-moon { display: none; }
+:root[data-theme="light"] .theme-btn .i-sun { display: none; }
+:root[data-theme="light"] .theme-btn .i-moon { display: block; }
+
 /* ---------- content ---------- */
 .dash-content { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; }
 
@@ -243,7 +249,7 @@
 .speed-btn { min-width: 48px; height: 40px; border-radius: 10px; font: 500 12px var(--font-mono); }
 
 /* Fleet POV */
-.fleet-panel { flex: 1 1 400px; min-width: 0; background: var(--surface-sunk); display: flex; flex-direction: column; }
+.fleet-panel { flex: 1 1 420px; min-width: 0; background: var(--surface-sunk); display: flex; flex-direction: column; }
 .fleet-panel .panel-head { padding: 16px; flex-wrap: nowrap; }
 .fleet-panel .panel-head h2 { display: block; font-size: 19px; flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fleet-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 0 16px 12px; }
