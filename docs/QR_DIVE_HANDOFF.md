@@ -1,7 +1,7 @@
 Task / owner: Combined QR-circle and D-triggered measured person search / Codex
 
-Branch / commit: `codex/qr-dive-combined`, uncommitted work on fetched
-`origin/main` a8b9737031fa6b62687b0e979941e1eb8c77f08e. Earlier dirty
+Branch / commit: `codex/qr-dive-combined`, integrated with fetched
+`origin/main` 22dd9a4, retaining its outdoor contour and wind updates. Earlier dirty
 `codex/operator-stop-flight` and `dive-surveilance` worktrees were preserved.
 
 Changed files and behavior: new combined Python receiver queues D onto the
@@ -19,9 +19,11 @@ required alongside the D lease. New flight phases: dive, surveil, hovering.
 Until-stop requires normal battery reserve. Height remains above takeoff.
 Search observations are camera counts, not unique people or geographic fixes.
 
-Checks run: 223 passing Node tests including the isolated HTTP workflow; 17 fire tracking tests,
-10 dive/controller/SDK-adapter fake tests, 5 combined orchestration tests.
-Existing Olympe SDK suite: 128 skipped because Olympe is unavailable on Windows.
+Checks run after latest-main integration: 231 passing Node tests (serial), plus
+2 launcher compatibility tests; the new launcher/runtime/HTTP subset passed 6/6.
+57 Python tests passed: 17 fire tracking, 17 fire monitor, 10 dive/controller/
+SDK-adapter fakes, 5 combined orchestration and 8 wind measurement tests.
+Existing Olympe SDK suite: 133 skipped because Olympe is unavailable on Windows.
 PowerShell parsing, Bash syntax and whitespace checks. Actual Edge rendering:
 offline D disabled, input/keyboard guards, zero browser errors. Actual model
 worker inference on QR-only JPEG: zero detections, about 5.3 seconds including
