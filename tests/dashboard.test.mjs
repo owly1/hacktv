@@ -296,3 +296,26 @@ test('forest arrival reframes once and scenario changes clear the accelerated cl
   assert.equal(run('state.demo.responseClock'),null);
   assert.ok(run('demoT()')<.001);
 });
+
+test('located detections appear as person markers at their coordinates on the fire explorer', async () => {
+  const {run,context}=await dashboard();
+  const markers=[], marker=context.L.marker;
+  context.L.marker=(point,options)=>{markers.push({point,options}); return marker();};
+  run(`selectDemo(state.demo.fires[0].id); renderCoverage=()=>{};
+    var search=state.demo.scout; var empty=BoscoScout.snapshot(search,0);`);
+  markers.length=0;
+  run('renderPeopleMap(empty)');
+  assert.equal(markers.length,0,'no people are mapped before detection');
+  run('var detected=BoscoScout.snapshot(search,210); renderPeopleMap(detected)');
+  assert.equal(markers.length,run('detected.leads.length'));
+  assert.ok(markers.length>0);
+  markers.forEach(({point,options},i)=>{
+    assert.equal(point[0],run(`detected.leads[${i}].latitude`));
+    assert.equal(point[1],run(`detected.leads[${i}].longitude`));
+    assert.match(options.icon.html,/#i-person/);
+    assert.equal(options.title,`Person ${run(`detected.leads[${i}].number`)}`);
+  });
+  markers.length=0;
+  run("state.mode='live'; renderPeopleMap({leads:[],unlocated_sightings:[{track_id:'unlocated'}],coverage:{cells:[]}})");
+  assert.equal(markers.length,0,'camera-only sightings do not receive invented locations');
+});

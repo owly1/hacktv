@@ -523,7 +523,8 @@ body.panel-fullscreen{overflow:hidden}
 #mission-log .link-down{color:var(--ember-deep);background:var(--ember-pale);border-radius:8px;padding:5px 8px}
 .muted-text{color:var(--muted)}
 .lead-pin-wrap{background:none;border:0}
-.lead-pin{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font:700 13px var(--display);color:var(--white);background:var(--ink-2);border:2px solid var(--white);box-shadow:0 2px 8px #14130F55}
+.lead-pin{width:42px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center;gap:2px;font:700 13px var(--display);color:var(--white);background:var(--ink-2);border:2px solid var(--white);box-shadow:0 2px 8px #14130F55}
+.lead-pin svg{width:16px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .lead-pin.st-possible{background:var(--ember);animation:lead-pulse 2s ease-out infinite}
 .lead-pin.st-unseen,.lead-pin.st-closed{background:var(--muted)}
 .lead-pin.is-ack{border-color:var(--teal);animation:none}
