@@ -59,7 +59,13 @@
   function arrive({ content = [] } = {}) {
     const preCover = () => document.documentElement.classList.remove('bx-pre-cover');
     if (reducedMotion()) { preCover(); return; }
-    for (const el of [].concat(content)) if (el) el.classList.add('bx-rise');
+    for (const el of [].concat(content)) {
+      if (!el) continue;
+      el.classList.add('bx-rise');
+      // A finished transform animation still traps position:fixed children
+      // (full-screen panels) inside the content, so drop it once it is done.
+      el.addEventListener('animationend', e => { if (e.target === el) el.classList.remove('bx-rise'); }, { once: true });
+    }
     const cover = makeCover('out');
     document.body.appendChild(cover);
     preCover(); // the real cover now sits where the pre-paint placeholder was

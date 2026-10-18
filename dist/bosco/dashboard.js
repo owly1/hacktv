@@ -80,7 +80,7 @@
     const p = F.leadProjection;
     const eta = Math.max(p.minEtaMin, Math.round(l.fireEtaMin - state.minute * p.etaMinPerMinute));
     const dist = Math.max(p.minDistanceM, Math.round(l.fireDistanceM - state.minute * p.distanceMPerMinute));
-    return `Fire in ~${eta} min · ${dist} m away`;
+    return `Fire in ~${eta} min · ${dist} m`;
   }
 
   /** Trigger a browser download of a text file built on this page. */
@@ -101,20 +101,13 @@
     $('incident-name').textContent = inc.name;
     $('fire-tag').hidden = !inc.fireDetected;
     $('incident-sub').textContent = inc.subtitle;
-    $('banner-label').textContent = inc.bannerLabel;
-    $('map-sub').textContent = inc.patrolCaption;
-    $('map-pill').textContent = `${inc.name} · ${inc.region}`;
-    const opt = document.createElement('option');
-    opt.value = inc.id; opt.textContent = inc.name;
-    $('incident-select').appendChild(opt);
 
     $('conn-chip').innerHTML = F.connections.map(c =>
       `<span><i class="${c.connected ? '' : 'is-off'}" aria-hidden="true"></i>${esc(c.label)}<span class="sr-only"> ${c.connected ? 'connected' : 'not connected'}</span></span>`).join('');
 
     $('kpi-wind').textContent = F.conditions.windSpeedKmh;
-    $('kpi-wind-dir').textContent = `toward ${F.conditions.windTowardLabel} ↗`;
+    $('kpi-wind-dir').textContent = `toward ${F.conditions.windTowardLabel}`;
     $('kpi-detect').textContent = F.conditions.detectionConfidencePct;
-    $('fleet-size').textContent = `${F.drones.length} DRONE FLEET`;
     const ig = F.spread.ignition;
     $('m-ignition').setAttribute('transform', `translate(${ig.x} ${ig.y})`);
   }
@@ -144,15 +137,15 @@
         <span class="feed-thumb tone-${d.feed.tone}" aria-hidden="true">
           <svg viewBox="0 0 160 78" preserveAspectRatio="none"><path class="feed-ground" d="${d.feed.ridge}"/><path class="feed-burn" fill-opacity="0.75" d="${d.feed.burn}"/></svg>
           <span class="reticle"></span>
-          <span class="hud">ALT ${altText(d)}<br>SPD ${spdText(d)}</span>
         </span>
-        <span class="dc-state">${esc(d.state)}</span>
-        <span class="dc-meta">${altText(d)} high · ${spdText(d)}<br>${d.peopleSpotted} people spotted</span>`;
+        <span class="dc-state">${esc(d.state)}</span>`;
       b.setAttribute('aria-label', `${d.id}, ${d.state}, battery ${d.batteryPct}%`);
       b.addEventListener('click', () => set({ drone: i, follow: false }));
       $('drone-cards').appendChild(b);
       droneCards.push(b);
     });
+    // Start at the first card; snapping can otherwise land a few pixels in.
+    requestAnimationFrame(() => { $('drone-cards').scrollLeft = 0; });
   }
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -196,27 +189,24 @@
         <div class="lead-top">
           <span class="lead-num" aria-hidden="true">${l.id}</span>
           <div class="lead-title">
-            <h3 id="lead-${l.id}-title">${possible ? 'Possible person' : 'Candidate'} — Target ${l.id}</h3>
-            <span class="lead-tag">${possible ? 'POSSIBLE PERSON' : 'NEEDS ANOTHER ANGLE'}</span>
+            <h3 id="lead-${l.id}-title">Target ${l.id}</h3>
+            <span class="lead-tag">${possible ? 'Possible person' : 'Needs another angle'}</span>
           </div>
           <svg class="compass" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Bearing ${l.bearingDeg} degrees">
             <circle cx="16" cy="16" r="14" stroke-width="1.5"/>
             <g transform="rotate(${l.bearingDeg} 16 16)"><path class="n" d="M16 5 19 16h-6Z"/><path class="s" d="M16 27 13 16h6Z"/></g>
           </svg>
         </div>
-        <dl>
-          <dt>Location</dt><dd class="loc">${latLon(l)}</dd>
-          <dt>Accuracy</dt><dd>±${l.accuracyM} m</dd>
-          <dt>Last seen</dt><dd>${esc(l.lastSeen)} · <a href="#fleet" data-drone="${esc(l.sourceDrones[0])}">image</a></dd>
-          <dt>Evidence</dt><dd>${l.sightings} sightings · ${l.angles} angles (${l.angleSeparationDeg}° apart) · visible</dd>
-          <dt>Source drones</dt><dd>${esc(src)}</dd>
-          <dt>Movement</dt><dd>${esc(l.movement)}</dd>
-          <dt>Fire</dt><dd class="fire"></dd>
-        </dl>
-        <span class="lead-perimeter">Person seen at the perimeter</span>
+        <p class="lead-fire"></p>
+        <p class="lead-loc">${latLon(l)} · ±${l.accuracyM} m</p>
         <details>
-          <summary>Sightings (${l.sightings})</summary>
-          <span>${esc(src)} · ${l.sightings} frames · first ${esc(l.lastSeen)} · bearing ${l.bearingDeg}°</span>
+          <summary>Details</summary>
+          <dl>
+            <dt>Last seen</dt><dd>${esc(l.lastSeen)} · <a href="#fleet" data-drone="${esc(l.sourceDrones[0])}">image</a></dd>
+            <dt>Evidence</dt><dd>${l.sightings} sightings · ${l.angles} angles</dd>
+            <dt>Drone</dt><dd>${esc(src)}</dd>
+            <dt>Movement</dt><dd>${esc(l.movement)}</dd>
+          </dl>
         </details>
         <span class="lead-status" hidden></span>
         <div class="lead-actions">
@@ -224,7 +214,7 @@
           <span class="close-group">
           <label class="select-wrap">
             <span class="sr-only">Close reason for target ${l.id}</span>
-            <select><option value="">Close lead…</option>${reasonOptions}</select>
+            <select><option value="">Reason…</option>${reasonOptions}</select>
             <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><use href="#i-chevron"/></svg>
           </label>
           <button type="button" class="close-btn" disabled>Close</button>
@@ -232,7 +222,7 @@
         </div>`;
       const refs = {
         el,
-        fire: el.querySelector('dd.fire'),
+        fire: el.querySelector('.lead-fire'),
         status: el.querySelector('.lead-status'),
         ack: el.querySelector('.ack-btn'),
         ackLabel: el.querySelector('.ack-btn span'),
@@ -306,7 +296,6 @@
     $('mode-label').textContent = live ? 'Live demo' : 'Replay';
     $('mode-pill').classList.toggle('is-live', live);
     $('live-toggle').setAttribute('aria-pressed', String(live));
-    $('mode-tag').textContent = live ? 'LIVE DEMO' : 'REPLAY';
     $('feed-burn').setAttribute('fill-opacity', live ? '0.55' : '0.7');
   }
 
@@ -319,17 +308,10 @@
     slider.setAttribute('aria-valuetext', `${Math.round(m)} minutes from now`);
     for (const [pm, b] of presetBtns) b.setAttribute('aria-pressed', String(Math.round(m) === pm));
     $('kpi-area').textContent = (F.spread.baseAreaHa * k * k).toFixed(1);
-    $('kpi-area-when').textContent = m === 0 ? 'now' : 'projected';
+    $('kpi-area-when').textContent = m === 0 ? 'now' : `in ${Math.round(m)} min`;
     const ig = F.spread.ignition;
     $('m-fire').setAttribute('transform', `translate(${ig.x} ${ig.y}) rotate(${F.spread.outlineRotateDeg}) scale(${k.toFixed(3)})`);
     F.leads.forEach((l, i) => { leadCards[i].fire.textContent = fireText(l); });
-    renderHudRight();
-  }
-
-  /** Right-hand HUD column (needs both the drone and the minute). */
-  function renderHudRight() {
-    const d = F.drones[state.drone];
-    $('hud-right').innerHTML = `EDGE ${d.fireEdgeM} m<br>PPL ${d.peopleSpotted}<br>T+${Math.round(state.minute)}:00`;
   }
 
   /** Selected drone: carousel, map cones, camera feed, stats, KPI and banner. */
@@ -342,32 +324,18 @@
     });
     const panel = $('fleet');
     panel.style.setProperty('--drone-color', droneColor(i));
-    $('fleet-drone-id').textContent = d.id;
     const feed = $('feed');
     feed.className = `feed tone-${d.feed.tone}`;
     feed.setAttribute('aria-label', `${d.id} camera feed, ${d.state.toLowerCase()}`);
     $('feed-burn').setAttribute('d', d.feed.burnLarge);
     $('hud-id').textContent = d.id.toLowerCase();
     $('hud-hdg').textContent = `HDG ${d.headingDeg}° · CAM ${signed(d.cameraTiltDeg, 0)}°`;
-    $('hud-left').innerHTML = `ALT ${altText(d)}<br>SPD ${spdText(d)}<br>BAT ${d.batteryPct}%<br>LNK OK`;
-    $('hud-state').textContent = `${d.id.toLowerCase()} · ${d.state.toLowerCase()}`;
     $('st-alt').textContent = altText(d);
     $('st-spd').textContent = spdText(d);
-    $('st-bat').textContent = `${d.batteryPct} %`;
-    $('st-state').textContent = d.state;
-    $('fleet-foot').textContent = `${d.id} · heading ${d.headingDeg}° · camera ${signed(d.cameraTiltDeg, 0)}° · ${d.fireEdgeM} m from fire edge`;
-    $('kpi-bat').textContent = d.batteryPct;
-    $('kpi-bat-note').textContent = `${d.id} battery`;
-    renderHudRight();
-    renderSummary();
+    $('st-bat').textContent = `${d.batteryPct}%`;
+    $('st-edge').textContent = `${d.fireEdgeM} m`;
   }
 
-  /** Banner and fleet caption (depend on drone, open leads and replay speed). */
-  function renderSummary() {
-    const d = F.drones[state.drone], c = leadCounts();
-    $('banner-text').textContent = `${d.id} ${d.state.toLowerCase()}; ${F.drones.length} drones in aerial observation · ${c.open} unique people spotted.`;
-    $('fleet-caption').textContent = `Perimeter patrol · ${c.open} unique people · ${d.id} ${d.state.toLowerCase()} · ${state.replaySpeed}× replay`;
-  }
 
   /** Lead cards' review state, counts, rail badge and map markers. */
   function renderLeads() {
@@ -387,18 +355,12 @@
       leadMarkers[i].setAttribute('opacity', closed ? '0.3' : '1');
     });
     const c = leadCounts();
-    $('c-open').textContent = c.open;
-    $('c-multi').textContent = c.multi;
-    $('c-unack').textContent = c.unack;
-    $('c-ground').textContent = c.ground ? String(c.ground) : '—';
     $('kpi-open').textContent = c.open;
-    $('kpi-open-note').textContent = `${c.multi} seen from 2+ angles · ${c.unack} not acknowledged`;
-    $('leads-open-tag').textContent = `${c.open} OPEN`;
+    $('kpi-open-note').textContent = c.unack ? `${c.unack} to review` : 'all reviewed';
     const badge = $('rail-badge');
     badge.textContent = c.open;
     badge.hidden = c.open === 0;
     $('rail-leads').setAttribute('aria-label', `Rescue leads, ${c.open} open`);
-    renderSummary();
   }
 
   /** Search log list for the active filter. */
@@ -456,7 +418,7 @@
     speedIdx: [renderSpeed],
     showCond: [renderCond],
     follow: [renderFollow],
-    replaySpeed: [renderFollow, renderSummary],
+    replaySpeed: [renderFollow],
     view: [renderView],
   };
 
@@ -518,19 +480,24 @@
   // ---------------------------------------------------------------- expand
 
   let expanded = null;
-  /** Show one panel full-window (or restore it). Escape restores. */
-  function toggleExpand(btn) {
-    const panel = $(btn.dataset.expand);
-    const on = expanded !== panel;
-    if (expanded) {
-      expanded.classList.remove('is-expanded');
-      document.querySelector(`[data-expand="${expanded.id}"]`).setAttribute('aria-pressed', 'false');
-    }
-    expanded = on ? panel : null;
-    if (on) panel.classList.add('is-expanded');
-    btn.setAttribute('aria-pressed', String(on));
-    document.documentElement.classList.toggle('has-expanded', on);
-    btn.focus();
+  /**
+   * Open one feature full screen (map, fleet or leads), or close it when it is
+   * already open (id null closes). The rail stays visible; its button for the
+   * open feature is marked current. Escape closes.
+   */
+  function showFullscreen(id) {
+    const next = id && (!expanded || expanded.id !== id) ? $(id) : null;
+    if (expanded) expanded.classList.remove('is-expanded');
+    expanded = next;
+    if (next) { next.classList.add('is-expanded'); next.scrollTop = 0; }
+    document.documentElement.classList.toggle('has-expanded', !!next);
+    document.querySelectorAll('.expand-btn').forEach(b => {
+      const on = !!next && b.dataset.expand === next.id;
+      b.setAttribute('aria-pressed', String(on));
+      b.setAttribute('aria-label', `${on ? 'Close' : 'Open'} ${b.dataset.name} full screen`);
+    });
+    document.querySelectorAll('.rail-link[data-section]').forEach(a =>
+      a.setAttribute('aria-current', String(!!next && a.dataset.section === next.id)));
   }
 
   // ---------------------------------------------------------------- exports
@@ -580,23 +547,6 @@
     try { localStorage.setItem(THEME_KEY, theme); } catch (err) { /* storage blocked: the theme still applies for this visit */ }
   }
 
-  // ---------------------------------------------------------------- rail
-
-  /** Mark the rail link for the section currently in view. */
-  function watchSections() {
-    if (!('IntersectionObserver' in window)) return;
-    const links = [...document.querySelectorAll('.rail-link[data-section]')];
-    const visible = new Map();
-    const io = new IntersectionObserver(entries => {
-      for (const e of entries) visible.set(e.target.id, e.intersectionRatio);
-      let best = 'map', bestR = -1;
-      for (const [id, r] of visible) if (r > bestR) { best = id; bestR = r; }
-      links.forEach(a => a.setAttribute('aria-current', String(a.dataset.section === best)));
-    }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
-    links.forEach(a => io.observe($(a.dataset.section)));
-    return io;
-  }
-
   // ---------------------------------------------------------------- wiring
 
   window.BoscoMark.mountAll();
@@ -607,7 +557,6 @@
   buildLeadCards();
   buildLogFilters();
   renderAll();
-  const sectionObserver = watchSections();
 
   $('theme-toggle').setAttribute('aria-pressed', String(document.documentElement.dataset.theme === 'light'));
   $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'));
@@ -625,13 +574,18 @@
   $('map-locate').addEventListener('click', locateFleet);
   $('map-fit').addEventListener('click', fitFire);
   $('map-recentre').addEventListener('click', () => set({ view: { z: 1, cx: MAP_W / 2, cy: MAP_H / 2 } }));
-  document.querySelectorAll('.expand-btn').forEach(b => b.addEventListener('click', () => toggleExpand(b)));
+  document.querySelectorAll('.expand-btn').forEach(b => b.addEventListener('click', () => showFullscreen(b.dataset.expand)));
+  // Rail buttons (and the People found card) open their feature full screen.
+  document.querySelectorAll('.rail-link[data-section], [data-open]').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    showFullscreen(a.dataset.section || a.dataset.open);
+  }));
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && expanded) toggleExpand(document.querySelector(`[data-expand="${expanded.id}"]`));
+    if (e.key === 'Escape' && expanded) showFullscreen(null);
   });
+  showFullscreen(null);
   window.addEventListener('pagehide', () => {
     if (timer) { clearInterval(timer); timer = 0; }
-    if (sectionObserver) sectionObserver.disconnect();
   });
 
   // The Dashboard always mounts under the transition cover.

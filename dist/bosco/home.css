@@ -14,16 +14,6 @@
 .home-body { position: relative; flex-grow: 1; display: flex; flex-direction: column; }
 .home-wrap { width: 100%; max-width: 1280px; margin: 0 auto; padding-left: 32px; padding-right: 32px; }
 
-.home-header {
-  padding-top: 28px; padding-bottom: 28px;
-  display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between;
-}
-.home-header .brand { font-size: 20px; letter-spacing: 0.02em; }
-.status-light {
-  display: flex; align-items: center; gap: 8px;
-  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label);
-}
-.status-light::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--drone-blue); }
 
 .home-main { padding-top: 72px; padding-bottom: 80px; flex-grow: 1; display: flex; flex-direction: column; justify-content: center; }
 .hero-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 40px; }
@@ -78,10 +68,6 @@
 .btn-start.is-small { min-height: 48px; padding: 0 24px; font-size: 16px; gap: 10px; }
 .btn-start.is-small svg { width: 16px; height: 16px; }
 
-.home-footer {
-  padding-bottom: 28px; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between;
-  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
-}
 
 @media (max-width: 560px) {
   .home-wrap { padding-left: 20px; padding-right: 20px; }

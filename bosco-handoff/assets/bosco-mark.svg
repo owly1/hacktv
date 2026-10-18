@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -6 112 112" width="112" height="112" role="img" aria-label="BOSCO">
+  <style>
+    .flame{transform-origin:50px 67px;animation:sway 2.6s ease-in-out infinite}
+    .orbit{transform-origin:50px 50px;animation:orbit 9s linear infinite}
+    @keyframes sway{0%,100%{transform:scale(1,1) skewX(0deg)}25%{transform:scale(.95,1.06) skewX(-4deg)}50%{transform:scale(1.03,.96) skewX(2.5deg)}75%{transform:scale(.97,1.04) skewX(-1.5deg)}}
+    @keyframes orbit{to{transform:rotate(360deg)}}
+    @media (prefers-reduced-motion:reduce){.flame,.orbit{animation:none}}
+  </style>
+  <!-- reticle ring: 4 segments -->
+  <circle cx="50" cy="50" r="40" fill="none" stroke="#D8D7D2" stroke-width="15" stroke-dasharray="52.8 10" stroke-dashoffset="-5" transform="rotate(-90 50 50)"/>
+  <!-- flame core -->
+  <g class="flame"><path fill="#E2574C" fill-rule="evenodd" d="M50 32.5 C52.2 39.5 61.5 44.5 61.5 55.6 C61.5 62.4 56.3 67.5 50 67.5 C43.7 67.5 38.5 62.4 38.5 55.6 C38.5 50.2 41.4 46.4 44.6 43.8 C44.6 47.9 46.2 50.6 48.3 51.6 C47.7 45.2 48.3 38.6 50 32.5 Z M50 52.2 C52.6 55.1 54.6 57.3 54.6 60.2 C54.6 62.8 52.5 64.8 50 64.8 C47.5 64.8 45.4 62.8 45.4 60.2 C45.4 57.4 47.4 55.1 50 52.2 Z"/></g>
+  <!-- orbiting drone light; stroke = page background so it cuts the ring cleanly -->
+  <g class="orbit"><circle cx="50" cy="3" r="6" fill="#4C7DFF" stroke="#08080A" stroke-width="3"/></g>
+</svg>
