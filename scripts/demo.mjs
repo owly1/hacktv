@@ -47,11 +47,11 @@ function openBrowser(url) {
 }
 export async function main() {
   process.chdir(root);
-  if (!existsSync('.env')) throw new Error('Missing .env: copy .env.example and configure your tokens and GEMINI_API_KEY.');
+  if (!existsSync('.env')) throw new Error('Missing .env: copy .env.example and configure distinct ingest and dashboard tokens.');
   process.loadEnvFile('.env');
   const { port, open, live } = options(process.argv.slice(2));
   const base = `http://127.0.0.1:${port}`, url = `${base}/?${live ? 'live-demo' : 'demo'}`;
-  const assets = await Promise.all(['index.html', 'app.js', 'people.js'].map(async name =>
+  const assets = await Promise.all(['index.html', 'app.js', 'people.js', 'demo-scout.js', 'sim-camera.js', 'styles.css'].map(async name =>
     [name === 'index.html' ? '/' : '/' + name, await readFile(path.join(root, 'dist', name), 'utf8')]));
   const ready = () => probe(base, fetch, assets);
   if (await ready()) {

@@ -8,12 +8,19 @@ Source of truth: `backend/validation.mjs`, `backend/people.mjs`, `backend/server
 
 ## Ingest routes
 
+`GET /api/demo/people` now includes replay-only `camera` geometry: `origin`,
+east/north/up `pose` in metres relative to the fire, downward-positive pitch,
+fire dimensions and fictional visible objects. Its simulated `drone` includes
+identity, capture time, ground speed and battery. These additive replay fields
+never enter live ingest or live rescue-lead storage. Live gimbal pitch remains
+negative downward; the browser converts it for rendering.
+
 | POST route | Body / result |
 |---|---|
 | `/api/ingest/telemetry` | JSON below; returns accepted sample |
 | `/api/ingest/frame` | Raw JPEG, `image/jpeg`, ≤2 MB; `X-Captured-At`; optional `X-Detections` JSON overlay; returns 204 |
 | `/api/ingest/snapshot` | Compatible JSON JPEG envelope (`jpeg_base64`, or live `data`/`mime_type`); also feeds video relay |
-| `/api/ingest/detection` | Fire sighting below; first accepted episode can trigger automatic Gemini analysis |
+| `/api/ingest/detection` | Fire sighting below; updates incident without automatic scene analysis by default |
 | `/api/ingest/flight` | `{at, phase, step?, steps?, message?}` |
 | `/api/ingest/vision` | `{observed_at, model_status, camera_state, ...}` health; never creates an incident |
 | `/api/ingest/person` | Live person observation below; delayed delivery allowed |
@@ -57,7 +64,11 @@ Boxes are normalized `[x1,y1,x2,y2]`. `source` is `qr-test` or `yolo`; YOLO
 may report fire or explicitly enabled smoke. Optional `frame_jpeg_base64`
 archives the evidence (≤5 MB). Receivers normally confirm three QR passes or
 five overlapping filtered YOLO hits, update every five seconds, and end an
-episode after 15 seconds unseen. Each episode triggers analysis at most once.
+episode after 15 seconds unseen. Automatic scene analysis defaults off; explicit
+`createApp({autoAnalyze: true})` embedding opt-in retains the legacy at-most-once
+behavior. Status exposes `gemini.automatic_analysis`; authenticated legacy
+analysis routes remain compatible. The shared replay/live dashboard does not
+request or poll scene analysis.
 
 The only selected QR payload is:
 

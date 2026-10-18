@@ -217,7 +217,7 @@ test('a lead at the fire outranks everything, even a stronger lead further away'
   assert.equal(leads[1].status, 'possible-person');
 });
 
-test('every example fire: the search starts at the fire, keeps the standoff, and puts the person at the fire first', () => {
+test('every example fire: search starts at the +20-minute border and keeps people outside the fire', () => {
   for (const scenario of [null, ...FIRES.map(scenarioFromExample)]) {
     const name = scenario?.name ?? 'UTSC';
     const sim = new PersonSearchSim({ site: { latitude: 43.7866, longitude: -79.1903 }, startMs: T0, scenario });
@@ -233,7 +233,9 @@ test('every example fire: the search starts at the fire, keeps the standoff, and
     assert.ok(fireDone >= 0 && (firstLegLog < 0 || fireDone < firstLegLog), `${name}: fire searched before the path`);
     const firstAlert = sim.log.find((e) => /possible person/.test(e.text));
     assert.ok(firstAlert && firstAlert.t < orbitDoneAt, `${name}: the first alert comes while circling the fire`);
-    assert.equal(snap.leads[0].at_fire, true, `${name}: the person at the fire is listed first`);
+    assert.ok(snap.leads.length >= 2, `${name}: exterior people still produce rescue leads`);
+    for (const lead of snap.leads) assert.equal(EM.insidePolygon([lead.latitude,lead.longitude],sim.currentFire),false,`${name}: no displayed lead inside the current fire`);
+    for (const point of sim.orbit) assert.equal(EM.insidePolygon(sim.ll(...point),EM.footprint(sim.spread.origin,20,sim.spread.scenario,sim.details)),false,`${name}: patrol remains outside +20 minutes`);
     assert.equal(snap.scenario.id, scenario?.id ?? 'utsc');
     if (scenario) {
       const d = Math.hypot(...toLocal({ lat: scenario.latitude, lon: scenario.longitude }, snap.fire.latitude, snap.fire.longitude));

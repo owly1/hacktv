@@ -24,7 +24,6 @@
   const RULES = {
     'parrot-status': t => /^Live/.test(t) ? 'ok' : /Telemetry only/.test(t) ? 'warn' : 'off',
     'tiger-status': t => t === 'Connected' ? 'ok' : t === 'Unavailable' ? 'bad' : /Memory/.test(t) ? 'warn' : 'off',
-    'gemini-status': t => /^(Connected|Ready)/.test(t) ? 'ok' : /Cannot connect/.test(t) ? 'bad' : 'off',
   };
   const PILL = {ok: 'pill ok', warn: 'pill warn', bad: 'pill warn', off: 'pill muted'};
 
@@ -34,11 +33,11 @@
     const text = el.textContent.trim();
     const unset = !text || text === '—' || text === 'Not checked';
     const level = unset ? 'off' : RULES[id](text);
-    const cls = PILL[level] + (id === 'gemini-status' && level === 'ok' ? ' ai' : '');
+    const cls = PILL[level];
     if (el.className !== cls) el.className = cls;
     const chip = document.querySelector(`.svc[data-svc="${id}"]`);
     if (chip) {
-      chip.className = 'svc ' + level + (id === 'gemini-status' ? ' ai' : '');
+      chip.className = 'svc ' + level;
       chip.title = `${chip.textContent.trim()}: ${unset ? 'not checked yet' : text}`;
     }
   }

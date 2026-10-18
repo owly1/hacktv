@@ -4,9 +4,7 @@
   const PANELS = {
     'map-panel': 'Fire spread explorer',
     'people-panel': 'People · rescue leads',
-    'drone-panel': 'ANAFI-01 drone feed',
-    'analysis-panel': 'Gemini analysis',
-    'response-panel': 'Response planning assistant',
+    'drone-panel': 'Drone cameras and telemetry',
   };
   const railLinks = [...document.querySelectorAll('.rail-links a[href^="#"]')];
   let current = null;

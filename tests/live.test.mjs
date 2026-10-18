@@ -41,6 +41,7 @@ async function startApp(options = {}) {
     allowedOrigins: [],
     storage,
     dataDir,
+    ...(options.autoAnalyze !== undefined ? {autoAnalyze: options.autoAnalyze} : {}),
     geminiTransport: options.noGemini ? null : async (body) => {
       calls.push(structuredClone(body));
       const reply = replies.shift();
@@ -225,7 +226,7 @@ test('vision health is authenticated, expires, and never creates a fire by itsel
 });
 
 test('RGB fire without GPS activates an incident and automatic analysis', async () => {
-  const t = await startApp({ replies: [analysisReply] });
+  const t = await startApp({ autoAnalyze: true, replies: [analysisReply] });
   try {
     const post = await t.req('POST', '/api/ingest/detection', { token: INGEST,
       body: detection({ source: 'yolo', episode_id: 'rgb-no-gps', details: null,
@@ -295,8 +296,21 @@ test('frames must be JPEG with a fresh capture time', async () => {
   } finally { await t.close(); }
 });
 
+test('default live detections activate the dashboard without starting Gemini scene analysis', async () => {
+  const t = await startApp({replies: [analysisReply]});
+  try {
+    await t.req('POST', '/api/ingest/detection', {token: INGEST, body: detection()});
+    const {incident} = await (await t.req('GET', '/api/incident', {token: DASH})).json();
+    const latest = await (await t.req('GET', '/api/analysis/latest', {token: DASH})).json();
+    assert.equal(incident.active, true);
+    assert.equal(latest.pending, false);
+    assert.equal(latest.analysis, null);
+    assert.equal(t.calls.length, 0, 'fire detection does not spend an analysis request');
+  } finally { await t.close(); }
+});
+
 test('a new detection episode activates the incident and triggers one automatic Gemini analysis', async () => {
-  const t = await startApp({ replies: [analysisReply] });
+  const t = await startApp({ autoAnalyze: true, replies: [analysisReply] });
   try {
     const first = await (await t.req('POST', '/api/ingest/detection', { token: INGEST, body: detection() })).json();
     assert.equal(first.new_episode, true);
@@ -328,7 +342,7 @@ test('a new detection episode activates the incident and triggers one automatic 
 });
 
 test('a Gemini failure is reported, not swallowed', async () => {
-  const t = await startApp({ replies: [] });
+  const t = await startApp({ autoAnalyze: true, replies: [] });
   try {
     await t.req('POST', '/api/ingest/detection', { token: INGEST, body: detection() });
     const body = await waitFor(async () => {

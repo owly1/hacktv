@@ -109,12 +109,13 @@ void main() {
   }
 
   /* Camera basis in east/north/up for a heading and downward pitch (degrees). */
-  function basis(heading, pitch) {
+  function basis(heading, pitch, roll = 0) {
     const h = heading * RAD, p = pitch * RAD, fh = [Math.sin(h), Math.cos(h), 0];
+    const r = [Math.cos(h), -Math.sin(h), 0], u = [fh[0] * Math.sin(p), fh[1] * Math.sin(p), Math.cos(p)], bank = roll * RAD;
     return {
       fwd: [fh[0] * Math.cos(p), fh[1] * Math.cos(p), -Math.sin(p)],
-      right: [Math.cos(h), -Math.sin(h), 0],
-      up: [fh[0] * Math.sin(p), fh[1] * Math.sin(p), Math.cos(p)],
+      right: r.map((v, i) => v * Math.cos(bank) + u[i] * Math.sin(bank)),
+      up: u.map((v, i) => v * Math.cos(bank) - r[i] * Math.sin(bank)),
     };
   }
   /** Return the three-component dot product used by camera projection. */
@@ -264,10 +265,10 @@ void main() {
     ctx.fillText(`${String(Math.round((pose.heading % 360 + 360) % 360)).padStart(3, '0')}°`, cx, ty + 16 + fs);
     // side readouts
     ctx.textAlign = 'left';
-    const left = [`ALT ${pose.alt.toFixed(1)} m`, `SPD ${info.speed.toFixed(1)} m/s`, `GIM ${(-pose.pitch).toFixed(1)}°`];
+    const left = [`ALT ${pose.alt.toFixed(1)} m`, `SPD ${info.speed.toFixed(1)} m/s`, `GIM ${(-pose.pitch).toFixed(1)}°`, ...(pose.drone_id ? [`V/S ${pose.climbRate.toFixed(1)} m/s`] : [])];
     left.forEach((s, i) => ctx.fillText(s, w * .04, h * .44 + i * fs * 1.35));
     ctx.textAlign = 'right';
-    const right = [info.range != null ? `RNG ${Math.round(info.range)} m` : '', `BAT ${Math.round(info.battery)}%`, info.zoom ?? 'ZOOM 1.0×'].filter(Boolean);
+    const right = [info.clearance != null ? `EDGE ${Math.round(info.clearance)} m` : info.range != null ? `RNG ${Math.round(info.range)} m` : '', `BAT ${Math.round(info.battery)}%`, info.zoom ?? 'ZOOM 1.0×'].filter(Boolean);
     right.forEach((s, i) => ctx.fillText(s, w * .96, h * .44 + i * fs * 1.35));
     ctx.textAlign = 'center'; ctx.font = `${Math.round(fs * .8)}px Consolas, monospace`;
     ctx.fillText(info.footer, cx, h * .78);
@@ -279,7 +280,7 @@ void main() {
   function render(ctx, cam, pose, opts) {
     const scene = cam.scene, t = opts.t, shake = opts.shake ?? 1;
     pose = {...pose, heading: pose.heading + shake * (.35 * Math.sin(t * 1.3) + .15 * Math.sin(t * 3.7)), pitch: pose.pitch + shake * (.25 * Math.sin(t * 1.7 + 1) + .1 * Math.sin(t * 4.3))};
-    pose.basis = basis(pose.heading, pose.pitch);
+    pose.basis = basis(pose.heading, pose.pitch, pose.roll);
     let found = null;
     if (cam.video && cam.video.readyState >= 2) {
       const v = cam.video, s = Math.max(cam.w / v.videoWidth, cam.h / v.videoHeight);
@@ -294,6 +295,7 @@ void main() {
       if (scene.kind === 'pad') { gl.uniform2f(U.uMarkerPos, scene.marker.e, scene.marker.n); gl.uniform1f(U.uMarkerSize, scene.marker.size); }
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       ctx.drawImage(cam.glCanvas, 0, 0);
+      if (opts.forest) drawForest(ctx, cam, pose, fire);
       if (scene.kind === 'fire' && fire) {
         if (!cam.smoke.length) prewarm(cam, fire);
         stepSmoke(cam, fire, t); drawSmoke(ctx, cam, pose);
@@ -314,26 +316,75 @@ void main() {
     } else {
       ctx.fillStyle = '#2d3c3e'; ctx.fillRect(0, 0, cam.w, cam.h);
     }
-    if (!cam.video && opts.t >= 8) drawPeople(ctx, cam, pose, opts.people || []);
+    if (!cam.video && opts.people) drawPeople(ctx, cam, pose, opts.people);
+    if (!cam.video && opts.fleet) drawFleet(ctx, cam, pose, opts.fleet);
     hud(ctx, cam, pose, opts);
     return found;
+  }
+
+  /** Render a repeatable forest at fixed world positions, with perspective and depth sorting. */
+  function drawForest(ctx, cam, pose, fire) {
+    const trees = [], w = (cam.scene.windDeg ?? 0) * RAD;
+    for (let i = Math.floor((pose.e - 230) / 22); i <= Math.ceil((pose.e + 230) / 22); i++) {
+      for (let j = Math.floor((pose.n - 230) / 22); j <= Math.ceil((pose.n + 230) / 22); j++) {
+        const seed = Math.sin(i * 127.1 + j * 311.7) * 43758.5453, r = seed - Math.floor(seed);
+        const e = i * 22 + r * 12, n = j * 22 + (1 - r) * 12;
+        const u = e * Math.sin(w) + n * Math.cos(w) - (fire?.shift ?? 0), v = -e * Math.cos(w) + n * Math.sin(w);
+        if (fire && (u / fire.a) ** 2 + (v / fire.b) ** 2 < 1.1) continue;
+        const base = project(cam, pose, [e, n, 0]), top = project(cam, pose, [e, n, 10 + r * 7]);
+        if (!base || !top || base[2] < 8 || base[0] < -50 || base[0] > cam.w + 50) continue;
+        trees.push({base, top, r});
+      }
+    }
+    trees.sort((a, b) => b.base[2] - a.base[2]);
+    ctx.save();
+    for (const {base: [x, y, depth], top: [tx, ty], r} of trees) {
+      const width = cam.f * (4 + r * 2) / depth;
+      ctx.strokeStyle = '#514231'; ctx.lineWidth = Math.max(1, width * .16);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+      ctx.fillStyle = r > .5 ? '#284c35' : '#355f3d';
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x + width, y - (y - ty) * .18); ctx.lineTo(x - width, y - (y - ty) * .18); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** Project other simulated aircraft at their actual heights to give the view depth. */
+  function drawFleet(ctx, cam, pose, fleet) {
+    ctx.save(); ctx.font = '600 18px Consolas, monospace'; ctx.lineWidth = 2;
+    for (const drone of fleet) {
+      if (drone.drone_id === pose.drone_id) continue;
+      const point = project(cam, pose, [drone.e, drone.n, drone.alt]);
+      if (!point || point[0] < 12 || point[0] > cam.w - 12 || point[1] < 12 || point[1] > cam.h - 12) continue;
+      const [x, y, z] = point, size = Math.max(5, Math.min(22, cam.f * 1.2 / z));
+      ctx.strokeStyle = ctx.fillStyle = drone.color;
+      ctx.beginPath(); ctx.moveTo(x - size, y - size / 2); ctx.lineTo(x + size, y + size / 2);
+      ctx.moveTo(x - size, y + size / 2); ctx.lineTo(x + size, y - size / 2); ctx.stroke();
+      for (const dx of [-1, 1]) for (const dy of [-1, 1]) { ctx.beginPath(); ctx.ellipse(x + dx * size, y + dy * size / 2, size * .4, size * .16, 0, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.fillText(drone.drone_id, x + size + 5, y);
+    }
+    ctx.restore();
   }
 
   /** Draw fictional people and their boxes through the replay camera's current pose. */
   function drawPeople(ctx, cam, pose, people) {
     ctx.save();
     for (const person of people) {
-      if (Math.hypot(person.e - pose.e, person.n - pose.n) >= 180) continue;
+      if (Math.hypot(person.e - pose.e, person.n - pose.n) >= (person.max_range ?? 180)) continue;
       const feet = project(cam, pose, [person.e, person.n, 0]);
       const head = project(cam, pose, [person.e, person.n, 1.8]);
       if (!feet || !head || feet[0] < 10 || feet[0] > cam.w - 10 || feet[1] < 10 || feet[1] > cam.h - 10) continue;
       const h = Math.max(12, Math.abs(feet[1] - head[1])), x = feet[0], y = feet[1] - h;
-      ctx.fillStyle = '#f4f2e8'; ctx.beginPath(); ctx.arc(x, y + h * .15, h * .12, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(x - h * .13, y + h * .3, h * .26, h * .65);
+      if (person.kind === 'rock') {
+        ctx.fillStyle = '#b0a08a'; ctx.beginPath(); ctx.ellipse(x, feet[1] - h * .15, h * .35, h * .2, 0, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = '#f4f2e8'; ctx.beginPath(); ctx.arc(x, y + h * .15, h * .12, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(x - h * .13, y + h * .3, h * .26, h * .65);
+      }
+      if (person.detected === false) continue;
       ctx.strokeStyle = '#5CC8C0'; ctx.lineWidth = Math.max(2, cam.w / 400);
       ctx.strokeRect(x - h * .5, y - 5, h, h + 10);
       ctx.fillStyle = '#5CC8C0'; ctx.font = `600 ${Math.round(cam.w / 55)}px Consolas, monospace`;
-      ctx.fillText(`PERSON ${person.number} · SIM`, x - h * .5, Math.max(18, y - 9));
+      ctx.fillText(person.label ?? `PERSON ${person.number} · SIM`, x - h * .5, Math.max(18, y - 9));
     }
     ctx.restore();
   }

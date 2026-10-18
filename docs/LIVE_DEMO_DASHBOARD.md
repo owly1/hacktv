@@ -41,8 +41,8 @@ historical case. Replay remains available through the Replay button.
 
 1. Run `npm install`, copy `.env.example` to `.env` if needed, and configure
    distinct `INGEST_TOKEN` and `DASHBOARD_TOKEN` values. Keep the laptop and
-   Pi clocks aligned. Set `GEMINI_API_KEY`/`GEMINI_MODEL` for analysis and
-   plans, and `DATABASE_URL` for durable TigerData storage.
+   Pi clocks aligned. Set `DATABASE_URL` for optional durable TigerData storage.
+   The monitoring dashboard does not require Gemini.
 2. Run `npm run live-demo`. It starts or reuses the backend and opens
    `http://127.0.0.1:8787/?live-demo`. The Live demo button also enables this
    view from the existing dashboard. `--port 9000` is supported; the receiver
@@ -76,8 +76,10 @@ are unchanged outside the explicit vision demo command.
   and a box expires within two seconds if inference stops. These previews
   do not create incidents or refresh camera freshness/FPS.
 - Three distinct QR frames or five overlapping fire/smoke frames confirm
-  an incident. The existing detection endpoint stores it and triggers
-  automatic Gemini analysis once per episode. Repeat sightings keep the
+  an incident. The existing detection endpoint stores it without starting
+  Gemini scene analysis. Scene analysis has been removed from replay/live
+  dashboards; incident questions and response planning are removed as well.
+  Repeat sightings keep the
   incident current without resetting operator changes to the timeline.
 - The fire summary shows the source, area, fuel, spread rate and conditions.
   The QR payload drives the initial 120 ha Alpha scenario: 35 m/min,
@@ -89,13 +91,13 @@ are unchanged outside the explicit vision demo command.
   the detection unlocated. Altitude is above takeoff, so terrain can make
   this estimate inaccurate.
 - In Live demo, an unlocated incident is projected at `SITE_LAT`/`SITE_LON`.
-  The banner, location summary, map popup, plan projection and exported brief
+  The banner, location summary, map popup, spread projection and exported brief
   label it as a scenario location. Captured incident coordinates stay null.
   Disable Live demo to wait for a measured/estimated location instead.
 - Timeline playback, presets, condition edits/reset, map layers, full-screen
-  panels, analysis, plan generation/approval/export, rescue leads and brief
-  export remain available. Analysis and plans require a working Gemini
-  configuration; only the spread explorer runs locally without that service.
+  panels, rescue leads and brief export remain available. Analysis, Q&A and
+  response-planning controls are removed in both live and replay; no dashboard
+  requests are sent to Gemini.
 
 ## Check the demo
 
@@ -103,13 +105,13 @@ Show `dist/test-marker.html` to the camera. Confirm the rectangular QR box,
 advancing capture clock, live altitude/speed/power/state, Alpha conditions,
 and an expanding map outline at +30/+60 minutes. Adjust wind in Conditions,
 then reset to the detected conditions. Remove the marker: the box clears
-while the confirmed incident remains available for planning. Dismiss it
+while the confirmed incident remains available for monitoring. Dismiss it
 with Mark false alarm when finished.
 
 Switch into Replay and back to Live demo to verify the original cases,
 person search and flight-pattern animation. Live results from another
 incident or a request finishing in the background cannot overwrite the
-selected replay's analysis or plan.
+selected replay's camera, telemetry or rescue leads.
 
 Automated checks: `npm test` and
 `python -m unittest discover -s tests -p 'fire_monitor_test.py'`.

@@ -1,7 +1,7 @@
 # BOSCO 
 
 Wildfire-monitoring prototype for a Parrot ANAFI: live camera and telemetry,
-fire detection, illustrative spread, Gemini analysis, and human-reviewed plans.
+fire detection, illustrative spread, and person-search observations.
 Person search adds rescue leads, location uncertainty, and coverage views.
 
 ## Start here
@@ -23,8 +23,9 @@ npm start
 ```
 
 On PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
-Open <http://127.0.0.1:8787/>. Live mode waits for real input. Gemini and
-TigerData are optional; configure their values in `.env` using [KEYS.md](docs/KEYS.md).
+Open <http://127.0.0.1:8787/>. Live mode waits for real input. Gemini is not
+required by the dashboard. TigerData is optional; configure storage in `.env`
+using [KEYS.md](docs/KEYS.md).
 Run `npm run db:init` once when configuring a database; it applies the schema
 and checks an insert/readback.
 
@@ -36,15 +37,34 @@ npm run demo -- --port 9000
 ```
 
 Replay offers simulated person searches, historical incidents, and a flight
-pattern. Its Gemini calls require a configured key; replay results stay out
-of live storage. The Windows wrapper is `.\demo.ps1 -Port 9000`.
+pattern. Scene analysis, incident Q&A and response planning are removed from
+replay/live dashboards; the dashboard makes no Gemini requests. Fire-first
+person searches include a simulated ANAFI-01 camera and synchronized telemetry.
+Replay results stay out of live storage. The Windows wrapper is `.\demo.ps1 -Port 9000`.
 
-Historical fire cases now include a simulated rescue scout. ANAFI-01 flies
-into the rendered fire footprint, finds 3–7 fictional people, and shows the
-same position and camera orientation on the map, footage and telemetry.
-People appear only when the simulated camera sees them. Review, acknowledge,
-close and export these leads locally; demo observations never enter live
-storage. Switching cases preserves each case's own scout and review state.
+Historical fire cases include a four-drone perimeter-search replay. Scroll
+the camera cards or click a map drone to choose its 3D POV and matching
+telemetry. Drones pace outside the evolving +20-minute forecast border; one at
+a time descends toward its exterior edge to find fictional people, then climbs
+back to observation. The map opens at Now; solid red marks the current fire.
+Patrols include lateral movement and banking, with no dedicated +20-minute
+marker. Simulated sightings exclude people
+inside the current fire. “Follow
+searches” selects the active search drone automatically. The shared counter
+counts each fictional person once, retaining source drones and named review
+actions. Switching cases preserves each case's clock, leads and review state.
+Replay defaults to 8× to make orbiting visible; all four initial searches take
+about 25 seconds. Choose 1×/2×/4× for slower presentations. Only flown trails
+are drawn; there is no prewritten patrol line.
+Demo observations never enter live storage. See the [fleet demo testing
+guide](docs/FLEET_DEMO.md) for launch instructions and a walkthrough.
+The same dropdown includes **Forest patrol · press Detected**: four drones
+hold widely separated positions at 150–210 m without a fire until the presenter
+presses **Detected**. A fire then
+appears near ANAFI-01 with a +30-minute prediction. The fleet converges in about
+17 seconds at the default rate, then orbits the predicted +20-minute boundary
+throughout descents, searches and ascents. The map reframes on arrival.
+Reselecting the case resets the exercise. All camera footage is rendered replay.
 If another checkout already serves port 8787, the launcher reports that
 mismatch; use port 9000 or stop the old backend before relaunching.
 

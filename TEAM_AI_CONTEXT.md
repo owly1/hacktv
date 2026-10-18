@@ -38,6 +38,30 @@ put procedures in the linked guides and explain local behavior at its function.
   replay scout can enter the rendered fire footprint; that legacy behavior does
   not define the new perimeter-search requirement.
 
+`fleet-demo-hardcode` implements the historical Replay portion: four simulated
+aircraft, scrolling POV previews, coordinated exterior descents and shared
+fictional leads. See [the demo guide](docs/FLEET_DEMO.md). This browser replay
+does not implement per-drone live ingest or real fleet flight coordination.
+Fleet patrols follow the map's exact +20-minute forecast contour with exterior
+descent/search offsets. The dedicated +20-minute marker/preset is removed;
+the map opens at Now, and patrol motion includes lateral weaving and banking.
+Solid red marks the current fire. Both hardcoded fleet and fire-first fixtures
+place people outside the forecast border and reject inside-current-fire targets.
+This demo restriction does not filter real person observations in live ingest.
+The dropdown also includes a fictional forest hold with a presenter-only
+Detected button. Four drones start stationary at 150–210 m, at least 1.5 km apart.
+No fire or observations exist before the click; afterwards
+all aircraft approach continuously before joining the exterior search schedule.
+Reselecting resets the exercise. Camera terrain/trees, map and telemetry use
+one simulated pose; no live ingest or aircraft command is issued.
+
+The shared replay/live UI no longer includes scene analysis, incident Q&A or
+response planning, and makes no Gemini requests. Backend automatic scene
+analysis defaults off; authenticated legacy AI APIs remain for compatibility.
+Fire-first person-search replay now includes a 3D ANAFI-01 camera with matching
+map pose, heading, altitude, speed and power, sourced only from its simulated
+snapshot. Its thermal observations are fictional illustrations, not ANAFI hardware.
+
 ## Branching for every teammate
 
 Start each new task from an up-to-date `origin/main`:
@@ -137,3 +161,14 @@ Open issue / next step:
 
 Current assignment and temporary notes belong in the chat or a handoff; avoid
 copying dated test counts, active branch lists or machine logs into this file.
+
+Fleet pacing follow-up: default 8× (1/2/4/8 selectable), with a 16× manual
+forest approach completing in about 17 presentation seconds. Detection opens
+a +30-minute forecast; arrival refits the map. Drones continuously orbit the
+roughly +20-minute forecast contour even during searches; only actual flown
+trails are drawn, never a prewritten patrol ring. Live aircraft are unaffected.
+
+Presentation copy: dashboard labels use Fleet / Person search / ANAFI and omit
+simulated/fictional wording from banners, POV HUDs, cards, dropdown groups and
+forest incident text. This is a wording-only change; API provenance, demo mode
+isolation and exported source metadata remain explicit.
