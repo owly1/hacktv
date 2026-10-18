@@ -84,6 +84,7 @@ const MIME_TYPES = {
 
 const MEMORY_TELEMETRY_CAP = 50_000;
 
+/** Aggregate telemetry into per-minute summaries for the in-memory storage path. */
 function bucketRows(samples, sinceMs) {
   const buckets = new Map();
   for (const s of samples) {
@@ -97,6 +98,7 @@ function bucketRows(samples, sinceMs) {
     if (s.battery_pct != null) b.battery.push(s.battery_pct);
     buckets.set(key, b);
   }
+  /** Average available numeric measurements in the telemetry bucket. */
   const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
   return [...buckets.values()]
     .sort((a, b) => a.bucket.localeCompare(b.bucket))
@@ -110,6 +112,7 @@ function bucketRows(samples, sinceMs) {
     }));
 }
 
+/** Combine related detection rows into one incident summary. */
 function summarizeEpisode(rows) {
   if (rows.length === 0) return null;
   const sorted = rows.slice().sort((a, b) => a.detected_at.localeCompare(b.detected_at));
@@ -126,6 +129,7 @@ function summarizeEpisode(rows) {
 }
 
 export class MemoryStorage {
+  /** Initialize this storage adapter's backing state. */
   constructor() {
     this.telemetry = [];
     this.analyses = [];
@@ -133,18 +137,22 @@ export class MemoryStorage {
     this.plans = [];
     this.kind = 'memory only';
   }
+  /** Report configured storage health without claiming an unverified connection. */
   status() {
     return this.kind;
   }
+  /** Store a validated timestamped telemetry sample in this adapter. */
   async insertTelemetry(sample) {
     this.telemetry.push(sample);
     if (this.telemetry.length > MEMORY_TELEMETRY_CAP) this.telemetry.splice(0, 1000);
   }
+  /** Return the newest stored telemetry sample, or no sample. */
   async latestTelemetry() {
     if (this.telemetry.length === 0) return null;
     return this.telemetry.reduce((a, b) =>
       Date.parse(a.observed_at) >= Date.parse(b.observed_at) ? a : b);
   }
+  /** Read recent telemetry in newest-first order with optional time/row limits. */
   async telemetryHistory({ limit = 50, sinceMs = null } = {}) {
     let rows = this.telemetry.slice().sort(
       (a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at),
@@ -152,9 +160,11 @@ export class MemoryStorage {
     if (sinceMs !== null) rows = rows.filter((r) => Date.parse(r.observed_at) >= sinceMs);
     return rows.slice(0, limit);
   }
+  /** Return per-minute telemetry statistics since the requested cutoff. */
   async telemetrySummary({ sinceMs }) {
     return bucketRows(this.telemetry, sinceMs);
   }
+  /** Read chronological positioned telemetry plus available camera heading/pitch. */
   async flightPath({ sinceMs, limit = 600 }) {
     return this.telemetry
       .filter((s) => Date.parse(s.observed_at) >= sinceMs && s.latitude != null)
@@ -162,37 +172,47 @@ export class MemoryStorage {
       .map((s) => ({ t: s.observed_at, latitude: s.latitude, longitude: s.longitude, altitude_m: s.altitude_m,
         heading_deg: s.extra?.heading_deg ?? null, gimbal_pitch_deg: s.extra?.gimbal_pitch_deg ?? null }));
   }
+  /** Persist a validated Gemini analysis record. */
   async insertAnalysis(record) {
     this.analyses.push(record);
   }
+  /** Return the newest stored analysis records up to the requested limit. */
   async latestAnalyses(limit = 10) {
     return this.analyses.slice(-limit).reverse();
   }
+  /** Store an accepted fire sighting and its episode identity. */
   async insertDetection(record) {
     this.detections.push(record);
   }
+  /** Check whether any sighting already belongs to the requested episode. */
   async episodeExists(episodeId) {
     return this.detections.some((d) => d.episode_id === episodeId);
   }
+  /** Build the latest incident from its stored episode sightings. */
   async latestIncident() {
     if (this.detections.length === 0) return null;
     const last = this.detections.reduce((a, b) => (a.detected_at >= b.detected_at ? a : b));
     return summarizeEpisode(this.detections.filter((d) => d.episode_id === last.episode_id));
   }
+  /** Read recent detection records in newest-first order. */
   async detectionHistory({ limit = 50 } = {}) {
     return this.detections.slice().sort((a, b) => b.detected_at.localeCompare(a.detected_at)).slice(0, limit);
   }
+  /** Look up a stored sighting by its evidence identifier. */
   async detectionById(id) {
     return this.detections.find((d) => d.id === id) ?? null;
   }
+  /** Apply an incident status such as dismissal to the matching episode. */
   async setEpisodeStatus(episodeId, status) {
     let n = 0;
     for (const d of this.detections) if (d.episode_id === episodeId) { d.status = status; n++; }
     return n;
   }
+  /** Persist a validated operational-plan record. */
   async insertPlan(record) {
     this.plans.push(record);
   }
+  /** Return the newest stored plans up to the requested limit. */
   async latestPlans(limit = 5) {
     return this.plans.slice(-limit).reverse();
   }
@@ -202,14 +222,17 @@ export class MemoryStorage {
 // must never silently switch to memory: errors surface as 503 and the status
 // endpoint reports the database as unavailable.
 export class PgStorage {
+  /** Initialize this storage adapter's backing state. */
   constructor(pool) {
     this.pool = pool;
     this.kind = 'postgres';
     this.lastError = null;
   }
+  /** Report configured storage health without claiming an unverified connection. */
   status() {
     return this.lastError ? 'postgres-unavailable' : 'postgres';
   }
+  /** Run a PostgreSQL query while retaining connection health/error state. */
   async q(sql, params = []) {
     try {
       const result = await this.pool.query(sql, params);
@@ -220,6 +243,7 @@ export class PgStorage {
       throw new ApiError(503, `storage failure: ${err.message}`);
     }
   }
+  /** Store a validated timestamped telemetry sample in this adapter. */
   async insertTelemetry(s) {
     await this.q(
       `INSERT INTO telemetry (observed_at, drone_id, provenance, battery_pct, altitude_m,
@@ -229,10 +253,12 @@ export class PgStorage {
         s.ground_speed_mps, s.latitude, s.longitude, s.state, JSON.stringify(s)],
     );
   }
+  /** Return the newest stored telemetry sample, or no sample. */
   async latestTelemetry() {
     const rows = await this.q('SELECT payload FROM telemetry ORDER BY observed_at DESC LIMIT 1');
     return rows.length ? rows[0].payload : null;
   }
+  /** Read recent telemetry in newest-first order with optional time/row limits. */
   async telemetryHistory({ limit = 50, sinceMs = null } = {}) {
     const since = sinceMs !== null ? new Date(sinceMs).toISOString() : null;
     const rows = await this.q(
@@ -255,6 +281,7 @@ export class PgStorage {
     );
     return rows.map((r) => ({ ...r, bucket: new Date(r.bucket).toISOString() }));
   }
+  /** Read chronological positioned telemetry plus available camera heading/pitch. */
   async flightPath({ sinceMs, limit = 600 }) {
     const rows = await this.q(
       `SELECT observed_at, latitude, longitude, altitude_m, heading_deg, gimbal_pitch_deg FROM (
@@ -272,16 +299,19 @@ export class PgStorage {
       heading_deg: r.heading_deg, gimbal_pitch_deg: r.gimbal_pitch_deg,
     }));
   }
+  /** Persist a validated Gemini analysis record. */
   async insertAnalysis(record) {
     await this.q(
       'INSERT INTO analyses (id, created_at, evidence_at, episode_id, payload) VALUES ($1, $2, $3, $4, $5)',
       [record.id, record.created_at, record.evidence_at, record.episode_id ?? null, JSON.stringify(record)],
     );
   }
+  /** Return the newest stored analysis records up to the requested limit. */
   async latestAnalyses(limit = 10) {
     const rows = await this.q('SELECT payload FROM analyses ORDER BY created_at DESC LIMIT $1', [limit]);
     return rows.map((r) => r.payload);
   }
+  /** Store an accepted fire sighting and its episode identity. */
   async insertDetection(d) {
     await this.q(
       `INSERT INTO detections (id, detected_at, episode_id, source, label, confidence,
@@ -291,10 +321,12 @@ export class PgStorage {
         d.fire.latitude, d.fire.longitude, d.status, d.image_path, JSON.stringify(d)],
     );
   }
+  /** Check whether any sighting already belongs to the requested episode. */
   async episodeExists(episodeId) {
     const rows = await this.q('SELECT 1 FROM detections WHERE episode_id = $1 LIMIT 1', [episodeId]);
     return rows.length > 0;
   }
+  /** Build the latest incident from its stored episode sightings. */
   async latestIncident() {
     const rows = await this.q(
       `SELECT payload, status FROM detections
@@ -303,34 +335,40 @@ export class PgStorage {
     );
     return summarizeEpisode(rows.map((r) => ({ ...r.payload, status: r.status })));
   }
+  /** Read recent detection records in newest-first order. */
   async detectionHistory({ limit = 50 } = {}) {
     const rows = await this.q(
       'SELECT payload, status FROM detections ORDER BY detected_at DESC LIMIT $1', [limit],
     );
     return rows.map((r) => ({ ...r.payload, status: r.status }));
   }
+  /** Look up a stored sighting by its evidence identifier. */
   async detectionById(id) {
     const rows = await this.q('SELECT payload, status FROM detections WHERE id = $1 LIMIT 1', [id]);
     return rows.length ? { ...rows[0].payload, status: rows[0].status } : null;
   }
+  /** Apply an incident status such as dismissal to the matching episode. */
   async setEpisodeStatus(episodeId, status) {
     const rows = await this.q(
       'UPDATE detections SET status = $2 WHERE episode_id = $1 RETURNING id', [episodeId, status],
     );
     return rows.length;
   }
+  /** Persist a validated operational-plan record. */
   async insertPlan(record) {
     await this.q(
       'INSERT INTO plans (id, created_at, episode_id, payload) VALUES ($1, $2, $3, $4)',
       [record.id, record.created_at, record.episode_id ?? null, JSON.stringify(record)],
     );
   }
+  /** Return the newest stored plans up to the requested limit. */
   async latestPlans(limit = 5) {
     const rows = await this.q('SELECT payload FROM plans ORDER BY created_at DESC LIMIT $1', [limit]);
     return rows.map((r) => r.payload);
   }
 }
 
+/** Create a TLS-configured pool with idle-error recovery and bounded connection startup. */
 export async function createPgPool({ databaseUrl, pgCaFile }) {
   const pg = await import('pg');
   const config = { connectionString: databaseUrl };
@@ -350,6 +388,7 @@ export async function createPgPool({ databaseUrl, pgCaFile }) {
   return pool;
 }
 
+/** Select explicit memory storage or configured PostgreSQL, preserving unavailable-database errors. */
 export async function createStorage({ databaseUrl, pgCaFile } = {}) {
   if (!databaseUrl) return new MemoryStorage();
   let pool;
@@ -358,7 +397,7 @@ export async function createStorage({ databaseUrl, pgCaFile } = {}) {
   } catch {
     // DATABASE_URL is set but the driver is missing — report an unavailable
     // configured database rather than silently falling back to memory.
-    const broken = new PgStorage({ query: async () => { throw new Error('pg package not installed'); } });
+    const broken = new PgStorage({ /* Raise the configured database-unavailable error instead of silently using memory. */ query: async () => { throw new Error('pg package not installed'); } });
     broken.lastError = 'pg package not installed';
     return broken;
   }
@@ -453,6 +492,7 @@ function describeDetection(detection) {
     + ` Fire details: ${JSON.stringify(detection.details ?? null)}.${testNote}`;
 }
 
+/** Build Gemini text/image inputs from the selected fresh evidence and detection context. */
 export function buildAnalysisParts(evidence) {
   const parts = [{ text: ANALYSIS_INSTRUCTIONS }];
   const detectionText = describeDetection(evidence.detection);
@@ -476,16 +516,19 @@ export function buildAnalysisParts(evidence) {
   return parts;
 }
 
+/** Read the first Gemini candidate's content parts, defaulting to an empty list. */
 function candidateParts(apiResponse) {
   return apiResponse?.candidates?.[0]?.content?.parts ?? [];
 }
 
+/** Collect model text and reject responses that contain no usable text output. */
 function extractGeminiText(apiResponse) {
   const text = candidateParts(apiResponse).map((p) => p.text ?? '').join('');
   if (!text) throw new ApiError(502, 'Gemini response contained no text content');
   return text;
 }
 
+/** Parse the model's structured JSON and surface malformed output as an upstream error. */
 function parseGeminiJson(apiResponse) {
   try {
     return JSON.parse(extractGeminiText(apiResponse));
@@ -495,6 +538,7 @@ function parseGeminiJson(apiResponse) {
   }
 }
 
+/** Check the string-array fields required by the response contract. */
 const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
 // Optional derived-wind block: absent is fine, present must be well-formed.
@@ -557,6 +601,7 @@ export function fcWindEstimate(sample) {
   };
 }
 
+/** Validate and normalize scene analysis, uncertainty and optional derived-wind fields. */
 export function validateAnalysisContent(parsed) {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ApiError(502, 'Gemini output is not a JSON object');
@@ -626,11 +671,13 @@ const PLAN_SCHEMA = {
 
 /** Phrases a plan must not contain: nothing the drone sees can certify ground as safe. */
 const UNSAFE_WORDING = /\b(safe|safer|clear|cleared|pre-cleared|secure|secured)(?:[\s/-]+(?!(?:the|a|an|this|that|all|any|of)\b)[a-z]+){0,2}?[\s/-]+(routes?|roads?|paths?|corridors?|zones?|areas?|passages?|exits?|ways? out)\b|\b(routes?|roads?|paths?|corridors?|zones?|areas?)\s+(is|are)\s+(now\s+)?(safe|clear|cleared)\b/gi;
+/** Flag claims that a route or area is safe/clear for human review. */
 export function findUnsafeWording(plan) {
   const text = JSON.stringify(plan);
   return [...new Set((text.match(UNSAFE_WORDING) ?? []).map((m) => m.toLowerCase()))];
 }
 
+/** Validate the structured plan and normalize actions, lists and required text fields. */
 export function validatePlanContent(parsed) {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ApiError(502, 'Gemini plan is not a JSON object');
@@ -654,6 +701,7 @@ export function validatePlanContent(parsed) {
       rationale: typeof a.rationale === 'string' ? a.rationale : null,
     }))
     .sort((a, b) => a.priority - b.priority);
+  /** Keep an optional plan string list, or return an empty list for invalid/missing input. */
   const list = (v) => (isStringArray(v) ? v : []);
   return {
     title: parsed.title,
@@ -676,6 +724,7 @@ export const DEMO_CONTEXT = [
   'Write the assessment for the incident commander exactly as for any live detection.',
 ].join(' ');
 
+/** Copy JSON object input while rejecting arrays and scalar values. */
 const plainObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? JSON.parse(JSON.stringify(v)) : null);
 
 // Default transport: real Gemini generateContent call. Takes the full request
@@ -696,8 +745,10 @@ function upstreamMessage(status, detail) {
   return `Gemini upstream returned HTTP ${status}${message ? `: ${message}` : ''}`;
 }
 
+/** Build bounded Gemini calls with transient retries, model fallback and silence cooldown. */
 export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchImpl = fetch, retryDelayMs = 1500, timeoutMs: defaultTimeoutMs = GEMINI_UPSTREAM_TIMEOUT_MS, now = () => Date.now() }) {
   const silentUntil = new Map();
+  /** Call one model and keep its abort deadline active through response-body decoding. */
   async function callModel(name, requestBody, timeoutMs) {
     const url =
       `https://generativelanguage.googleapis.com/v1beta/models/${name}:generateContent`;
@@ -733,6 +784,7 @@ export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchI
       clearTimeout(timer);
     }
   }
+  /** Try available models, record the actual respondent and preserve per-request timeouts. */
   async function geminiTransport(requestBody, { timeoutMs = defaultTimeoutMs } = {}) {
     const chain = [model, ...fallbackModels];
     // Skip models that recently went silent, unless every model has.
@@ -764,6 +816,7 @@ export function makeGeminiTransport({ apiKey, model, fallbackModels = [], fetchI
 
 // -------------------------------------------------------------------- http
 
+/** Read request bytes up to the explicit size limit and reject oversized bodies. */
 async function readBody(req, maxBytes = MAX_JSON_BODY) {
   const chunks = [];
   let size = 0;
@@ -775,6 +828,7 @@ async function readBody(req, maxBytes = MAX_JSON_BODY) {
   return Buffer.concat(chunks);
 }
 
+/** Decode a bounded request body as JSON and report a client error for invalid syntax. */
 async function readJson(req) {
   const raw = await readBody(req);
   if (raw.length === 0) return {};
@@ -785,18 +839,21 @@ async function readJson(req) {
   }
 }
 
+/** Extract the bearer token from the Authorization header. */
 function tokenFrom(req) {
   const header = req.headers.authorization ?? '';
   const match = /^Bearer (.+)$/.exec(header);
   return match ? match[1] : null;
 }
 
+/** Compare token bytes with a timing-safe equality check. */
 function tokenEquals(a, b) {
   const ba = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
   return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
 }
 
+/** Send uncached JSON with the requested status and additional response headers. */
 function sendJson(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -807,12 +864,14 @@ function sendJson(res, status, body, extraHeaders = {}) {
   res.end(payload);
 }
 
+/** Expose intentional API errors while hiding internal exception details. */
 function sendError(res, err) {
   const status = err instanceof ApiError ? err.status : 500;
   const message = err instanceof ApiError ? err.message : 'internal error';
   sendJson(res, status, { error: message });
 }
 
+/** Stream a file only when its normalized path stays inside the configured static directory. */
 async function serveStatic(res, staticDir, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : decodeURIComponent(urlPath).replace(/^\/+/, '');
   const target = path.normalize(path.join(staticDir, rel));
@@ -841,11 +900,13 @@ function isLocalRequest(req) {
   return LOOPBACK_ADDRESSES.has(req.socket.remoteAddress) && LOOPBACK_HOSTS.has(host);
 }
 
+/** Identify PNG versus JPEG for archived detection-image delivery. */
 function imageType(buf) {
   if (buf.length > 3 && buf[0] === 0x89 && buf[1] === 0x50) return 'image/png';
   return 'image/jpeg';
 }
 
+/** Construct the authenticated HTTP handler with injectable storage, clock and external services. */
 export function createApp({
   ingestToken,
   dashboardToken,
@@ -887,6 +948,7 @@ export function createApp({
     ? readFile(peopleFile, 'utf8').then((text) => { people = PersonSearch.fromJSON(JSON.parse(text), personSearch); }).catch(() => {})
     : Promise.resolve();
 
+  /** Debounce an atomic local search-state save without keeping the process alive. */
   function savePeople() {
     if (!peopleFile || state.peopleSaveTimer) return;
     state.peopleSaveTimer = setTimeout(async () => {
@@ -902,7 +964,9 @@ export function createApp({
     state.peopleSaveTimer.unref?.();
   }
 
+  /** Map a validated observation identifier to its local JPEG evidence path. */
   function cropPath(obsId) { return dataDir ? path.join(dataDir, 'people', 'crops', `${obsId.replace(/[^A-Za-z0-9._-]/g, '_')}.jpg`) : null; }
+  /** Save an accepted observation crop when persistent data storage is enabled. */
   async function saveCrop(obsId, jpeg) {
     const file = cropPath(obsId);
     if (!file) return false;
@@ -930,6 +994,7 @@ export function createApp({
     if (!fire) throw new ApiError(404, 'no demo fire with that id');
     return scenarioFromExample(fire);
   }
+  /** Create/reset the chosen deterministic search and advance it to the requested time. */
   function demoSimAt(t, id = 'utsc') {
     let sim = state.demoSims.get(id);
     if (!sim || t < sim.t) {
@@ -940,6 +1005,7 @@ export function createApp({
     return sim;
   }
 
+  /** Enforce the distinct ingest or dashboard token for this request. */
   function requireAuth(req, kind) {
     const token = tokenFrom(req);
     const expected = kind === 'ingest' ? ingestToken : dashboardToken;
@@ -948,6 +1014,7 @@ export function createApp({
     }
   }
 
+  /** Reject browser API calls from origins outside the configured allowlist. */
   function checkOrigin(req) {
     const origin = req.headers.origin;
     if (!isOriginAllowed(origin, allowedOrigins)) {
@@ -956,12 +1023,14 @@ export function createApp({
     return origin;
   }
 
+  /** Build CORS response headers for an allowed requesting origin. */
   function corsHeaders(origin) {
     return isOriginAllowed(origin, allowedOrigins) && origin
       ? { 'access-control-allow-origin': origin, vary: 'Origin' }
       : {};
   }
 
+  /** Update service health timestamps and the latest inference failure. */
   function recordGeminiResult(err) {
     if (err) {
       state.gemini.lastError = err.message;
@@ -972,6 +1041,7 @@ export function createApp({
     }
   }
 
+  /** Read the latest incident and evaluate activity against dismissal/age limits. */
   async function activeIncident() {
     const incident = await storage.latestIncident();
     if (!incident) return null;
@@ -980,6 +1050,7 @@ export function createApp({
     return { ...incident, active };
   }
 
+  /** Archive an accepted sighting's image and return its stored evidence reference. */
   async function saveDetectionImage(id, jpeg) {
     if (!dataDir || !jpeg) return null;
     const dir = path.join(dataDir, 'detections');
@@ -989,6 +1060,7 @@ export function createApp({
     return path.relative(dataDir, file).split(path.sep).join('/');
   }
 
+  /** Load archived detection evidence when it is available locally. */
   async function loadDetectionImage(record) {
     if (!record?.image_path || !dataDir) return null;
     try {
@@ -1003,6 +1075,7 @@ export function createApp({
   // functionCall turn and our functionResponse turn. After MAX_TOOL_ROUNDS
   // we forbid further calls and require the structured assessment.
   async function runAnalysis(evidence, { trigger, episodeId = null }) {
+    /** Serve a bounded Gemini read-only evidence tool using the selected storage adapter. */
     const executeTool = async (name, args = {}) => {
       if (name === 'get_latest_telemetry') {
         return { sample: await storage.latestTelemetry() };
@@ -1083,6 +1156,7 @@ export function createApp({
                      360 - Math.abs(derived.direction_deg - fcWind.direction_deg))
           : 0;
         if (dSpeed > 3 || dDir > 30) {
+          /** Format each competing wind estimate with metres/second and an available toward-bearing. */
           const fmt = (w) => `${w.speed_mps} m/s` + (w.direction_deg != null ? ` toward ${Math.round(w.direction_deg)}°` : '');
           content.unknowns = [...content.unknowns,
             `Wind disagreement — flight-controller estimate ${fmt(fcWind)} vs tilt-derived estimate ${fmt(derived)}.`];
@@ -1132,6 +1206,7 @@ export function createApp({
     state.autoTimer.unref?.();
   }
 
+  /** Send one MJPEG part to current viewers, handling disconnected/slow clients. */
   function broadcastFrame(frame) {
     const head = `--${VIDEO_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.jpeg.length}\r\n`
       + `X-Captured-At: ${new Date(frame.capturedAtMs).toISOString()}\r\n`
@@ -1144,12 +1219,14 @@ export function createApp({
     }
   }
 
+  /** Estimate recent delivered video rate from the frame-arrival window. */
   function videoFps() {
     const cutoff = now() - 2000;
     state.frameTimes = state.frameTimes.filter((t) => t >= cutoff);
     return state.frameTimes.length / 2;
   }
 
+  /** Update the latest JPEG/freshness state and feed existing multipart viewers. */
   function acceptCameraFrame(jpeg, capturedAtMs, detections = '[]') {
     const frame = { jpeg, capturedAtMs, detections };
     state.latestFrame = frame;
@@ -1158,6 +1235,7 @@ export function createApp({
     broadcastFrame(frame);
   }
 
+  /** Validate tile coordinates, serve cached imagery or fetch and cache a bounded upstream tile. */
   async function handleTile(res, layer, z, x, y) {
     const zi = Number(z), xi = Number(x), yi = Number(y);
     if (!TILE_SOURCES[layer] || !Number.isInteger(zi) || zi < 0 || zi > 19
@@ -1193,6 +1271,7 @@ export function createApp({
     res.end(body);
   }
 
+  /** Dispatch authenticated API routes for evidence, incidents, planning, leads and replay. */
   async function handleApi(req, res, url) {
     const pathname = url.pathname;
 
@@ -1718,7 +1797,7 @@ export function createApp({
     throw new ApiError(404, 'route not found');
   }
 
-  return async function handler(req, res) {
+  return /* Apply CORS/error handling and dispatch tiles, API calls or static frontend files. */ async function handler(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
     const origin = req.headers.origin;
@@ -1763,6 +1842,7 @@ export function createApp({
   };
 }
 
+/** Read local configuration, select services and start the loopback HTTP server. */
 async function main() {
   const repoRoot = fileURLToPath(new URL('..', import.meta.url));
   const ingestToken = process.env.INGEST_TOKEN;

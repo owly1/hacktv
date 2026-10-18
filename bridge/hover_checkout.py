@@ -18,6 +18,7 @@ from terminal_controls import commands as terminal_commands
 
 class HoverCheckout(QROrbitBridge):
     def __init__(self, args, publisher, detector):
+        """Initialize a one-attempt terminal hover with explicit execution and landing state."""
         marker = Path(__file__).with_name("orbit-marker.txt").read_text().strip()
         super().__init__(args, publisher, detector, None, Limits(), marker)
         self.takeoff_used = False
@@ -25,15 +26,18 @@ class HoverCheckout(QROrbitBridge):
         self.takeoff_lock = threading.RLock()
 
     def _request_landing(self, force=True):
+        """Cancel pending flight work and request landing without reopening a completed session."""
         # Order TakeOff and LAND on the same connection. A landing key which
         # wins this lock must prevent a subsequently queued takeoff.
         with self.takeoff_lock:
             super()._request_landing(force=force)
 
     def _detect_step(self, image, captured):
+        """Leave detection disabled for the standalone hover checkout."""
         pass  # This checkout has no QR-triggered action or fire detection.
 
     def _connection_step(self):
+        """Supervise connection/mission state without reconnecting an active flight."""
         super()._connection_step()
         if not self.takeoff_used:
             reason = self.checkout_reason(starting=True)
@@ -43,6 +47,7 @@ class HoverCheckout(QROrbitBridge):
                 self.report("preflight", message)
 
     def _ready_message(self):
+        """Describe whether this session can accept the typed takeoff request."""
         return ("READY: type TAKEOFF TEST + Enter for one real checkout" if self.args.execute else
                 "READY: reception only; restart with -Execute for the operator flight test")
 
@@ -51,9 +56,11 @@ class HoverCheckout(QROrbitBridge):
         pass
 
     def _hover_observed_message(self):
+        """Describe the bounded hover before its automatic landing."""
         return "hover observed; landing after the short checkout"
 
     def checkout_reason(self, starting=False):
+        """Return the current state/freshness/battery/attitude reason flight is refused."""
         if not self.connected or not self._aircraft_link() or self.input_closed.is_set():
             return "aircraft or operator terminal is disconnected"
         if self.abort_flight.is_set():
@@ -90,15 +97,18 @@ class HoverCheckout(QROrbitBridge):
         return None
 
     def _overlay_lines(self):
+        """Present execution mode, readiness and landing input over the video."""
         t = self.telemetry or {}
         return ["HOVER CHECKOUT: " + ("LIVE / TERMINAL CONTROL" if self.args.execute else "RECEPTION ONLY"),
                 f"Battery: {t.get('battery_pct')} %", f"State: {t.get('state')}",
                 f"Height above takeoff: {t.get('altitude_m')} m", "X or Esc requests landing"]
 
     def _takeoff_message(self):
+        """Describe the operator-requested takeoff in flight-event output."""
         return "operator requested one takeoff checkout"
 
     def _hover(self):
+        """Execute one takeoff and bounded hover, with landing in guaranteed cleanup."""
         pending = None
         self.hold_connection = True  # Also land if TakeOff raises after transmission.
         try:
@@ -145,6 +155,7 @@ class HoverCheckout(QROrbitBridge):
                 self.running = False
 
     def _terminal(self):
+        """Parse takeoff/landing input while making cancellation win over new work."""
         try:
             for command in terminal_commands(sys.stdin, stopped=lambda: not self.running):
                 if not self.running or self.land_confirmed:
@@ -168,12 +179,14 @@ class HoverCheckout(QROrbitBridge):
             self._request_landing(force=False)
 
     def _print_instructions(self):
+        """Print the mode's arming and immediate-landing controls."""
         print("HOVER CHECKOUT: disarmed" if self.args.execute else "RECEPTION ONLY: no flight commands", flush=True)
         print("TAKEOFF TEST + Enter requests one takeoff, up to 3 seconds of hover, then landing.", flush=True)
         print("Esc or X requests LAND without Enter. LAND + Enter and Ctrl+C also request landing.", flush=True)
         print("Takeoff height is firmware-controlled; this test requests landing if measured altitude exceeds 1.5 m.", flush=True)
 
     def run(self):
+        """Run reception and the operator input thread, cleaning up the one-shot session."""
         self._print_instructions()
         status = threading.Thread(target=self._publish_status, daemon=True)
         status.start()
@@ -194,6 +207,7 @@ class HoverCheckout(QROrbitBridge):
 
 
 def main():
+    """Validate hover CLI arguments and install shutdown handlers before starting reception."""
     parser = argument_parser()
     parser.description = __doc__
     parser.add_argument("--execute", action="store_true")
@@ -215,6 +229,7 @@ def main():
                            FireDetector(args.model, args.conf, use_yolo=False))
     import signal
     def stop(signum, frame):
+        """Request landing and stop reception when the process receives a termination signal."""
         bridge._request_landing(force=False)
         bridge.running = False
     for name in ("SIGTERM", "SIGHUP", "SIGINT"):

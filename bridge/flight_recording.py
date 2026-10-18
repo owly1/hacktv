@@ -16,6 +16,7 @@ import time
 
 
 def json_safe(value):
+    """Convert diagnostic values to JSON-compatible data, including non-finite numbers."""
     if isinstance(value, float) and not math.isfinite(value):
         return None
     if isinstance(value, dict):
@@ -27,6 +28,7 @@ def json_safe(value):
 
 class FlightRecorder:
     def __init__(self, root, frame_capacity=60):
+        """Create a local session directory, bounded queues and a background evidence writer."""
         name = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-')+secrets.token_hex(4)
         self.path = Path(root)/'flights'/name
         self.path.mkdir(parents=True, exist_ok=False)
@@ -40,6 +42,7 @@ class FlightRecorder:
         self.event('recording_started', {'format': 'mjpeg', 'path': str(self.path)})
 
     def frame(self, jpeg, captured_at):
+        """Queue a JPEG/capture time without blocking; count discarded recording frames."""
         with self.lock:
             if self.stopping.is_set() or self.stats['error']:
                 return
@@ -49,6 +52,7 @@ class FlightRecorder:
                 self.stats['dropped_frames'] += 1
 
     def event(self, kind, data):
+        """Queue a timestamped flight diagnostic independently of the video backlog."""
         with self.lock:
             if self.stopping.is_set() or self.stats['error']:
                 return
@@ -59,6 +63,7 @@ class FlightRecorder:
                 self.stats['dropped_events'] += 1
 
     def _write(self):
+        """Drain events/video to disk and stop recording on errors or low free space."""
         try:
             with (self.path/'video.mjpeg').open('wb') as video, \
                  (self.path/'frames.jsonl').open('w') as index, \
@@ -96,6 +101,7 @@ class FlightRecorder:
             self._summary(True)
 
     def _summary(self, closed):
+        """Atomically refresh recording counts/errors; disk failure must not block landing."""
         try:
             target = self.path/'recording.json'
             temp = target.with_suffix('.tmp')
@@ -105,6 +111,7 @@ class FlightRecorder:
             pass  # Disk failure must never block landing or flight supervision.
 
     def close(self):
+        """Signal writer shutdown and wait a bounded time for queued evidence to drain."""
         with self.lock:
             self.stopping.set()
         self.worker.join(timeout=5)

@@ -34,6 +34,7 @@ SOURCES = [p for p in (ROOT / 'bridge').iterdir()
 
 
 def settings():
+    """Merge ignored Pi settings with defaults and validate SSH/deployment fields."""
     value = {**DEFAULTS, **(json.loads(CONFIG.read_text()) if CONFIG.exists() else {})}
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.:%_-]*', value['host']):
         raise ValueError('Invalid Pi hostname/address.')
@@ -47,6 +48,7 @@ def settings():
 
 
 def local_env():
+    """Read required local tokens/port through Node's dotenv parser without logging secrets."""
     # Use Node's own dotenv parser. Secrets remain in captured memory, never logs/argv.
     result = subprocess.run(['node', '--env-file=' + str(ROOT / '.env'), '-e',
         'console.log(JSON.stringify(Object.fromEntries(["INGEST_TOKEN","DASHBOARD_TOKEN",'
@@ -66,6 +68,7 @@ def local_env():
 
 
 def backend_status(env):
+    """Verify the running local backend matches this checkout's contract and dashboard token."""
     base = f"http://127.0.0.1:{env['PORT']}"
     with urlopen(base + '/api/session', timeout=3) as response:
         session = json.load(response)
@@ -77,6 +80,7 @@ def backend_status(env):
 
 
 def ssh_args(config, interactive=False):
+    """Build strict-identity SSH options, allowing a first interactive host-key check only when requested."""
     return ['ssh', '-i', str(KEY), '-o', 'IdentitiesOnly=yes',
             '-o', 'UserKnownHostsFile=' + str(KNOWN), '-o', 'HostKeyAlias=emberwatch-pi',
             '-o', 'StrictHostKeyChecking=' + ('ask' if interactive else 'yes'),
@@ -86,11 +90,13 @@ def ssh_args(config, interactive=False):
 
 
 def remote(config, command, data=None, interactive=False):
+    """Run one bounded authenticated command on the configured provisioned Pi."""
     return subprocess.run(ssh_args(config, interactive) + ['-T', '-l', config['user'],
                           config['host'], command], input=data, check=True, timeout=60 if not interactive else None)
 
 
 def fetch_flights(config):
+    """Copy this deployment's local flight evidence back and generate offline review artifacts."""
     destination = ROOT/'anafi_out'/'flights'
     destination.mkdir(parents=True, exist_ok=True)
     host = '['+config['host']+']' if ':' in config['host'] else config['host']
@@ -101,6 +107,7 @@ def fetch_flights(config):
 
 
 def bundle(config, env):
+    """Package receiver source plus an owner-only ingest-token environment file for SSH deployment."""
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode='w:gz') as archive:
         for source in SOURCES:
@@ -113,6 +120,7 @@ def bundle(config, env):
 
 
 def sync_clock(config):
+    """Set the provisioned Pi's clock near a second boundary for capture freshness checks."""
     # The provisioned helper accepts whole seconds. Send near the start of a
     # second so SSH latency + rounding do not make fresh frames over 0.8 s old.
     time.sleep((1.05 - time.time() % 1) % 1)
@@ -120,6 +128,7 @@ def sync_clock(config):
 
 
 def prepare_command(config):
+    """Build guarded service/Wi-Fi preparation that refuses competing aircraft receivers."""
     return '\n'.join([
         'set -eu',
         "if ps -C python,python3,python3.11 -o args= | grep -qE '(hover_checkout|qr_orbit_bridge|qr_takeoff_demo|qr_preset_demo|qr_auto_circle)\\.py'; then",
@@ -134,6 +143,7 @@ def prepare_command(config):
 
 
 def stop_observer_command(config):
+    """Build a stop request scoped to this Mac's observation process, excluding flight sessions."""
     # Only the read-only observer in this Mac's deployment can be interrupted.
     # No process from a flight mode or another laptop's directory is selected.
     code = '''import os, signal
@@ -157,6 +167,7 @@ print(f'Requested stop for {count} observation receiver(s). Flight sessions were
 
 
 def runtime_command(config, mode, execute, native=False):
+    """Build the chosen Pi receiver/flight command with its explicit execution and video options."""
     if mode not in ("observe", "qr-preset", "hover", "qr-circle", "qr-demo"):
         raise ValueError("Unknown receiver mode")
     directory = shlex.quote(config['directory'])
@@ -193,18 +204,21 @@ def runtime_command(config, mode, execute, native=False):
 
 
 def receiver_ssh(config, env, command):
+    """Build the foreground SDK SSH session and loopback-only reverse backend tunnel."""
     return ssh_args(config) + ['-tt', '-o', 'ExitOnForwardFailure=yes', '-R',
         f"127.0.0.1:{config['pi_port']}:127.0.0.1:{env['PORT']}",
         '-l', config['user'], config['host'], command]
 
 
 def start_fire_monitor(env):
+    """Start laptop fire detection using credentials passed only in the child environment."""
     return subprocess.Popen([sys.executable, '-u', str(ROOT / 'bridge/fire_monitor.py'),
         '--backend', f"http://127.0.0.1:{env['PORT']}"], cwd=ROOT,
         env={**os.environ, 'INGEST_TOKEN': env['INGEST_TOKEN'], 'DASHBOARD_TOKEN': env['DASHBOARD_TOKEN']})
 
 
 def stop_child(process):
+    """Terminate a child process and bound the cleanup wait before forced process exit."""
     if process.poll() is None:
         process.terminate()
         try:
@@ -286,6 +300,7 @@ def supervise_observer(config, env, command):
 
 
 def main():
+    """Dispatch Mac setup, deployment, observation, rehearsal and recording CLI actions."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('doctor', help='Check laptop imports, Ethernet and backend; no drone connection')

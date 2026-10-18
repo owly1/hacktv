@@ -22,6 +22,7 @@ from terminal_controls import commands as terminal_commands
 
 class QRPresetDemo(HoverCheckout):
     def __init__(self, args, publisher, detector, limits, marker):
+        """Initialize the typed-arm fixed-path preset and its one-shot QR recognition state."""
         super().__init__(args, publisher, detector)
         self.limits = limits
         self.trigger = RecognitionTrigger(marker, limits.arm_seconds)
@@ -32,10 +33,12 @@ class QRPresetDemo(HoverCheckout):
         self.last_trigger_reason = None
 
     def _ready_message(self):
+        """Describe reception-only or typed-arm preset readiness."""
         return "READY: ARM QR PRESET + Enter, then show the selected QR; " + (
             "recognition will request real takeoff" if self.args.execute else "REHEARSAL ONLY, no motor commands")
 
     def _print_instructions(self):
+        """Print preset placement, arming phrase and landing controls."""
         print("QR PRESET: DISARMED" if self.args.execute else "QR PRESET: REHEARSAL / NO MOTOR COMMANDS", flush=True)
         print("NO OBJECT TRACKING. Place the intended circle center 1 m ahead of the aligned launch point.", flush=True)
         print("ARM QR PRESET + Enter, then five fresh selected-QR frames: takeoff, one preset circle, nearby hover.", flush=True)
@@ -43,9 +46,11 @@ class QRPresetDemo(HoverCheckout):
         print("X/Esc needs no Enter; LAND + Enter and Ctrl+C also request controlled landing.", flush=True)
 
     def _hover_observed_message(self):
+        """Describe the fixed circle/nearby hold that follows takeoff hover."""
         return "hover established; beginning the preset path relative to the launch heading"
 
     def _overlay_lines(self):
+        """Display QR arming, current phase and the preset's fixed-path limitation."""
         sample = self.telemetry or {}
         return ["QR PRESET: " + ("LIVE" if self.args.execute else "REHEARSAL / NO MOTOR COMMANDS"),
                 "OBJECT POSITION NOT TRACKED; manually aligned preset path",
@@ -53,6 +58,7 @@ class QRPresetDemo(HoverCheckout):
                 f"State: {sample.get('state')}; height: {sample.get('altitude_m')} m; X requests landing"]
 
     def _detect_step(self, image, captured):
+        """Feed distinct selected-QR observations into the typed-arm recognition gate."""
         if captured == self.last_processed_frame:
             return
         self.last_processed_frame = captured
@@ -68,10 +74,12 @@ class QRPresetDemo(HoverCheckout):
             self.observation = observation
 
     def _connection_step(self):
+        """Supervise preset readiness on the owned connection without reconnecting airborne work."""
         super()._connection_step()
         self._supervise_once()
 
     def _supervise_once(self):
+        """Start one recognized preset or cancel it when required state is no longer valid."""
         with self.trigger_lock:
             if self.trigger.state != "armed":
                 return
@@ -106,6 +114,7 @@ class QRPresetDemo(HoverCheckout):
             self.report("preflight", reason)
 
     def _terminal(self):
+        """Read the preset arm phrase while prioritizing landing/cancellation input."""
         try:
             for command in terminal_commands(sys.stdin, stopped=lambda: not self.running):
                 if not self.running or self.land_confirmed:
@@ -136,6 +145,7 @@ class QRPresetDemo(HoverCheckout):
             self._request_landing(force=False)
 
     def _preset_vehicle(self):
+        """Build the current vehicle sample consumed by pure fixed-path flight logic."""
         sample = self.telemetry or {}
         ages = self.sensor_ages.ages if self.sensor_ages else {}
         attitude = sample.get("attitude_deg") or {}
@@ -149,12 +159,14 @@ class QRPresetDemo(HoverCheckout):
                        not self.input_closed.is_set())
 
     def _after_hover(self):
+        """Fly one fixed preset circle, bounded nearby hover and confirmed landing cleanup."""
         fly_preset(self.driver, self.limits, self._preset_vehicle, self.abort_flight, self.report,
                    hold_seconds=self.args.hold_seconds, flight_started=self.flight_started,
                    clock=time.monotonic, sleep=time.sleep)
 
 
 def main():
+    """Validate the typed-arm preset options and start its explicit execution or rehearsal session."""
     parser = argument_parser()
     parser.description = __doc__
     parser.add_argument("--execute", action="store_true")
@@ -179,6 +191,7 @@ def main():
     bridge = QRPresetDemo(args, Publisher(args.out_dir, args.backend, token),
                           FireDetector(args.model, args.conf, use_yolo=False), limits, marker)
     def stop(signum, frame):
+        """Cancel the preset and request landing when the process is terminated."""
         bridge._request_landing(force=False)
         bridge.running = False
     for name in ("SIGINT", "SIGTERM", "SIGHUP"):

@@ -21,6 +21,7 @@ from qr_orbit_core import Limits, Marker, Trigger
 
 class Rehearsal:
     def __init__(self, backend, expected, image=None):
+        """Configure a motor-free selected-QR rehearsal using live snapshots or a labeled test image."""
         self.backend, self.image = backend, image
         self.expected, self.limits = expected, Limits()
         self.trigger = Trigger(expected, self.limits)
@@ -32,6 +33,7 @@ class Rehearsal:
         self.stop = threading.Event()
 
     def action(self, action):
+        """Apply browser arm/reset actions only to the simulated rehearsal state."""
         with self.lock:
             if action == "reset":
                 self.trigger, self.started = Trigger(self.expected, self.limits), None
@@ -44,6 +46,7 @@ class Rehearsal:
                 raise ValueError("Unknown rehearsal action")
 
     def state(self):
+        """Return recognition, freshness and animation progress with flight commands explicitly disabled."""
         with self.lock:
             age = None if self.last_capture is None else max(0, time.time()-self.last_capture)
             return {"mode": self.mode, "state": self.trigger.state, "reason": self.trigger.reason,
@@ -54,6 +57,7 @@ class Rehearsal:
                     "flight_commands_possible": False}
 
     def camera(self):
+        """Obtain the labeled test image or a fresh authenticated backend snapshot."""
         if self.image:
             image = cv2.imread(str(self.image))
             if image is None:
@@ -75,6 +79,7 @@ class Rehearsal:
         return image, captured
 
     def poll(self):
+        """Decode new frames and advance the simulated trigger/path without constructing an SDK driver."""
         while not self.stop.is_set():
             try:
                 image, captured = self.camera()
@@ -104,6 +109,7 @@ class Rehearsal:
 
 
 def main():
+    """Start the local motor-disabled preview server and its camera polling thread."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", default="http://127.0.0.1:8787")
     parser.add_argument("--port", type=int, default=8789)
@@ -117,9 +123,11 @@ def main():
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
+            """Suppress routine access logging from the rehearsal web server."""
             pass
 
         def send(self, code, data, kind):
+            """Send a typed response with the rehearsal server's cache headers."""
             self.send_response(code)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(data)))
@@ -129,6 +137,7 @@ def main():
             self.wfile.write(data)
 
         def do_GET(self):
+            """Serve the preview page, latest camera image or rehearsal status."""
             path = urlparse(self.path).path
             if path == "/":
                 self.send(200, Path(__file__).with_name("qr-orbit-rehearsal.html").read_bytes(), "text/html; charset=utf-8")
@@ -142,6 +151,7 @@ def main():
                 self.send(404, b"Not found", "text/plain")
 
         def do_POST(self):
+            """Handle only the rehearsal's local arm/reset actions."""
             if self.headers.get("Origin") != f"http://127.0.0.1:{args.port}":
                 self.send(403, b"Open the local rehearsal page", "text/plain")
                 return

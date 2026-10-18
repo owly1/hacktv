@@ -10,6 +10,7 @@ from qr_orbit_core import Marker
 
 
 def rotation(roll, pitch, yaw):
+    """Build the body rotation matrix from roll, pitch and yaw supplied in degrees."""
     r, p, y = map(math.radians, (roll, pitch, yaw))
     cr, sr, cp, sp, cy, sy = math.cos(r), math.sin(r), math.cos(p), math.sin(p), math.cos(y), math.sin(y)
     return np.array([[cy*cp, cy*sp*sr-sy*cr, cy*sp*cr+sy*sr],
@@ -18,6 +19,7 @@ def rotation(roll, pitch, yaw):
 
 class CalibratedPose:
     def __init__(self, path, require_verified=True):
+        """Load measured intrinsics, distortion, image size, camera offset and QR square size."""
         c = json.loads(Path(path).read_text(encoding="utf-8"))
         if require_verified and c.get("measured_and_verified") is not True:
             raise ValueError("Camera intrinsics, gimbal axes and camera offset have not been measured/verified")
@@ -38,6 +40,7 @@ class CalibratedPose:
         self.object_points = np.array([[-s, s, 0], [s, s, 0], [s, -s, 0], [-s, -s, 0]], dtype=np.float64)
 
     def estimate(self, text, corners, shape, at, aircraft_yaw, gimbal_absolute):
+        """Solve QR-corner pose and reject ambiguous, mismatched-resolution or unreliable floor geometry."""
         if (shape[1], shape[0]) != self.size:
             raise ValueError(f"Video resolution {shape[1]}x{shape[0]} does not match calibration {self.size}")
         points = np.array(corners, dtype=np.float64).reshape(4, 2)

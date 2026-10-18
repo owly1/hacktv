@@ -1,558 +1,99 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Emberwatch · Hackathon execution package</title><meta name="description" content="Formal 36-hour execution plan, blackboard flow and integration guide for a four-person ANAFI monitoring hackathon."><link rel="stylesheet" href="styles.css"><style>.table-scroll{overflow:auto}.guide-page section{scroll-margin-top:25px}.guide-toc{display:flex;flex-wrap:wrap;gap:9px;margin:24px 0}.guide-toc a{border:1px solid #e0e7ea;background:white;border-radius:5px;padding:6px 10px;font-size:11px;text-decoration:none}.guide-page pre code{background:none;padding:0}.guide-page .flow-image{margin-top:35px}@media print{.guide-toc{display:none}.guide-page section#flow{break-before:page}.guide-page section#integration{break-before:page}.guide-page .flow-image{max-height:245mm}a{color:#42545c!important;text-decoration:none!important}}</style></head><body><main class="guide-page"><nav class="guide-nav"><a class="wordmark" href="index.html" style="text-decoration:none;color:#263337">emberwatch</a><a class="button" href="index.html">Open dashboard ↗</a></nav><p class="eyebrow">HACKATHON DELIVERY PACKAGE / 16 OCTOBER 2026</p><h1>One shared picture.<br>A human decision.</h1><p>A formal execution plan and usable source for a 36-hour, four-person Parrot ANAFI wildfire-monitoring exercise. One developer arrives at H4.</p><div class="guide-cards"><div class="guide-card"><strong>36 hours</strong><p>Early hardware and service gates; a complete offline simulation survives integration failures.</p></div><div class="guide-card"><strong>4 developers</strong><p>Parallel ownership, a defined late-arrival handoff, rest coverage and a protected release window.</p></div><div class="guide-card"><strong>Human review</strong><p>Evidence and questions, named local review and export. No autonomous firefighting or flight commands.</p></div></div><nav class="guide-toc"><a href="#execution">Execution plan</a><a href="#flow">Blackboard flow</a><a href="#integration">Integration interfaces</a><a href="#demo">Demo script</a><a href="#verification">Verification</a><a href="#sources">Sources</a></nav><p class="notice">Use your browser's Print command to save or print this guide. The dashboard is an exercise prototype. The spread illustration is not validated, and the fictional map is not for navigation. Full editable source is supplied with the downloadable project package.</p><section id="execution"><h2>Emberwatch — formal 36-hour execution plan</h2>
-<p><strong>Team:</strong> four developers, A/B/C present at H0, D arrives H4. <strong>Clock:</strong> elapsed hackathon hours; H0 is event kickoff. <strong>Outcome:</strong> a reliable, explainable monitoring demo, an animated spread illustration, and a human-reviewed incident briefing workflow. Prepared 16 October 2026.</p>
-<h3>1. Delivery agreement</h3>
-<p>The baseline is the supplied working simulation and source. A pilot may manually fly an ANAFI in an approved test setting and return observations to the computer. Flight permission, airspace coordination, operating limits and go/no-go decisions remain with the responsible pilot and event organizers. A live wildfire flight is outside this hackathon plan.</p>
-<p><strong>Must have by H24:</strong> largest dashboard section is a light road-style map with animated illustrative spread; playback and scenario input; clearly labeled simulated camera and telemetry fallback; source/age labels; sample Gemini analysis or authenticated live API response; TigerData integration interface; incident personnel; briefing questions, unknowns, review checklist and export. All must work from a clean checkout without keys in Simulation.</p>
-<p><strong>Live stretch targets, gated early:</strong> actual ANAFI telemetry, actual low-rate RGB JPEG snapshots, one structured Gemini response, one TigerData persisted observation + readback. These are separately reported; a configured service is not called verified until a real round trip succeeds.</p>
-<p><strong>Cut from the 36-hour scope:</strong> autonomous flight, automated suppression or evacuation advice, multi-drone control, trained fire detection, thermal claims from RGB, geolocated perimeter extraction, a validated fire forecast, production identity, dispatch, continuous WebRTC streaming, real Google Maps credentials/tiles, and operational routing. The fictional schematic provides the requested light map aesthetic without a map service dependency.</p>
-<h3>2. Ownership and capacity</h3>
-<div class="table-scroll"><table><thead><tr>
-<th>Developer</th>
-<th>Accountable workstream</th>
-<th>First four hours</th>
-<th>Handoff / backup</th>
-</tr></thead><tbody>
-<tr>
-<td>A — integration &amp; dashboard lead</td>
-<td>UI shell, map, interactions, provenance modes, integration review, final build</td>
-<td>Start offline dashboard immediately; publish contracts with B; prepare D&#x27;s handoff</td>
-<td>D can modify simulation; B owns release while A rests</td>
-</tr>
-<tr>
-<td>B — backend &amp; TigerData</td>
-<td>API, tokens/CORS, schema, persistence, status, integration tests</td>
-<td>Freeze JSON v1 with A/C; start memory API and schema independently</td>
-<td>A can run backend and replay tests</td>
-</tr>
-<tr>
-<td>C — ANAFI &amp; media / QA</td>
-<td>Linux bridge, hardware capability check, manual test capture, snapshots, hardware limitations, demo evidence</td>
-<td>Identify exact ANAFI variant, firmware, controller, Linux host; read-only connection spike</td>
-<td>B can run ingest; C switches to QA if hardware gate fails</td>
-</tr>
-<tr>
-<td>D — AI &amp; briefing / simulation (arrives H4)</td>
-<td>Gemini adapter, evidence limits, planning workflow, guide + pitch, scenario validation</td>
-<td>Absent; no early task depends on D</td>
-<td>A prepares a one-page H4 handoff; B backs up API integration</td>
-</tr>
-</tbody></table></div>
-<p>Raw availability is <strong>140 person-hours</strong> (3×36 + 32). Reserve four hours of rest per person, leaving <strong>124 person-hours before meals and coordination</strong>. Target 100 hours of planned work, with the remaining 24 for meals, handoffs, integration failures and release buffer. No milestone depends on four people being active simultaneously.</p>
-<p>Rest windows: A H16–20, B H20–24, C H24–28, D H28–32. No physical flight during fatigue-sensitive periods; C and the responsible pilot stop hardware work when conditions or alertness are unsuitable. These are planning allocations, not a requirement to work continuously.</p>
-<h3>3. Parallel execution schedule</h3>
-<div class="table-scroll"><table><thead><tr>
-<th>Window</th>
-<th>A — dashboard / integration</th>
-<th>B — API / data</th>
-<th>C — hardware / QA</th>
-<th>D — AI / briefing</th>
-</tr></thead><tbody>
-<tr>
-<td>H0–1</td>
-<td>Set acceptance checklist; run prototype; agree design</td>
-<td>Freeze <code>emberwatch.v1</code>; create token setup</td>
-<td>Inventory hardware and Linux host; verify exact variant</td>
-<td>Arrives H4; no dependency</td>
-</tr>
-<tr>
-<td>H1–4</td>
-<td>Road map, timeline, scenario controls; draft handoff</td>
-<td>Memory ingest/read/status; TigerData schema; API tests</td>
-<td>Read-only SDK spike, battery/GPS sample, camera feasibility; hardware gate</td>
-<td>Absent</td>
-</tr>
-<tr>
-<td>H4–8</td>
-<td>Wire telemetry modes; no synthetic/live blending</td>
-<td>Integrate C&#x27;s ingest; create TigerData service or mark memory-only</td>
-<td>Capture test telemetry; attempt JPEG snapshots; camera gate</td>
-<td>20-minute handoff; Gemini structured adapter + fixtures; briefing draft structure</td>
-</tr>
-<tr>
-<td>H8–12</td>
-<td>Complete responsive layout, map controls, empty/error states</td>
-<td>Persist real observation + readback; TLS and auth checks; database gate</td>
-<td>Validate snapshot display and timestamp; prepare recording fallback</td>
-<td>One live Gemini round trip if keys; evidence limits, refusal on missing data; AI gate</td>
-</tr>
-<tr>
-<td>H12–16</td>
-<td>Connect complete user journey and export</td>
-<td>End-to-end integration, stale data behavior, recovery</td>
-<td>Device/network drop test; provenance review</td>
-<td>Human checklist, named review, stale-draft behavior, incident roles</td>
-</tr>
-<tr>
-<td>H16–20</td>
-<td>Rest; handoff release runbook to B</td>
-<td>Integrate branches; tests, packaging; cover release</td>
-<td>Browser QA, telemetry/sample-age checks</td>
-<td>Scenarios, briefing copy, guide; fill UI bugs with B</td>
-</tr>
-<tr>
-<td>H20–24</td>
-<td>Final visual pass; scope freeze; own release</td>
-<td>Rest; A covers server runbook</td>
-<td>Mobile/desktop acceptance; record backup demo</td>
-<td>Finish plan, diagram and pitch; review content boundaries</td>
-</tr>
-<tr>
-<td>H24–28</td>
-<td>Fix release blockers only; assemble source/artifacts</td>
-<td>Test from clean checkout; secrets and schema review</td>
-<td>Rest; hardware remains off unless separate qualified coverage</td>
-<td>Rehearsal 1, identify failed claims, edit evidence labels</td>
-</tr>
-<tr>
-<td>H28–32</td>
-<td>Stabilize release; check final dashboard</td>
-<td>Reproducible startup, persistence evidence; offline test</td>
-<td>Rehearsal 2, video backup, hardware demo only if ready</td>
-<td>Rest; A follows pitch notes</td>
-</tr>
-<tr>
-<td>H32–34</td>
-<td>Full team: one timed demo; triage only blockers</td>
-<td>Verify final package and API configuration</td>
-<td>Confirm charged equipment or use recorded/synthetic fallback</td>
-<td>Final pitch, judge questions, attribution and limitations</td>
-</tr>
-<tr>
-<td>H34–36</td>
-<td>Freeze source, zip and checksums; launch final dashboard</td>
-<td>Keep reproducible offline copy</td>
-<td>Stage laptop, recording and equipment</td>
-<td>Submit artifact links; present; no feature additions</td>
-</tr>
-</tbody></table></div>
-<h3>4. Work packages and dependencies</h3>
-<div class="table-scroll"><table><thead><tr>
-<th>ID</th>
-<th>Owner</th>
-<th>Deliverable and acceptance</th>
-<th>Prerequisite</th>
-<th>Budget</th>
-</tr></thead><tbody>
-<tr>
-<td>W1</td>
-<td>A + B</td>
-<td>v1 fields, provenance, units, routes, errors; all agree on same sample</td>
-<td>None</td>
-<td>4 person-hours</td>
-</tr>
-<tr>
-<td>W2</td>
-<td>A</td>
-<td>Offline map, animation, timeline, scenario inputs, responsive camera/panels</td>
-<td>W1 field names; mock source independent</td>
-<td>18</td>
-</tr>
-<tr>
-<td>W3</td>
-<td>B</td>
-<td>Token-separated API, validation, status, read/ingest, tests</td>
-<td>W1</td>
-<td>12</td>
-</tr>
-<tr>
-<td>W4</td>
-<td>C</td>
-<td>Linux observation bridge and connection evidence or documented fallback</td>
-<td>Exact hardware + Linux available</td>
-<td>10</td>
-</tr>
-<tr>
-<td>W5</td>
-<td>B</td>
-<td>TigerData schema, verified TLS, real insert/readback or truthful memory mode</td>
-<td>W3; service credentials</td>
-<td>7</td>
-</tr>
-<tr>
-<td>W6</td>
-<td>D</td>
-<td>Gemini structured adapter, validated response, fixture and timeout/error UI</td>
-<td>W1; live test needs fresh W4 data and API key</td>
-<td>10</td>
-</tr>
-<tr>
-<td>W7</td>
-<td>D + A</td>
-<td>Briefing objectives, evidence gaps, checklist, named review, stale inputs + export</td>
-<td>W2; independent of live Gemini</td>
-<td>10</td>
-</tr>
-<tr>
-<td>W8</td>
-<td>C + A</td>
-<td>Integration, desktop/mobile, auth, stale feed, mode-switch, offline checks</td>
-<td>W2/W3/W7; W4–6 as available</td>
-<td>15</td>
-</tr>
-<tr>
-<td>W9</td>
-<td>D + all</td>
-<td>Plan, blackboard flow, source package, evidence table, 3-minute pitch, backup recording</td>
-<td>Stable baseline</td>
-<td>14</td>
-</tr>
-<tr>
-<td>Buffer</td>
-<td>All</td>
-<td>Rest/food handoffs and unexpected fixes use unallocated capacity</td>
-<td>—</td>
-<td>24 available after above 100</td>
-</tr>
-</tbody></table></div>
-<p><strong>Critical path:</strong> W1 → W2 + W3 in parallel → W7 → W8 → W9 release. W4/W5/W6 connect through explicit interfaces and timeouts; they cannot block the offline baseline. No work is assigned to D before H4. A writes D&#x27;s handoff by H3: repository commands, API sample, chosen Gemini fields, current mode rules, assigned issues and fallback cutoffs.</p>
-<h3>5. Milestones and decision gates</h3>
-<div class="table-scroll"><table><thead><tr>
-<th>Deadline</th>
-<th>Responsible</th>
-<th>Exit evidence</th>
-<th>Fallback decision</th>
-</tr></thead><tbody>
-<tr>
-<td>H1</td>
-<td>A/B</td>
-<td>Contract agreed, source starts on laptop</td>
-<td>Keep browser-local baseline</td>
-</tr>
-<tr>
-<td>H4</td>
-<td>C/A</td>
-<td>Exact model + Linux host known; real state received or clear failure</td>
-<td>Cap further hardware setup at one additional bounded attempt; C then switches to replay/QA</td>
-</tr>
-<tr>
-<td>H8</td>
-<td>C/B</td>
-<td>At least one real frame with captured-at time or explicit camera unavailability</td>
-<td>Use low-rate JPEG instead of continuous stream; otherwise synthetic camera labeled in every view</td>
-</tr>
-<tr>
-<td>H12</td>
-<td>B/D</td>
-<td>Real DB insert/readback; real Gemini response logged separately</td>
-<td>Memory only / sample fixture labels; no pretend connections</td>
-</tr>
-<tr>
-<td>H18</td>
-<td>B</td>
-<td>Complete click path through scenario → draft → review → export</td>
-<td>Trim decorative controls before required behavior</td>
-</tr>
-<tr>
-<td>H24</td>
-<td>A</td>
-<td>Must-have acceptance passes; feature freeze</td>
-<td>Cut unverified integrations from live presentation</td>
-</tr>
-<tr>
-<td>H30</td>
-<td>A/C</td>
-<td>Cold start and offline demo succeed; no leaked keys</td>
-<td>Use local static copy and recorded proof of earlier hardware test</td>
-</tr>
-<tr>
-<td>H34</td>
-<td>All</td>
-<td>One timed rehearsal; source and artifacts frozen</td>
-<td>No dependency updates or new features</td>
-</tr>
-<tr>
-<td>H36</td>
-<td>D/A</td>
-<td>Submit dashboard, guide, source zip and verification matrix</td>
-<td>Present exact verified scope</td>
-</tr>
-</tbody></table></div>
-<h3>6. Contingency playbook</h3>
-<div class="table-scroll"><table><thead><tr>
-<th>Trigger</th>
-<th>Action / owner</th>
-<th>What judges see</th>
-</tr></thead><tbody>
-<tr>
-<td>Wrong controller, incompatible host or failed Olympe connection at H4</td>
-<td>C documents exact failure and switches to test evidence + QA; A preserves simulation</td>
-<td>Synthetic feed with persistent label; physical integration remains source-only</td>
-</tr>
-<tr>
-<td>Network cannot reach drone and Internet simultaneously</td>
-<td>C keeps drone bridge on Linux; use a second authorized interface or relay only after testing; otherwise run locally and replay</td>
-<td>No claim that cloud analysis is live</td>
-</tr>
-<tr>
-<td>RTSP cannot render in browser</td>
-<td>C uses supplied JPEG bridge at ~0.5 fps; do not spend sprint building WebRTC</td>
-<td>Snapshot timestamp and explicit low-rate label</td>
-</tr>
-<tr>
-<td>TigerData quota/network/schema issue by H12</td>
-<td>B keeps explicit ephemeral memory mode; SQL + adapter remain supplied</td>
-<td>“Memory only,” no false persistence badge</td>
-</tr>
-<tr>
-<td>Gemini missing key, timeout, 429 or malformed output</td>
-<td>D shows failure; demo mode uses labeled deterministic fixture</td>
-<td>No fabricated API response; human briefing workflow still works</td>
-</tr>
-<tr>
-<td>Telemetry older than 10 seconds</td>
-<td>A marks telemetry stale; at 30 seconds backend refuses analysis on that evidence</td>
-<td>Age and source remain visible</td>
-</tr>
-<tr>
-<td>Snapshot older than 10 seconds</td>
-<td>A marks image stale; at 30 seconds do not send it as fresh Gemini evidence</td>
-<td>Last-capture time; no fake stream status</td>
-</tr>
-<tr>
-<td>Bad payload or wrong token</td>
-<td>B rejects ingest; no database write or UI substitution</td>
-<td>Last known sample age increases</td>
-</tr>
-<tr>
-<td>Model output includes unsupported inference</td>
-<td>D treats as unverified; keep response planner deterministic; reviewer checks evidence</td>
-<td>Evidence gaps and scope limit alongside analysis</td>
-</tr>
-<tr>
-<td>Unexpected teammate absence after H4</td>
-<td>A prioritizes W2/W3/W7/W9; B covers release; C/D share QA</td>
-<td>Coherent baseline and accurate feature matrix</td>
-</tr>
-<tr>
-<td>Deployment unavailable</td>
-<td>A opens <code>dist/index.html</code> or local server; D uses recorded 3-minute demo</td>
-<td>Full offline interactions and downloadable source</td>
-</tr>
-</tbody></table></div>
-<h3>7. Acceptance and release checklist</h3>
-<ul>
-<li>Open from a clean checkout with no credentials. Simulation map, timeline, scenario change, synthetic camera, fixture analysis, personnel details and briefing export work.</li>
-<li>Road map is the dominant panel; no satellite imagery. Desktop and narrow screens remain usable. Keyboard focus and accessible labels are present.</li>
-<li>Color legend says relative intensity; map says fictional; spread says illustrative; no temperature or probability claim.</li>
-<li>Connecting a backend hides the schematic heatmap. No fire location is inferred from drone position. Missing, stale and disconnected states are visible.</li>
-<li>Ingest/read tokens are distinct, API keys stay on server, CORS is allowlisted, and DB TLS verification stays enabled.</li>
-<li>Gemini requires fresh evidence, structured output and a bounded rate; errors do not become sample responses in connected mode.</li>
-<li>Briefing contains observations, unknowns and coordination questions. A reviewer must complete three checks and enter a name; changed inputs require regeneration. Review is explicitly local and self-reported.</li>
-<li>Exports preserve source mode, timestamp, assumptions, review state and limitations. Nothing is dispatched or flown from the dashboard.</li>
-<li>Run automated tests; record actual external round trips separately. Source zip contains no <code>.env</code>, credentials, <code>node_modules</code> or hardware footage.</li>
-</ul>
-<h3>8. Demonstration and handover</h3>
-<p>Use the supplied three-minute script. Lead with the problem and main map, show one wind-shift comparison, play the animation, inspect telemetry provenance, then create and review a briefing. Explain the live integration boundary and show verified hardware evidence only if achieved. Finish with source, plan, diagram, limitations and a realistic next step: validate georeferencing and fire science with domain experts before any operational use.</p></section><section id="flow"><img class="flow-image" src="blackboard-flow.svg" alt="Numbered ANAFI to API to TigerData/Gemini to dashboard flow, with a separate simulation branch and human review gate."><h2>Blackboard system flow</h2>
-<p>Draw a horizontal data pipeline first, then the analysis/UI lane, then the human review gate. Use solid arrows for observed data and dashed arrows for synthetic scenario data. <strong>Do not draw an arrow from the dashboard back to flight controls or field crews.</strong></p>
-<pre><code>   PILOT: manual flight remains outside the software
-                      |
-                      v
-[1 ANAFI] ---&gt; [2 Linux bridge] ---&gt; [3 API: auth + validate] ---&gt; [4 TigerData]
- RGB + state     Olympe read only      time + source + units        time series
-                       |                        |                        |
-                       | JPEG snapshots         | fresh evidence         |
-                       +------------------------+----&gt; [5 Gemini]        |
-                                                |      descriptive       |
-                                                |          |             |
-                                                v          v             v
-[S Synthetic scenario] - - - - - - - - -&gt; [6 Dashboard + provenance] &lt;--- API read
- map + camera + spread illustration             |
-                                                v
-                                     [7 Briefing draft]
-                                     evidence / gaps / questions
-                                                |
-                                                v
-                                     &lt;8 Human review complete?&gt;
-                                      no |                 | yes
-                                         v                 v
-                                 Verify / revise     [9 Export review record]
-                                      |               local, self-reported
-                                      +------&gt; 7
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BOSCO · Project guide</title>
+  <meta name="description" content="BOSCO startup, source map, data flow and verification guide.">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .guide-page section{scroll-margin-top:24px}.guide-page pre{overflow:auto}
+    .guide-toc{display:flex;flex-wrap:wrap;gap:16px;margin:24px 0}
+    .guide-page table{width:100%;border-collapse:collapse}.guide-page th,.guide-page td{padding:10px;text-align:left;border-bottom:1px solid #ddd}
+    @media print{.guide-nav,.guide-toc{display:none}}
+  </style>
+</head>
+<body>
+<main class="guide-page">
+  <nav class="guide-nav"><a class="wordmark" href="home.html">BOSCO</a><a class="button" href="index.html">Open dashboard ↗</a></nav>
+  <p class="eyebrow">PROJECT GUIDE</p>
+  <h1>Observe. Review. Coordinate.</h1>
+  <p>BOSCO / Emberwatch combines ANAFI camera and telemetry, fire detection,
+    illustrative spread, rescue leads and Gemini-assisted planning.</p>
+  <nav class="guide-toc"><a href="#execution">Start</a><a href="#flow">Data flow</a><a href="#integration">Source map</a><a href="#demo">Replay</a><a href="#verification">Verification</a><a href="#sources">Team docs</a></nav>
 
-No automatic flight, crew dispatch, suppression tactic or evacuation order.</code></pre>
-<h3>Copying instructions</h3>
-<p>1. Put boxes 1–4 across the top third. Write “pilot manual” above box 1, with a downward arrow. 2. Put box 5 beneath box 3. Label its incoming arrow “fresh image/telemetry.” Gemini is an inference, not a sensor. 3. Put box 6 across the center, underneath boxes 3–5. Draw arrows from the API read side and Gemini. Label the TigerData return “via API”; the browser never receives database credentials. 4. Put S on the left and use a dashed arrow into box 6. Write “SIMULATION” beside it. In Simulation the sample Gemini output is a fixture; connected mode does not blend in the fictional heatmap. 5. Under box 6 stack box 7, diamond 8, then box 9. The “no” branch loops to verification and back to 7. The “yes” branch only records a local review and enables export. 6. Underline “human decisions” at the bottom. Keep any operational decision outside the software boundary.</p>
-<p>Use the included <code>dist/blackboard-flow.svg</code> for a clean printable version. The dashed simulation branch feeds UI data independently of the authenticated real-data pipeline. API failure is reported as unavailable; it does not silently switch the meaning of the data.</p></section><section id="integration"><h2>Integration guide and API contract</h2>
-<h3>1. Run the optional local backend</h3>
-<p>Requires Node 22+ and optional <code>pg</code> package for TigerData. The simulation itself needs neither packages nor credentials.</p>
-<pre><code>npm install</code></pre>
-<p>Copy <code>.env.example</code> to <code>.env</code> and edit locally. Set <strong>distinct, randomly generated</strong> <code>DASHBOARD_TOKEN</code> and <code>INGEST_TOKEN</code> values. Keep the file untracked. Optional server environment: <code>DATABASE_URL</code>, <code>PG_CA_FILE</code>, <code>GEMINI_API_KEY</code>, <code>GEMINI_MODEL</code>. No service keys belong in the browser or Site manifest.</p>
-<pre><code>npm start</code></pre>
-<p>Open <a href="http://127.0.0.1:8787">http://127.0.0.1:8787</a>. In <strong>Integrations</strong>, use that backend origin and your <strong>dashboard token</strong>. The token stays in page memory and is cleared by Use Simulation. It is sent only to the chosen backend, through the Authorization header. Never enter your Gemini key, database password or ingest token into the dashboard.</p>
-<p>The server binds to loopback by default. For a second computer or a hosted browser frontend, use a controlled HTTPS reverse proxy and set an exact <code>ALLOWED_ORIGINS</code> list. This project does not supply production identity, per-user permissions, signed review identity or an Internet exposure configuration. Do not disable certificate checks. The hosted Site is static: Node and Olympe run separately.</p>
-<p>Browsers may block an HTTPS hosted page from reaching an HTTP or private local backend. Use the local frontend served by Node for the hardware demonstration, or a properly configured HTTPS backend. Do not bypass browser security warnings to force the connection.</p>
-<h3>2. TigerData storage</h3>
-<p>Provision a Timescale-enabled PostgreSQL service. Use the service connection string in <code>DATABASE_URL</code>, with normal public CA verification; for a private CA, set <code>PG_CA_FILE</code> to its trusted CA file. The adapter explicitly keeps <code>rejectUnauthorized: true</code>; URL SSL parameters are removed so they cannot silently override that policy.</p>
-<p>Apply <code>backend/schema.sql</code> using your PostgreSQL client against that service. The script creates a time-partitioned telemetry hypertable with a combined time/drone primary key and a regular analyses table. It uses the documented <code>create_hypertable(..., by_range(...))</code> API; confirm that the provisioned Timescale version supports it. Do not substitute a plain unpartitioned table and claim a hypertable integration.</p>
-<p>Verification is: ingest one actual bridge sample → receive <code>stored_in: TigerData</code> → read the latest sample → independently query the database. Service status checks database/table readiness. A missing or failed database produces an error on ingest/read; the adapter never silently falls back to memory when a database URL is configured.</p>
-<p>With no database URL, the backend explicitly reports <strong>memory only</strong>. In-memory observations and the latest JPEG vanish on restart. Images are not stored in PostgreSQL. Reviews are browser-local exported records; there is no durable review or authenticated approval service in this prototype.</p>
-<p>Suggested independent readback (through a trusted PostgreSQL client):</p>
-<pre><code>SELECT observed_at, drone_id, provenance, payload
-FROM telemetry ORDER BY observed_at DESC LIMIT 5;
+  <section id="execution">
+    <h2>Start the dashboard</h2>
+    <pre><code>npm ci
+# Copy .env.example to .env and set two distinct local tokens.
+npm start</code></pre>
+    <p>Use Node 22+. Open <a href="index.html">the dashboard</a> through the local
+      backend. Live mode waits for aircraft input; it does not create sample observations.
+      Gemini and TigerData are optional server-side configuration.</p>
+    <p>Hardware reception needs a separate configured receiver. Observation sends
+      no aircraft commands. Explicit terminal flight modes have different triggers
+      and limits; read the selected workflow before enabling execution.</p>
+  </section>
 
-SELECT created_at, evidence_at, payload-&gt;&gt;&#x27;model&#x27; AS model
-FROM analyses ORDER BY created_at DESC LIMIT 5;</code></pre>
-<h3>3. Parrot ANAFI bridge</h3>
-<p>Use a Linux machine and the official Parrot Olympe installation instructions for the exact drone, firmware and controller. Confirm the exact hardware at H0. The included bridge targets <strong>classic ANAFI directly</strong> (<code>olympe.Anafi</code>) or <strong>SkyController 3</strong> (<code>olympe.SkyController3</code>). ANAFI Ai/USA/UKR controller classes and topology require adaptation and validation; do not assume they are interchangeable. This source has not been tested against physical hardware.</p>
-<p>For a direct connection, connect Linux to the drone&#x27;s network. The documented default direct address is <code>192.168.42.1</code>. The SkyController network topology uses a different address; verify the team&#x27;s actual setup and driver support. Keep the controller&#x27;s manual flight path under the responsible pilot&#x27;s control. The bridge makes read/stream requests only and contains no takeoff, landing or movement command.</p>
-<p>Set <code>INGEST_TOKEN</code> in the Linux process environment to match the backend. Set secrets through the team&#x27;s normal local environment mechanism, not command arguments or source. Then:</p>
-<pre><code>python3 bridge/anafi_bridge.py --ip 192.168.42.1 --controller direct --backend http://127.0.0.1:8787</code></pre>
-<p>For optional JPEG snapshots, install OpenCV in the tested Linux environment and add <code>--camera</code>. The bridge uses Olympe decoded raw frames and converts I420/NV12 to JPEG, resizes to 640 pixels wide, and sends no more than one frame every two seconds. Raw-frame API compatibility must be checked with the installed SDK. A callback reference is released even on conversion failure.</p>
-<pre><code>python3 bridge/anafi_bridge.py --ip 192.168.42.1 --controller direct --backend http://127.0.0.1:8787 --camera</code></pre>
-<p>The UI calls this a <strong>live snapshot</strong>, not continuous video. RTSP is not directly playable in an ordinary browser. Continuous low-latency video is deferred; the synthetic camera remains animated in Simulation. Default ANAFI RGB footage is never labeled thermal or used to estimate temperature.</p>
-<p>Polling timestamps represent the bridge reading SDK state; state fields can be cached until the next device event. Clock sync and connection health need verification on the hardware. Unknown position sentinels become null, never a fabricated location. If the bridge disconnects, it stops sending; the UI ages the last observation.</p>
-<h3>4. Gemini analysis</h3>
-<p>Set the server-side <code>GEMINI_API_KEY</code> and an enabled structured-output <code>GEMINI_MODEL</code>. The example model is a configurable starting value, not a guarantee of account access. The adapter calls the official <code>v1beta/models/{model}:generateContent</code> endpoint with an API-key header, a restrictive descriptive-analysis system instruction, and JSON output fields <code>summary</code>, <code>unknowns</code>, <code>limitations</code>.</p>
-<p>The request uses compatibility fields <code>responseMimeType</code> and <code>responseSchema</code>, still documented by the API; newer APIs prefer <code>responseFormat</code>. Before the live demonstration, validate the configured model and field combination against your account. A 400/403/quota failure is reported, never replaced by a fixture in connected mode.</p>
-<p>Only telemetry or an image captured in the past 30 seconds is accepted for analysis. If only telemetry exists, the prompt explicitly states that it is not visual fire evidence. At most one request starts every 30 seconds; upstream timeout is 20 seconds. JSON output is parsed and size/shape-checked. Shape checks do not establish factual correctness or semantically guarantee a model&#x27;s compliance: the UI labels Gemini output unverified and requires human verification. The response planner does <strong>not</strong> execute or convert Gemini output into tactics.</p>
-<p>Sending analysis sends the selected current evidence to Google&#x27;s Gemini service. Use only authorized test imagery/telemetry for an actual integration test. No real user imagery or telemetry was sent while building this deliverable.</p>
-<h3>5. HTTP contract — <code>emberwatch.v1</code></h3>
-<p>All <code>/api/</code> routes require a configured server and an appropriate <code>Authorization: Bearer …</code> token. JSON errors have <code>{ &quot;error&quot;: &quot;description&quot; }</code>. No key appears in a URL. Success data has explicit provenance. There is no automatic simulation substitution.</p>
-<div class="table-scroll"><table><thead><tr>
-<th>Method / route</th>
-<th>Token</th>
-<th>Behavior</th>
-</tr></thead><tbody>
-<tr>
-<td>GET <code>/api/status</code></td>
-<td>Dashboard</td>
-<td>Contract, real-sample availability/freshness, DB readiness, Gemini configured flag, camera availability/freshness; no secrets</td>
-</tr>
-<tr>
-<td>POST <code>/api/ingest/telemetry</code></td>
-<td>Ingest</td>
-<td>Validates a live source sample, ±30-second timestamp window, numeric units/ranges; inserts idempotently; 202 on acknowledgment</td>
-</tr>
-<tr>
-<td>GET <code>/api/telemetry/latest</code></td>
-<td>Dashboard</td>
-<td><code>{sample: object or null}</code>; latest observed sample; UI marks age &gt;10 seconds stale</td>
-</tr>
-<tr>
-<td>POST <code>/api/ingest/snapshot</code></td>
-<td>Ingest</td>
-<td>Fresh live JPEG JSON envelope; max request 2 MB, max base64 length 1.7M characters; stores only latest image in process memory</td>
-</tr>
-<tr>
-<td>GET <code>/api/snapshot</code></td>
-<td>Dashboard</td>
-<td>JPEG bytes and <code>X-Captured-At</code>; 404 if no image; UI shows capture time and stale status</td>
-</tr>
-<tr>
-<td>POST <code>/api/analyze</code></td>
-<td>Dashboard</td>
-<td>Empty JSON object; takes fresh server evidence, calls Gemini, validates output, stores analysis when DB configured; 200 on success</td>
-</tr>
-</tbody></table></div>
-<p>Status example — <strong>documentation only</strong>, not evidence of a connected service:</p>
-<pre><code>{
-  &quot;contract&quot;: &quot;emberwatch.v1&quot;,
-  &quot;telemetry&quot;: {&quot;available&quot;: false, &quot;fresh&quot;: false, &quot;latest_at&quot;: null},
-  &quot;storage&quot;: {&quot;provider&quot;: &quot;ephemeral memory&quot;, &quot;status&quot;: &quot;memory only&quot;},
-  &quot;gemini&quot;: {&quot;configured&quot;: false, &quot;verified&quot;: false},
-  &quot;camera&quot;: {&quot;available&quot;: false, &quot;fresh&quot;: false}
-}</code></pre>
-<p>Telemetry input shape — values below are <strong>schema examples</strong> and must not be sent as real observations:</p>
-<pre><code>{
-  &quot;drone_id&quot;: &quot;ANAFI-01&quot;,
-  &quot;provenance&quot;: &quot;live&quot;,
-  &quot;observed_at&quot;: &quot;&lt;actual UTC observation time, ISO 8601&gt;&quot;,
-  &quot;battery_pct&quot;: 78,
-  &quot;altitude_m&quot;: 62.4,
-  &quot;ground_speed_mps&quot;: 3.2,
-  &quot;latitude&quot;: null,
-  &quot;longitude&quot;: null
-}</code></pre>
-<p><code>drone_id</code>: <code>ANAFI-</code> + 1–48 alphanumeric/underscore/hyphen characters. <code>battery_pct</code>: 0–100; <code>altitude_m</code>: −50–10000, height above takeoff from SDK altitude; <code>ground_speed_mps</code>: 0–100; latitude −90–90; longitude −180–180. Missing measurements are null; at least one numeric measurement is required. No coordinate-to-fire georeferencing is performed. Extra fields are discarded. The ingest token authenticates the sender, not sensor truth.</p>
-<p>Snapshot JSON fields: <code>provenance: live</code>, <code>captured_at: ISO UTC</code>, <code>mime_type: image/jpeg</code>, <code>data: base64 JPEG</code>. The server checks envelope bytes, size and freshness; it is not a full image-content validation service.</p>
-<p>Analysis response fields: <code>id</code>, <code>provenance: gemini-unverified</code>, <code>evidence_kind: rgb-snapshot | telemetry-only</code>, <code>evidence_at</code>, <code>created_at</code>, <code>model</code>, <code>summary</code>, <code>unknowns[]</code>, <code>limitations</code>. The backend appends a fixed human-verification limit. Browser rendering treats all remote text as text, not HTML.</p>
-<p>Errors: 400 invalid payload/time/provenance; 401 token mismatch; 403 origin not allowed; 404 missing route/image; 409 no fresh analysis evidence; 413 excessive body; 429 analysis rate limit; 502 malformed/failed upstream Gemini response; 503 missing service configuration, schema or storage failure. General unexpected failures return a sanitized 500, not keys or connection strings.</p>
-<h3>6. Review interface</h3>
-<p><code>dist/model.js</code> creates deterministic briefing drafts from selected inputs. A draft includes source mode, UTC creation time, assumptions, scenario snapshot, evidence statements, unknowns, coordination questions, three false checks, no reviewer and no review time. It starts <code>draft</code>.</p>
-<p>The browser records <code>reviewed</code> only after all checks and a non-empty reviewer name. A change to assumptions, objective, selected scenario or manually selected timeline invalidates the draft and requires regeneration. Play resumes from a draft only after invalidating it. Review is a self-reported browser record; it is not a digital signature, operational authorization or persistent team workflow. JSON and Markdown exports include the record and limitations. Reloading the page clears it.</p>
-<p>Connected-mode drafts describe actual telemetry fields only, with their time and an explicit statement that telemetry is not fire evidence. The fictional map and spread are hidden, and simulated wind/area are never placed into a real-data brief. Ground conditions, safe access and fire perimeter remain unknown. No route sends actions to aircraft or personnel.</p></section><section id="demo"><h2>Three-minute demonstration</h2>
-<div class="table-scroll"><table><thead><tr>
-<th>Time</th>
-<th>Presenter action</th>
-<th>Suggested narration</th>
-</tr></thead><tbody>
-<tr>
-<td>0:00–0:20</td>
-<td>Open dashboard; point at Simulation banner</td>
-<td>“Emberwatch brings drone observations, scenario exploration and incident review into one workspace. This demonstration uses a fictional incident and clearly labeled synthetic data.”</td>
-</tr>
-<tr>
-<td>0:20–0:55</td>
-<td>Pause; select T+0 then +30 then +60; play</td>
-<td>“The main map illustrates how a footprint could change under selected assumptions. It is an animation, not a validated wildfire forecast or probability map.”</td>
-</tr>
-<tr>
-<td>0:55–1:15</td>
-<td>Open Scenario; choose Wind shift; apply</td>
-<td>“We can change wind and fuel inputs and compare scenarios immediately. The roads and sites are schematic and cannot establish safe access.”</td>
-</tr>
-<tr>
-<td>1:15–1:40</td>
-<td>Point at camera, telemetry and Gemini labels; refresh analysis</td>
-<td>“The demo camera is synthetic. The supplied Linux ANAFI bridge and authenticated API can return real telemetry and low-rate RGB snapshots. Gemini can summarize fresh evidence; this sample output makes no API call.”</td>
-</tr>
-<tr>
-<td>1:40–2:20</td>
-<td>Choose handoff objective; create draft; show unknowns; complete checks and enter “Exercise Reviewer”</td>
-<td>“The assistant prepares a briefing with evidence, unknowns and coordination questions. A named person checks the sources and limits. It cannot issue tactics, evacuation orders or crew assignments.”</td>
-</tr>
-<tr>
-<td>2:20–2:40</td>
-<td>Record review; export JSON/brief; open personnel detail</td>
-<td>“Review is recorded locally and is self-reported. The exported record retains provenance and limitations. These are fictional incident roles, separate from our development assignments.”</td>
-</tr>
-<tr>
-<td>2:40–3:00</td>
-<td>Open guide/flowchart and integration status</td>
-<td>“Our four-person plan accounts for a teammate arriving at hour four. Hardware and service gates keep the baseline demo reliable. Here are the source, interfaces and exact verification status.”</td>
-</tr>
-</tbody></table></div>
-<h3>If real integration succeeds during the hackathon</h3>
-<p>Show the actual connection date, exact hardware model, one observed sample and one database readback. Switch to connected mode and explain that the fictional heatmap disappears because real telemetry does not supply a georeferenced fire perimeter. If presenting recorded test evidence, label the recording and capture time. Never imply that a previous recording is a current live stream.</p>
-<h3>Questions to anticipate</h3>
-<ul>
-<li><strong>Is the forecast accurate?</strong> No accuracy has been established. It is deterministic visual scenario exploration, not a trained or validated fire model.</li>
-<li><strong>Can it control the drone?</strong> No. The pilot flies manually; the included bridge only observes state and camera frames.</li>
-<li><strong>Does ANAFI provide thermal imagery?</strong> The baseline assumes RGB. A thermal-capable variant and calibrated workflow would require separate validation.</li>
-<li><strong>Why is the map fictional?</strong> It demonstrates the light road-map interface offline without map credentials; real georeferencing and map services are separate work.</li>
-<li><strong>Where are Gemini and TigerData?</strong> Implemented through optional server adapters. Report whether actual round trips were completed; configuration alone is not proof.</li>
-<li><strong>Can it tell firefighters what to do?</strong> It organizes observations and questions for an authorized reviewer. Operational decisions remain in the incident command process.</li>
-</ul></section><section id="verification"><h2>Verification record</h2>
-<p>Prepared 16 October 2026. This is a record of checks performed while creating the deliverable, not a certification for operational use.</p>
-<h3>Verified locally</h3>
-<ul>
-<li>Node static preview returned HTTP 200; source can run without installed packages or keys in Simulation.</li>
-<li>Automated model checks cover deterministic output, clamped timeline, scenario sensitivity and drafts that begin unreviewed with simulation provenance.</li>
-<li>Automated API checks cover bearer-token separation, CORS rejection, invalid/synthetic/stale observation rejection, successful ingest/readback to explicitly labeled memory storage, missing Gemini configuration, and absence of flight routes.</li>
-<li>Gemini adapter tests use an injected fixture transport, check actual request structure and human-verification limits, and verify rate limiting. These are not external Google API calls.</li>
-<li>Python bridge source passes syntax compilation with the bundled Python runtime. This does not validate Olympe imports or physical drone compatibility.</li>
-<li>Browser checks cover narrow and desktop layouts, timeline presets, scenario change, draft creation, required review checks, named review recording, stale draft after input changes, layer toggling, role details, integration error state, and exported brief/draft download behavior.</li>
-</ul>
-<h3>Not externally verified</h3>
-<ul>
-<li>No physical ANAFI, controller, firmware, Linux networking or decoded frame conversion test was possible in this environment.</li>
-<li>No TigerData account credentials were provided. The schema and database adapter are supplied, but a real cloud insert/readback and hypertable inspection remain hackathon integration tasks.</li>
-<li>No Gemini key was provided. A real model request, model entitlement and account quota remain to be tested. Configured status is explicitly not a verified round trip.</li>
-<li>No calibrated thermal data, weather, perimeter, fuel or terrain dataset was used. No fire-science accuracy, confidence or operational forecast claim is made.</li>
-<li>Reviews are in-page, self-reported and cleared on reload. They are not authenticated approvals, durable team records or operational authorizations.</li>
-</ul>
-<h3>Known scope limits</h3>
-<p>The base map is a locally drawn fictional road schematic, not Google Maps. Live mode hides the synthetic perimeter because telemetry has no georeferenced fire perimeter. The animation uses an artistic, deterministic wind-biased polygon model, not a physical or statistical wildfire model. The camera animation is a stylized drawing, not actual video. Optional real camera support is low-rate snapshots; continuous streaming is deferred.</p>
-<p>The default backend is local and single-incident/single-drone oriented. It is a hackathon implementation, not a production identity, monitoring, audit, disaster-response or media-security service. A source tag and token establish which sender claimed the data; independent sensor validation remains necessary.</p>
-<p>See the execution plan&#x27;s acceptance checklist before presenting live integrations. Present the exact verified behavior and fallback labels from the final environment.</p></section><section id="sources"><h2>Official integration references</h2>
-<p>Checked 16 October 2026. These sources support interface choices; they do not validate this prototype or the spread illustration.</p>
-<ul>
-<li><a href="https://developer.parrot.com/docs/olympe/index.html">Parrot Olympe overview</a>: Linux Python interface; supported ANAFI variants; state and video access. The exact variant/controller combination must be checked on the team&#x27;s hardware.</li>
-<li><a href="https://developer.parrot.com/docs/olympe/olympeapi.html">Parrot Olympe API reference</a>: drone and controller classes, state access and streaming. The bridge targets direct ANAFI or SkyController 3, not every ANAFI family topology.</li>
-<li><a href="https://developer.parrot.com/docs/olympe/userguide/advanced/physical_drone.html">Connect to a physical drone</a>: direct network connection and controller network options. A laptop on drone Wi-Fi may need separate tested Internet access for cloud services.</li>
-<li><a href="https://developer.parrot.com/docs/olympe/userguide/advanced/streaming.html">Parrot streaming guide</a>: decoded-frame callbacks and streaming lifecycle. The included conversion code needs a physical hardware test with the installed SDK.</li>
-<li><a href="https://ai.google.dev/api/generate-content">Gemini generateContent API</a>: authenticated server REST endpoint, image inputs, structured response configuration. The implementation uses the documented <code>responseMimeType</code> / <code>responseSchema</code> compatibility fields; newer API documentation prefers <code>responseFormat</code>. Validate the configured model against the account before the live demo.</li>
-<li><a href="https://ai.google.dev/gemini-api/docs/generate-content/structured-output">Gemini structured output guide</a>: schema-constrained output does not make factual claims correct. The server also checks response shape and preserves human-verification limits.</li>
-<li><a href="https://www.tigerdata.com/docs/reference/timescaledb/hypertables/create_hypertable">TigerData create_hypertable reference</a>: create a PostgreSQL table, then time-partition it. The SQL targets a Timescale version supporting <code>by_range</code>; choose the appropriate documented variant for the provisioned service.</li>
-</ul>
-<p>The supplied original conversation reference contained the user&#x27;s requirements but no readable previous assistant plan. The deliverable therefore implements the supplied current brief and preserves the named ANAFI, TigerData, Gemini, large animated map and four-person constraints.</p></section><footer class="footer"><span>Emberwatch · 36-hour hackathon package</span><a href="index.html">Return to dashboard ↗</a></footer></main></body></html>
+  <section id="flow">
+    <h2>Follow the data</h2>
+    <pre><code>ANAFI → Pi/Linux receiver → authenticated backend
+                            → video + evidence storage
+                            → Gemini analysis / plan
+                            → dashboard → human review → export
+
+Simulation → separate replay API/UI
+Operator terminal → explicit flight runtime → aircraft</code></pre>
+    <p>The laptop keeps Internet access while Pi Wi-Fi joins the aircraft.
+      The backend and browser do not provide a flight-command channel.</p>
+  </section>
+
+  <section id="integration">
+    <h2>Source map</h2>
+    <table><thead><tr><th>Path</th><th>Responsibility</th></tr></thead><tbody>
+      <tr><td><code>backend/</code></td><td>HTTP, validation, storage, Gemini and person-search logic</td></tr>
+      <tr><td><code>dist/</code></td><td>Plain JavaScript dashboard, map and simulated camera; no build step</td></tr>
+      <tr><td><code>bridge/</code></td><td>Reception, detection, calibration and separate flight runtimes</td></tr>
+      <tr><td><code>scripts/</code></td><td>Laptop setup, Pi deployment, launch and recording review</td></tr>
+      <tr><td><code>tests/</code></td><td>Isolated services, geometry and guarded SDK checks</td></tr>
+    </tbody></table>
+    <p>The API contract is <code>emberwatch.v1</code>. Ingest and dashboard tokens
+      differ. Unknown GPS remains unknown; altitude is height above takeoff.
+      Person leads include location uncertainty and require a named reviewer.</p>
+  </section>
+
+  <section id="demo">
+    <h2>Demonstrate without an aircraft</h2>
+    <pre><code>npm run demo
+npm run demo -- --port 9000</code></pre>
+    <p>Replay offers person-search scenarios, historical fire/camera cases and
+      an animated flight pattern. Choose a case, inspect its evidence and
+      coverage, then exit replay to return to live monitoring.</p>
+    <p>Gemini replay requests use the configured real service, but their results
+      stay out of live storage. Without a key the UI reports unavailability.</p>
+  </section>
+
+  <section id="verification">
+    <h2>Check what is actually known</h2>
+    <pre><code>npm test
+python3 -m unittest discover -s tests -p '*_test.py'</code></pre>
+    <p>Python SDK checks may skip without Olympe. Tests use fixtures/mock aircraft;
+      they do not fly or validate field accuracy. A configured key, retained image
+      or sent landing command is not proof of a successful live operation.</p>
+    <p>Spread is illustrative. Rescue positions and Gemini output are estimates;
+      a human reviews plans. Store flight footage locally and record physical
+      and cloud-service checks separately.</p>
+  </section>
+
+  <section id="sources">
+    <h2>Team documentation</h2>
+    <p>In the repository, start with <code>README.md</code> and
+      <code>TEAM_AI_CONTEXT.md</code>. The <code>docs/</code> directory contains
+      focused Windows/Mac, API, calibration and flight workflows.</p>
+    <p><a href="https://github.com/owly1/hacktv/blob/main/README.md">Documentation index</a>
+      · <a href="https://github.com/owly1/hacktv/blob/main/TEAM_AI_CONTEXT.md">Shared AI context</a>
+      · <a href="https://github.com/owly1/hacktv/blob/main/docs/VERIFIED.md">Verification record</a></p>
+  </section>
+</main>
+</body>
+</html>

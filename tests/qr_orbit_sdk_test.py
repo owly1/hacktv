@@ -27,10 +27,12 @@ if HAS_SDK:
 @unittest.skipUnless(HAS_SDK, "Run inside the Pi's Olympe environment")
 class AdapterTests(unittest.TestCase):
     def controller_args(self, mode="skycontroller3"):
+        """Build explicit controller-route arguments for SDK adapter checks."""
         return SimpleNamespace(ip=None, controller=mode, home_lat=0, home_lon=0,
                                gimbal_pitch=None, execute=False)
 
     def test_skycontroller_class_and_default_ip_without_piloting_commands(self):
+        """Verify skycontroller class and default ip without piloting commands."""
         drone = Mock(connected=True)
         drone.connect.return_value = drone.drone_connection_state.return_value = True
         bridge = AnafiBridge(self.controller_args(), SimpleNamespace(), SimpleNamespace())
@@ -43,6 +45,7 @@ class AdapterTests(unittest.TestCase):
         drone.assert_not_called()  # No piloting-source, joystick, gimbal or flight commands.
 
     def test_controller_connection_without_paired_aircraft_is_not_a_drone_link(self):
+        """Verify controller connection without paired aircraft is not a drone link."""
         drone = Mock(connected=True)
         drone.connect.return_value = True
         drone.drone_connection_state.return_value = False
@@ -57,6 +60,7 @@ class AdapterTests(unittest.TestCase):
         drone.assert_not_called()
 
     def test_physical_controller_source_must_be_explicitly_reported(self):
+        """Verify physical controller source must be explicitly reported."""
         bridge = QROrbitBridge(self.controller_args(), SimpleNamespace(), SimpleNamespace(), None, Limits(),
                                "EW1:Alpha|120|X|35|M|30|60|31|18|18")
         for state, accepted in ((None, False), ({"source": "Controller"}, False),
@@ -68,6 +72,7 @@ class AdapterTests(unittest.TestCase):
             self.assertFalse(bridge._controller_source_ok())
 
     def test_live_direct_mode_rejected_before_aircraft_construction(self):
+        """Verify live direct mode rejected before aircraft construction."""
         with patch.object(sys, "argv", ["qr_orbit_bridge.py", "--execute"]), \
              patch.object(qr_orbit_bridge, "QROrbitBridge") as factory, \
              contextlib.redirect_stderr(io.StringIO()) as output, \
@@ -78,6 +83,7 @@ class AdapterTests(unittest.TestCase):
         factory.assert_not_called()
 
     def test_terminal_mode_requires_its_own_landing_record(self):
+        """Verify terminal mode requires its own landing record."""
         import time
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/"preflight.json"
@@ -92,6 +98,7 @@ class AdapterTests(unittest.TestCase):
             read_preflight(path, terminal_control=True)
 
     def test_terminal_land_key_uses_existing_driver_before_any_report(self):
+        """Verify terminal land key uses existing driver before any report."""
         args = self.controller_args(mode="direct")
         args.execute = True
         bridge = QROrbitBridge(args, SimpleNamespace(), SimpleNamespace(), None, Limits(),
@@ -106,6 +113,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(order[0], "LAND")
 
     def test_hover_checkout_has_no_horizontal_or_qr_commands(self):
+        """Verify hover checkout has no horizontal or qr commands."""
         args = self.controller_args(mode="direct")
         args.execute, args.terminal_control, args.hover_seconds = True, True, 1
         bridge = HoverCheckout(args, SimpleNamespace(), SimpleNamespace())
@@ -117,11 +125,13 @@ class AdapterTests(unittest.TestCase):
         bridge.telemetry = {"state": "landed", "battery_pct": 50, "altitude_m": 0,
                             "ground_speed_mps": 0, "attitude_deg": {"roll": 0, "pitch": 6.7}}
         def receive(message):
+            """Supply a controlled SDK state/frame update to the tested flight runtime."""
             calls.append(message)
             bridge.telemetry["state"] = "motor_ramping"
             return pending
         bridge.drone = receive
         def advance(seconds):
+            """Advance the fake clock and refresh test sensor timestamps."""
             now[0] += seconds
             bridge.sensor_ages.ages = {key: now[0] for key in ("altitude", "speed", "attitude")}
             bridge.telemetry["state"] = "motor_ramping" if now[0] < .25 else "takingoff" if now[0] < .5 else "hovering"
@@ -141,6 +151,7 @@ class AdapterTests(unittest.TestCase):
         land.assert_called_once()
 
     def test_hover_checkout_abort_before_takeoff_never_sends_takeoff(self):
+        """Verify hover checkout abort before takeoff never sends takeoff."""
         args = self.controller_args(mode="direct")
         args.execute, args.terminal_control, args.hover_seconds = True, True, 1
         bridge = HoverCheckout(args, SimpleNamespace(), SimpleNamespace())
@@ -153,6 +164,7 @@ class AdapterTests(unittest.TestCase):
         land.assert_called_once()
 
     def test_hover_checkout_resting_attitude_is_separate_from_airborne_limit(self):
+        """Verify hover checkout resting attitude is separate from airborne limit."""
         import time
         bridge = HoverCheckout(self.controller_args(mode="direct"), SimpleNamespace(), SimpleNamespace())
         bridge.connected = True
@@ -182,6 +194,7 @@ class AdapterTests(unittest.TestCase):
         self.assertIsNone(bridge.driver)
 
     def test_landing_keys_after_confirmed_landing_do_not_restart_cleanup(self):
+        """Verify landing keys after confirmed landing do not restart cleanup."""
         args = self.controller_args(mode="direct")
         args.execute = True
         bridge = HoverCheckout(args, SimpleNamespace(), SimpleNamespace())
@@ -193,18 +206,21 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(bridge.land_confirmed)
 
     def test_reports_do_not_write_to_terminal_from_flight_worker(self):
+        """Verify reports do not write to terminal from flight worker."""
         bridge = HoverCheckout(self.controller_args(mode="direct"), SimpleNamespace(), SimpleNamespace())
         with patch("builtins.print", side_effect=AssertionError("flight worker must not print")):
             bridge.report("landing", "test")
         self.assertEqual(bridge.status_queue.get_nowait()[:1], ("landing",))
 
     def setup_fake(self):
+        """Install guarded fake aircraft/expectation objects for SDK adapter tests."""
         pending = SimpleNamespace(done=lambda: False, success=lambda: False,
                                   cancel=lambda: setattr(self, "cancelled", True))
         self.calls, self.cancelled, self.now = [], False, 10.0
         class Drone:
             connected = True
             def __call__(_, message):
+                """Return a controlled SDK expectation for the submitted test command."""
                 self.calls.append(message)
                 return pending
         bridge = SimpleNamespace(drone=Drone(), connected=True,
@@ -212,17 +228,21 @@ class AdapterTests(unittest.TestCase):
         return OlympeOrbitDriver(bridge), bridge
 
     def test_abort_is_checked_before_issuing_move(self):
+        """Verify abort is checked before issuing move."""
         driver, _ = self.setup_fake()
         def abort():
+            """Raise the injected cancellation used to test interruptible SDK movement."""
             raise InterruptedError("operator stop")
         with self.assertRaises(InterruptedError):
             driver.move((.1, -.5, 0, .5), .25, abort)
         self.assertEqual(self.calls, [])
 
     def test_bounded_move_is_interruptible_without_blocking_wait(self):
+        """Verify bounded move is interruptible without blocking wait."""
         driver, _ = self.setup_fake()
         checks = [0]
         def abort():
+            """Raise the injected cancellation used to test interruptible SDK movement."""
             checks[0] += 1
             if checks[0] > 1:
                 raise InterruptedError("operator stop")
@@ -232,6 +252,7 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(self.cancelled)
 
     def test_movement_uses_matching_event_not_sdk_cache_and_records_actual_result(self):
+        """Verify movement uses matching event not sdk cache and records actual result."""
         requested = (.034, -.259, 0., .262)
         actual = (.13, -.259, 0., .262)  # 9.6 cm endpoint error is corrected next step.
         pending = Mock()
@@ -255,6 +276,7 @@ class AdapterTests(unittest.TestCase):
             driver.move(requested,.25,lambda:None)
 
     def test_recording_continues_while_backend_video_upload_is_blocked(self):
+        """Verify recording continues while backend video upload is blocked."""
         import threading
         from anafi_bridge import Publisher
         from flight_recording import FlightRecorder
@@ -262,6 +284,7 @@ class AdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             publisher = Publisher(root)
             def blocked(*args):
+                """Block a fake network operation to verify recording/control remain independent."""
                 entered.set()
                 gate.wait(3)
             with patch.object(publisher,'_post',side_effect=blocked):
@@ -281,6 +304,7 @@ class AdapterTests(unittest.TestCase):
                     publisher.close()
 
     def test_person_outbox_recovery_and_flight_recording_coexist(self):
+        """Verify person outbox recovery and flight recording coexist."""
         from anafi_bridge import Publisher
         with tempfile.TemporaryDirectory() as root:
             publisher = Publisher(root, 'http://test.invalid', 'test-token')
@@ -303,6 +327,7 @@ class AdapterTests(unittest.TestCase):
             self.assertIn('landed', evidence)
 
     def test_bridge_shutdown_flushes_recording_after_disconnect(self):
+        """Verify bridge shutdown flushes recording after disconnect."""
         args = self.controller_args(mode='direct')
         args.no_window, args.demo_flight = True, False
         publisher = Mock()
@@ -316,8 +341,10 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(order, ['disconnected', 'recording closed'])
 
     def test_landing_requires_a_received_landed_event(self):
+        """Verify landing requires a received landed event."""
         driver, bridge = self.setup_fake()
         def sleep(seconds):
+            """Advance simulated waiting while injecting the test landing-state event."""
             self.now += seconds
         with patch("qr_orbit_bridge.time.monotonic", side_effect=lambda: self.now), \
              patch("qr_orbit_bridge.time.sleep", side_effect=sleep):
@@ -331,6 +358,7 @@ class AdapterTests(unittest.TestCase):
             self.assertTrue(driver.land())
 
     def test_rehearsal_never_constructs_a_flight_driver(self):
+        """Verify rehearsal never constructs a flight driver."""
         args = SimpleNamespace(ip="192.168.42.1", home_lat=0, home_lon=0, execute=False)
         with patch("qr_orbit_bridge.OlympeOrbitDriver", side_effect=AssertionError("flight driver forbidden")):
             bridge = QROrbitBridge(args, SimpleNamespace(), SimpleNamespace(), None, Limits(),
@@ -342,6 +370,7 @@ class AdapterTests(unittest.TestCase):
             self.assertFalse(bridge.status_queue.empty())
 
     def test_incomplete_or_old_physical_preflight_rejected(self):
+        """Verify incomplete or old physical preflight rejected."""
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/"preflight.json"
             path.write_text('{}')

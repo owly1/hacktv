@@ -6,9 +6,11 @@ from contextlib import contextmanager
 
 class CommandInput:
     def __init__(self):
+        """Initialize the buffered terminal-command parser."""
         self.pending = bytearray()
 
     def feed(self, data):
+        """Convert a terminal chunk into commands, prioritizing immediate landing keys."""
         # Landing wins over every other command in a pasted/read batch.
         if any(key in data for key in (b"\x1b", b"x", b"X")):
             self.pending.clear()
@@ -55,6 +57,7 @@ def immediate_keys(stream):
 
 
 def commands(stream, stopped=lambda: False):
+    """Yield parsed terminal commands until input closes or the caller requests stop."""
     parser = CommandInput()
     with immediate_keys(stream) as fd:
         while not stopped():

@@ -10,7 +10,9 @@ const EOI = Buffer.from([0xff, 0xd9]);
 // FFmpeg stdout chunks do not necessarily align with JPEG boundaries.
 export class JpegFrames {
   buffer = Buffer.alloc(0);
+  /** Initialize a JPEG byte accumulator and its completed-frame callback. */
   constructor(onFrame) { this.onFrame = onFrame; }
+  /** Extract complete JPEGs from arbitrary FFmpeg chunks without retaining an unbounded backlog. */
   push(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     for (;;) {
@@ -33,6 +35,7 @@ export class JpegFrames {
   }
 }
 
+/** Relay controller RTSP/UDP video through FFmpeg into authenticated backend JPEG ingest. */
 export async function main() {
   const { values } = parseArgs({ options: {
     backend: { type: 'string', default: 'http://127.0.0.1:8787' },
@@ -74,8 +77,11 @@ export async function main() {
   let latest = null, busy = false, stopped = false, failed = false;
   let sent = 0, dropped = 0, lastSentAt = null, failures = 0, lastStats = Date.now();
   let lastSent = 0, lastReceived = Date.now();
+  /** Stop FFmpeg and the camera relay without sending aircraft commands. */
   const stop = () => { stopped = true; latest = null; child.kill(); };
+  /** Report a relay failure and trigger bounded reception cleanup. */
   const fail = (message) => { failed = true; console.error(message); stop(); };
+  /** Upload only the newest pending JPEG so slow HTTP does not build video lag. */
   const sendLatest = async () => {
     if (busy || stopped) return;
     busy = true;

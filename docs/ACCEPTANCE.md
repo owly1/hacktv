@@ -1,53 +1,34 @@
-# Acceptance checklist (v2.0 — live by default)
+# Acceptance checklist
 
-The demo is "done" when every **Must** item passes at the clean-start rehearsal.
-A failing item gets fixed or removed from the demo script.
+Commit: __________  Operator/reviewer: __________  Date/time: __________
+Record failures and skipped checks; do not turn unchecked items into claims.
 
-Checked by: __________  Date/time: __________  Commit: __________
+## Software and startup
 
-## A. Startup (Must)
+- [ ] `npm test` and relevant Python checks pass; SDK skips are listed.
+- [ ] A clean checkout starts using the README without committed secrets.
+- [ ] Live opens waiting for the aircraft; unavailable/stale input is visible.
+- [ ] Replay is explicit; switching cases or back to live clears incompatible state.
 
-- [ ] `npm test` passes.
-- [ ] `npm start`, then http://127.0.0.1:8787 opens straight into live mode (no token prompt) showing "Waiting for the drone".
-- [ ] With the backend stopped, the page says the backend is unreachable — no example data appears.
+## Observation and detection
 
-## B. Drone link (Must)
+- [ ] One receiver owns the link; video timestamps advance and telemetry is fresh.
+- [ ] Selected QR creates a labeled test incident; unrelated QR payloads do not.
+- [ ] Missing RGB fire coordinates remain unknown; scenario locations stay labeled.
+- [ ] Incident dismissal works; automatic Gemini analysis succeeds or shows a reason.
 
-- [ ] `bridge/anafi_bridge.py --backend …` connects; the ANAFI-01 panel shows smooth live video (fps shown) within a few seconds.
-- [ ] Altitude above takeoff, ground speed, drone power and flight state update about once a second; stale telemetry (>10 s) is marked STALE.
-- [ ] The drone's position appears on the map (GPS outdoors; home + moves indoors).
+## Leads and planning
 
-## C. Detection → everything (Must)
+- [ ] Person-search replay shows candidates, multiple views, delayed alerts and coverage.
+- [ ] Lead acknowledgement/closure records a named responder and outcome.
+- [ ] Plans include evidence, uncertainty, actions and re-planning triggers.
+- [ ] Changed conditions mark plans stale; approval/export retain source and reviewer.
+- [ ] Replay plans/analyses never appear in live storage.
 
-- [ ] Showing the printed test marker (18 cm, within ~2 m) triggers "Fire detected" within a second or two; the video shows the detection box.
-- [ ] The fire pin appears on the map with the marker's name/area, and the spread projection grows when Play is pressed.
-- [ ] Gemini analysis appears automatically (AUTO tag) with severity and spread outlook — or, with no internet, "Cannot connect to Gemini" with the reason.
-- [ ] "Mark false alarm" clears the incident.
+## External services and hardware (separate checks)
 
-## D. Planning (Must)
-
-- [ ] "Generate operational plan" returns prioritized actions with owners and timing, triggers and the stated advantage.
-- [ ] Changing conditions marks the plan stale; approval needs a name.
-- [ ] Export brief contains the fire, projection, telemetry, analysis and plan.
-
-## E. Demo flight (Should — needs the venue's OK and a person on the controller)
-
-- [ ] `--demo-flight` refuses to start below 30% battery or when not landed, and waits for `FLY`.
-- [ ] Take-off, +1 m climb, 8-segment circle, return, landing; progress shows in the ANAFI-01 panel.
-- [ ] `x` + Enter, `l` in the video window and Ctrl+C each land the drone immediately.
-
-## F. TigerData (Must for the track)
-
-- [ ] `npm run db:init` reports insert + read-back via `telemetry_1m` and lists the hypertables.
-- [ ] Status shows TigerData "Connected"; the Integrations chart shows altitude per minute from the continuous aggregate.
-- [ ] Detections, analyses and plans rows exist after a test run.
-
-## G. Demo mode (Should)
-
-- [ ] The Demo button loads the historical fires from `examples/`; each replays from ignition to its recorded size.
-- [ ] "ANAFI demo flight pattern" replays the circle at the Sam Ibrahim Building; Exit demo returns to live.
-
-## H. Release (Must)
-
-- [ ] `.env` is not committed; `.env.example` has no real values.
-- [ ] README commands work from a fresh clone.
+- [ ] Real Gemini analysis/plan and TigerData insert/readback are recorded, if claimed.
+- [ ] Use the chosen mode's [flight guide](../README.md#choose-a-hardware-workflow).
+  Confirm physical terminal landing before a circle; verify touchdown rather than
+  only a sent command. Software tests alone do not satisfy this item.
+- [ ] Keep recordings and update [VERIFIED.md](VERIFIED.md) with exact scope.

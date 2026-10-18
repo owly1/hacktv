@@ -599,6 +599,7 @@ else { renderFallback(); selectFire(FIRES[0].id, false); }
 </body>
 </html>`;
 
+/** Generate the standalone historical-fire examples page from the recorded dataset. */
 function renderPage(){
   return PAGE
     .replace('__FIRES_JSON__', JSON.stringify(FIRES))

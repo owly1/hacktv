@@ -17,12 +17,14 @@ from fire_detection import FireDetector, confirm_hits, same_spot
 
 
 def iso(at):
+    """Convert a Unix capture time to an ISO UTC timestamp for ingest."""
     return datetime.fromtimestamp(at, timezone.utc).isoformat()
 
 
 class Episodes:
     """Confirm 3 fresh QR frames or 5 same-spot YOLO frames; retry failed posts in one episode."""
     def __init__(self):
+        """Initialize selected-hit confirmation and fire-episode update timers."""
         self.last_capture = None
         self.identity = None
         self.last_bbox = None
@@ -32,6 +34,7 @@ class Episodes:
         self.last_post = float('-inf')
 
     def observe(self, hit, captured, now):
+        """Confirm repeated fresh hits and decide when a new or continuing episode should publish."""
         if self.episode and now - self.last_seen > 15:
             self.episode = None
         if not 0 <= now - captured < 2:
@@ -63,10 +66,12 @@ class Episodes:
         return self.episode if now - self.last_post >= 5 else None
 
     def acknowledged(self, now):
+        """Record a successful sighting delivery so updates obey the episode interval."""
         self.last_post = now
 
 
 def detection_payload(hit, jpeg, captured, episode, telemetry=None, site=None):
+    """Build a fire-ingest record, distinguishing measured pose from a configured QR scenario site."""
     details = dict(hit.get('details') or {})
     fire = {'latitude': None, 'longitude': None, 'distance_m': None,
             'bearing_deg': None, 'position_source': 'unavailable'}
@@ -84,6 +89,7 @@ def detection_payload(hit, jpeg, captured, episode, telemetry=None, site=None):
 
 class Monitor:
     def __init__(self, backend, dashboard_token, ingest_token, detector):
+        """Configure authenticated snapshot reads, detection and health publishing."""
         self.backend = backend.rstrip('/')
         self.dashboard_token, self.ingest_token = dashboard_token, ingest_token
         self.detector = detector
@@ -95,16 +101,19 @@ class Monitor:
                        'last_source': None, 'error': None}
 
     def get(self, path):
+        """Make a dashboard-authenticated read from the configured backend."""
         return urlopen(Request(self.backend + path, headers={
             'Authorization': 'Bearer ' + self.dashboard_token}), timeout=3)
 
     def post(self, path, body):
+        """Submit an ingest-authenticated JSON record to the backend."""
         with urlopen(Request(self.backend + path, data=json.dumps(body, allow_nan=False).encode(),
                 headers={'Authorization': 'Bearer ' + self.ingest_token,
                          'Content-Type': 'application/json'}, method='POST'), timeout=5) as response:
             return response.status
 
     def step(self):
+        """Process one fresh camera snapshot and publish detector health or a confirmed sighting."""
         with self.get('/api/snapshot') as response:
             captured = datetime.fromisoformat(response.headers['X-Captured-At'].replace('Z', '+00:00')).timestamp()
             jpeg = response.read(5_000_001)
@@ -139,6 +148,7 @@ class Monitor:
             print(f"Detection accepted: {hit['source']} / {hit['label']} ({episode})", flush=True)
 
     def run(self):
+        """Repeat camera processing and recover from unavailable frames/backend requests."""
         while True:
             started = time.monotonic()
             try:
@@ -156,6 +166,7 @@ class Monitor:
 
 
 def main():
+    """Load local credentials/options and start the laptop fire monitor."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', default='http://127.0.0.1:8787')
     parser.add_argument('--model', default=os.environ.get('EMBERWATCH_MODEL', str(Path.home()/'emberwatch-models/fire-smoke-yolov8n.pt')))

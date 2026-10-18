@@ -1,180 +1,43 @@
-# Maxim: start here on main
+# Codebase tour
 
-Updated 17 October 2026 after integrating person search and incident replay.
+Start the dashboard with the [README](README.md). For machine setup, use the
+[Windows](docs/RESTART_CURRENT_LAPTOP.md) or [Mac](docs/MAC_SETUP.md) guide.
 
-The shared codebase includes the dashboard, Pi observation, existing QR preset workflow, historical-case Gemini routes and person search.
+## Follow one observation
 
-## The project in plain English
+1. `bridge/anafi_observer.py` receives camera/telemetry on the Pi without piloting.
+   `bridge/anafi_bridge.py` is the fuller detection/flight adapter.
+2. `backend/validation.mjs` checks incoming measurements and the selected fire QR.
+3. `backend/server.mjs` authenticates requests, relays JPEGs, stores evidence,
+   calls Gemini and serves the dashboard.
+4. `dist/app.js` renders the incident, drone, analysis and plan. `dist/model.js`
+   supplies the shared illustrative spread calculations.
+5. `backend/people.mjs` combines person observations into uncertain leads;
+   `dist/people.js` displays evidence, coverage and responder actions.
 
-BOSCO/Emberwatch is a hackathon prototype around a Parrot ANAFI Extended drone.
-The browser is the dashboard; the **backend** is the Node.js program on the
-laptop; a Python **bridge** is the adapter between Parrot's Olympe drone SDK
-and our HTTP API. **Telemetry** means measurements such as battery, height,
-speed and flight state. A **branch** is a separate version of the project.
-Changing branches can change the available features and start commands.
+## Concepts
 
-Gemini provides evidence-based analysis and a response-plan draft where that
-workflow exists. A human must review its output; generated text is not a
-validated assessment or a flight command. The animated spread is an
-illustration driven by assumptions, not a scientifically validated forecast.
-Keep simulated incidents, real observations and AI interpretation distinct.
-
-## What is implemented here
-
-- `backend/server.mjs`: `emberwatch.v1` API, authenticated ingest, camera relay,
-  Gemini analysis/plan endpoints, storage adapters and cached map tiles.
-- `backend/schema.sql` and `backend/db-init.mjs`: Timescale tables, the
-  per-minute telemetry aggregate, and schema/insert/readback initialization.
-- `dist/`: live dashboard and explicitly requested historical-fire replay.
-- `bridge/anafi_bridge.py`: fuller fire/QR detection bridge; it includes an
-  older terminal-confirmed `--demo-flight` route. That route is not the new
-  QR-scanned preset demo, and main's normal startup does not invoke it.
-- `bridge/anafi_observer.py`: observation-only Pi receiver, with configurable
-  camera FPS. Current recorded Pi target is 10 FPS, measured around 8-9 FPS.
-- `bridge/qr_orbit_rehearsal.py`: laptop QR recognition and simulated orbit preview.
-- `bridge/qr_preset_demo.py`: explicitly armed QR-triggered takeoff, preset circle, bounded hover and landing; see [the current preset guide](docs/QR_PRESET_DEMO.md).
-- `scripts/Start-BOSCO.ps1`: restart helper for the already provisioned laptop
-  and Pi, not a universal installer for an arbitrary teammate's computer.
-
-Grounded Pi camera/telemetry reception was physically verified. Existing
-Gemini and TigerData round-trip evidence is in `docs/VERIFIED.md`. It does not
-prove that every teammate's credentials work or that the entire flight/fire
-pipeline has been tested. The standalone short-hover success belongs to the
-QR feature work. The actual QR circle and X-key landing still need physical verification; merging source does not establish flight acceptance.
-
-## Person search
-
-- `bridge/anafi_bridge.py` adds a person detector, simple tracking, timestamped
-  camera/drone pose, small crops and an on-disk retry outbox for disconnected
-  observations. Standard ANAFI Extended supplies visible RGB, not thermal;
-  a thermal model flag does not create a thermal sensor.
-- `backend/people.mjs` turns observations into uncertain rescue leads. It
-  combines viewing angles and location-error estimates, records negative
-  looks, suggests another viewpoint, and requires a responder to acknowledge
-  or close a lead. A candidate is not a confirmed person or diagnosis.
-- Leads persist in `data/people/state.json`, **not TigerData**. Crops, delayed
-  observations, coverage and lead state use the branch's people API routes.
-- `dist/people.js` draws lead cards, uncertainty/coverage and review controls.
-- `backend/people-sim.mjs` simulates a search that circles outside the fire
-  first, then surveys its projected path. It includes a stationary person,
-  walker, hot-rock distractor and radio outage, at UTSC and example fires.
-  These suggested/replayed routes do not command a real aircraft.
-- The shared spread model estimates fire arrival at leads. This is a
-  projection, not a validated arrival-time forecast. Terrain is flat unless
-  supplied; no real canopy reconstruction or breathing radar is implemented.
-- Gemini transport has a configurable 60-second analysis timeout (45 seconds for plans), fallback-model retries
-  and a five-minute cooldown for a model that stopped responding. Planning
-  includes leads and flags claims that an area or route is safe/clear.
-
-
-## Where the data goes
-
-```text
-Drone -> Linux/Pi Olympe bridge -> authenticated laptop backend -> browser
-                                             |-> TigerData records
-                                             |-> Gemini evidence / draft
-```
-
-The Pi uses aircraft Wi-Fi and Ethernet to the laptop, allowing the laptop to
-keep Internet Wi-Fi. In the provisioned setup an SSH reverse tunnel maps Pi
-localhost port 8788 to laptop localhost port 8787. Each device has its own
-localhost; 127.0.0.1 in your browser means your laptop. This network setup is
-separate from installing Node dependencies.
-
-The backend validates messages and tokens, serves the page, relays current
-JPEG/MJPEG video, archives detection images on disk and reads/writes records.
-TigerData is PostgreSQL with Timescale time-series features. It stores
-telemetry, detections and analysis/plan records; it is not the video-streaming
-server. The browser reads backend APIs rather than database credentials.
-Gemini's API key stays on the backend. A configured indicator does not prove
-that today's cloud request succeeded.
-
-Leaflet draws the map. The dashboard's OSM tile proxy provides road-map tiles;
-no Google Maps API key is required for that implementation. Tiles need
-Internet until cached. `dist/model.js` grows a wind-driven ellipse using
-spread/weather inputs; Gemini does not generate the map animation.
-
-## Try the feature without an aircraft
-
-After configuration, open the dashboard's Demo controls and select
-**Person search - fire first** (the displayed separator may be a middle dot).
-Try UTSC and one historical fire. Follow one candidate through multiple
-angles, its location uncertainty, delayed alert and responder acknowledgement.
-This is seeded simulation through the people pipeline, not a live rescue.
-
-`.env.example` adds `SEARCH_SECTOR` (south,west,north,east coordinates),
-`CAMERA_HFOV_DEG` and `COVERAGE_CELL_M`. Leave a sector unset until the team
-has an agreed test area. Model names/fallback order are local configuration;
-use a model enabled for your key and prove it with a current round trip.
-
-## First run on your laptop
-
-Open a terminal **in this branch's repository root**, where `package.json` is.
-Install Node 22+ first. For a new checkout:
-
-```powershell
-npm install
-# Run the next line only if .env does not already exist:
-Copy-Item .env.example .env
-# Edit .env locally before starting:
-npm start
-```
-
-Open <http://127.0.0.1:8787/>. `INGEST_TOKEN` lets the bridge write observations;
-`DASHBOARD_TOKEN` lets the browser read data and request analysis. They must be
-nonempty and different. `GEMINI_API_KEY` plus an account-enabled `GEMINI_MODEL`
-enable Gemini; `DATABASE_URL` plus the appropriate TLS CA setting enable
-TigerData. With no database URL, the backend uses memory, which is lost on
-restart. Set up tables with `npm run db:init` only against the intended service
-after the database owner supplies local configuration. Never overwrite a
-working `.env` or commit credentials, SSH keys, captures or runtime data.
-
-Run `npm test` for automated backend checks with fake cloud/drone services.
-An empty live feed with no receiver is expected; it is not proof of a camera
-failure. Show Demo explicitly when using simulated incidents. A fresh capture
-timestamp and a new analysis tied to that evidence are better checks than a
-green configured badge.
-
-## Files worth opening, in order
-
-| File | What to learn |
+| Term | Meaning here |
 |---|---|
-| [docs/RESTART_CURRENT_LAPTOP.md](docs/RESTART_CURRENT_LAPTOP.md) | Start the configured Windows/Pi setup |
-| [docs/PI_RUNTIME_HANDOFF.md](docs/PI_RUNTIME_HANDOFF.md) | Pi receiver, SDK and network details |
-| [docs/BRIDGE_CONTRACT.md](docs/BRIDGE_CONTRACT.md) | Exact bridge-to-backend messages |
-| [backend/server.mjs](backend/server.mjs) | Backend integration point |
-| [dist/app.js](dist/app.js), [dist/model.js](dist/model.js) | Dashboard and spread illustration |
-| [docs/VERIFIED.md](docs/VERIFIED.md) | Recorded cloud-service verification |
+| Backend | The Node server on the laptop, normally port 8787 |
+| Bridge / receiver | Linux process that owns the aircraft SDK connection |
+| Telemetry | Battery, flying state, height, speed, attitude and available GPS |
+| Detection episode | Related fire sightings sharing one identifier |
+| Rescue lead | A possible person with evidence and a location-error estimate |
+| Replay | Explicitly simulated input; its Gemini results are not stored as live data |
+| Flight runtime | Separate opt-in terminal program that can command the aircraft |
 
-| [docs/PERSON_SEARCH.md](docs/PERSON_SEARCH.md) | Detailed behavior, assumptions and missing work |
-| [backend/people.mjs](backend/people.mjs) | Geolocation, uncertainty, fusion and lead state |
-| [backend/people-sim.mjs](backend/people-sim.mjs) | Simulated scenarios and fire-first route |
-| [dist/people.js](dist/people.js) | Lead cards and map overlays |
-| [bridge/anafi_bridge.py](bridge/anafi_bridge.py) | Detector, crops and retry outbox |
-| [tests/people.test.mjs](tests/people.test.mjs) | Tests with synthetic observations |
-| [docs/BRIDGE_CONTRACT.md](docs/BRIDGE_CONTRACT.md) | Added person-ingest contract |
+The Pi's Wi-Fi talks to the drone. Ethernet/SSH carries observations back to
+the laptop; laptop Wi-Fi remains online for cloud services.
 
-## Your next tasks
+## Pick an entry point
 
-1. Start the backend, then follow the restart guide with the hardware owner.
-   Confirm an advancing picture timestamp and current telemetry with Replay off.
-2. Ask for a current Gemini analysis and verify TigerData with the database
-   owner. Record results and evidence timestamps; never paste keys into chat.
-3. Review `handoff.md` and `docs/QR_PRESET_DEMO.md`, then record physical
-   terminal-landing and circle checks before treating the QR flight as verified.
-4. Exercise the person-search demo, lead acknowledgement and restart persistence.
-   Hardware detector accuracy and geographic uncertainty still need field evidence.
-5. Keep response plans visibly subject to human review and spread outputs
-   labeled as projections. Do not promote synthetic scenario locations to GPS.
+- UI work: `dist/app.js`, `dist/people.js`, `dist/styles.css`.
+- API/data work: `backend/server.mjs`, `backend/validation.mjs`, `backend/schema.sql`.
+- AI work: prompts, schemas and Gemini transport in `backend/server.mjs`.
+- Hardware work: the selected [receiver/flight guide](README.md#choose-a-hardware-workflow).
+- Debug a flight recording: `scripts/mac.py fetch-flights`, then `scripts/review_flights.py`.
 
-## Where the other work lives
-
-| Branch | Purpose |
-|---|---|
-| `main` | Dashboard/backend, Pi observation, existing QR preset, historical-fire replay and person search |
-| QR circle-flight work | Merged into `main`: repeated preset circles, measured-marker orbit, calibration capture and flight recordings; the feature branch is retired |
-
-The integrated features above are available on main. To receive the code, use
-`git pull --ff-only` from a clean checkout of your branch. If Git reports local
-changes or divergent history, preserve that work and coordinate with its owner.
-Do not reset a teammate's checkout to make the instructions fit.
+Run the tests before changing interfaces. For all teammates' AIs, use
+[TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md). Physical and cloud evidence is listed
+in [VERIFIED.md](docs/VERIFIED.md); software tests do not establish flight accuracy.

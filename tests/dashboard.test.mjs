@@ -3,26 +3,32 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
+/** Load dashboard modules into a minimal fake DOM to test scenario isolation. */
 async function dashboard() {
   const elements = new Map();
+  /** Return a stable fake DOM element for a requested dashboard identifier. */
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
       innerHTML: '', textContent: '', value: '', hidden: false,
-      classList: {add() {}, remove() {}, toggle() {}},
-      style: {setProperty() {}},
+      classList: {/* Accept a class addition in the minimal DOM fixture. */ add() {}, /* Accept a class/layer removal without invoking a real browser. */ remove() {}, /* Accept a class toggle in the minimal DOM fixture. */ toggle() {}},
+      style: {/* Accept a style update in the fake dashboard element. */ setProperty() {}},
+      /** Accept an attribute update in the fake dashboard element. */
       setAttribute() {},
     });
     return elements.get(id);
   };
+  /** Build a chainable fake Leaflet layer for dashboard-state assertions. */
   const layer = () => ({
-    addTo() {return this;}, remove() {}, clearLayers() {}, bindTooltip() {return this;},
-    setLatLng() {return this;}, setOpacity() {return this;},
+    /** Keep fake layer chaining compatible with Leaflet calls. */
+    addTo() {return this;}, /* Accept a class/layer removal without invoking a real browser. */ remove() {}, /* Accept fake layer cleanup when the selected scenario changes. */ clearLayers() {}, /* Keep fake tooltip chaining compatible with Leaflet calls. */ bindTooltip() {return this;},
+    /** Accept a fake map-marker position update. */
+    setLatLng() {return this;}, /* Accept a fake map-marker visibility update. */ setOpacity() {return this;},
   });
   const context = vm.createContext({
     console, performance, URLSearchParams, AbortSignal,
-    document: {getElementById: element, querySelectorAll: () => []},
-    L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, divIcon: value => value},
-    window: {}, setTimeout: () => 0, clearTimeout() {},
+    document: {getElementById: element, /* Return an empty node list for controls not needed by this fixture. */ querySelectorAll: () => []},
+    L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, /* Preserve icon options without constructing a real map icon. */ divIcon: value => value},
+    window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
   });
   for (const name of ['model.js', 'demo-cases.js', 'people.js', 'app.js']) {
     let source = await readFile(new URL(`../dist/${name}`, import.meta.url), 'utf8');
@@ -36,7 +42,7 @@ async function dashboard() {
     renderSpread = fitToFire = renderAnalysis = renderPlan = renderPeople = toast = setDemoVideo = () => {};
     camera = () => null;
   `, context);
-  return {context, run: source => vm.runInContext(source, context), element};
+  return {context, /* Evaluate the selected dashboard operation inside its isolated VM fixture. */ run: source => vm.runInContext(source, context), element};
 }
 
 test('person search and historical replay switch without reusing a historical drone or analysis', async () => {
@@ -63,7 +69,7 @@ test('simulated rescue plans use the demo endpoint and include that scenario\'s 
   const calls = [];
   context.fetch = async (url, options) => {
     calls.push({url, options: {...options, body: JSON.parse(options.body)}});
-    return {ok: true, json: async () => ({id: 'demo-plan'})};
+    return {ok: true, /* Return the controlled response body for this fake HTTP request. */ json: async () => ({id: 'demo-plan'})};
   };
   run(`
     selectDemo('people');
@@ -86,7 +92,7 @@ test('an in-flight live lead poll cannot overwrite a newly selected demo', async
   run("state.mode = 'live'; var rendered = 0; renderPeople = () => rendered++;");
   const pending = run('pollPeople()');
   run("state.mode = 'demo'");
-  finish({ok: true, json: async () => ({leads: [{id: 'live-lead'}]})});
+  finish({ok: true, /* Return the controlled response body for this fake HTTP request. */ json: async () => ({leads: [{id: 'live-lead'}]})});
   await pending;
   assert.equal(run('rendered'), 0);
 });

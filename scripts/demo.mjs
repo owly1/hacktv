@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+/** Validate shared demo-launcher port and browser-opening options. */
 export function options(argv, env = process.env) {
   let port = Number(env.PORT || 8787), open = true;
   for (let i = 0; i < argv.length; i++) {
@@ -15,6 +16,7 @@ export function options(argv, env = process.env) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be 1–65535');
   return { port, open };
 }
+/** Detect a compatible existing demo backend without credentials or inference requests. */
 export async function probe(base, fetchImpl = fetch) {
   try { await fetchImpl(base, { signal: AbortSignal.timeout(1500) }); }
   catch { return false; }
@@ -25,6 +27,7 @@ export async function probe(base, fetchImpl = fetch) {
   if (response.status !== 401) throw new Error('This port is occupied by an older or incompatible backend. Stop it or use --port 9000.');
   return true;
 }
+/** Open the local demo URL with the host platform's browser launcher. */
 function openBrowser(url) {
   const [command, args] = process.platform === 'darwin' ? ['open', [url]]
     : process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]]
@@ -33,6 +36,7 @@ function openBrowser(url) {
   child.on('error', () => console.log(`Open ${url} in your browser.`));
   child.unref();
 }
+/** Start or reuse the compatible backend and open explicit replay with isolated local configuration. */
 export async function main() {
   process.chdir(root);
   if (!existsSync('.env')) throw new Error('Missing .env: copy .env.example and configure your tokens and GEMINI_API_KEY.');

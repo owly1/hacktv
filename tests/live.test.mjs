@@ -29,6 +29,7 @@ const planReply = {
   }) }] } }],
 };
 
+/** Start an isolated loopback backend with temporary evidence storage and fake external services. */
 async function startApp(options = {}) {
   const calls = [];
   const replies = options.replies ?? [];
@@ -54,16 +55,20 @@ async function startApp(options = {}) {
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
+  /** Send an HTTP request to this isolated test server with the selected test credentials. */
   const req = (method, p, { token, body, headers } = {}) => fetch(base + p, {
     method,
     headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined && !Buffer.isBuffer(body) ? { 'content-type': 'application/json' } : {}), ...headers },
     body: body === undefined ? undefined : Buffer.isBuffer(body) ? body : JSON.stringify(body),
   });
+  /** Close test connections and remove only this fixture's temporary evidence directory. */
   const close = async () => { server.close(); server.closeAllConnections?.(); await rm(dataDir, { recursive: true, force: true }); };
   return { base, req, calls, storage, close };
 }
 
+/** Return a fixed or test-controlled clock value for deterministic evidence checks. */
 const now = () => new Date().toISOString();
+/** Build the pinned fire-detection fixture with optional field overrides. */
 const detection = (over = {}) => ({
   detected_at: now(), episode_id: 'ep-test-1', source: 'qr-test', label: 'fire', confidence: 1,
   bbox: [0.4, 0.4, 0.6, 0.6],
@@ -73,6 +78,7 @@ const detection = (over = {}) => ({
   frame_jpeg_base64: JPEG.toString('base64'),
   ...over,
 });
+/** Poll a test observation until it appears or the bounded fixture deadline expires. */
 const waitFor = async (fn, ms = 3000) => {
   const end = Date.now() + ms;
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 25)); }
@@ -81,12 +87,13 @@ const waitFor = async (fn, ms = 3000) => {
 test('Gemini retries timed-out inference and keeps the response-body timeout active', async () => {
   let calls = 0;
   const transport = makeGeminiTransport({ apiKey:'test', model:'fake', retryDelayMs:0, timeoutMs:5,
+    /** Emulate the model HTTP response, timeout or injected failure without external traffic. */
     fetchImpl: async (_url, {signal}) => {
       calls++;
-      if (calls === 1) return {ok:true, json:() => new Promise((_, reject) => {
+      if (calls === 1) return {ok:true, /* Return the controlled response body for this fake HTTP request. */ json:() => new Promise((_, reject) => {
         signal.addEventListener('abort', () => reject(new DOMException('timeout','AbortError')), {once:true});
       })};
-      return {ok:true, json:async()=>analysisReply};
+      return {ok:true, /* Return the controlled response body for this fake HTTP request. */ json:async()=>analysisReply};
     } });
   assert.deepEqual(await transport({}), analysisReply);
   assert.equal(calls, 2);
@@ -94,15 +101,17 @@ test('Gemini retries timed-out inference and keeps the response-body timeout act
 
 test('connection freshness expires and recovers on the same backend and video subscription', async () => {
   let clock = Date.now();
-  const t = await startApp({ noGemini: true, now: () => clock });
+  const t = await startApp({ noGemini: true, /* Return a fixed or test-controlled clock value for deterministic evidence checks. */ now: () => clock });
   const abort = new AbortController();
   try {
+    /** Return the fixture storage/service status without accessing an external service. */
     const status = async () => (await t.req('GET', '/api/status', { token: DASH })).json();
     assert.equal((await status()).connection.state, 'waiting');
     const viewer = await fetch(`${t.base}/api/video`, {
       headers: { authorization: `Bearer ${DASH}` }, signal: abort.signal,
     });
     const reader = viewer.body.getReader();
+    /** Send the fixture's fresh telemetry/frame pair to its isolated backend. */
     const publish = async () => {
       const at = new Date(clock).toISOString();
       assert.equal((await t.req('POST', '/api/ingest/telemetry', {
@@ -158,7 +167,7 @@ test('video frames are relayed to /api/video viewers with capture time and overl
 
 test('vision health is authenticated, expires, and never creates a fire by itself', async () => {
   let clock = Date.now();
-  const t = await startApp({ noGemini: true, now: () => clock });
+  const t = await startApp({ noGemini: true, /* Return a fixed or test-controlled clock value for deterministic evidence checks. */ now: () => clock });
   try {
     const body = { observed_at: new Date(clock).toISOString(), model_status: 'ready', camera_state: 'live' };
     assert.equal((await t.req('POST', '/api/ingest/vision', { token: DASH, body })).status, 401);
@@ -461,7 +470,7 @@ test('demo fires are served from the examples dataset', async () => {
 
 test('demo cases get live Gemini analysis and plans that are never stored', async () => {
   let clock = Date.now();
-  const t = await startApp({ replies: [analysisReply, planReply], now: () => clock });
+  const t = await startApp({ replies: [analysisReply, planReply], /* Return a fixed or test-controlled clock value for deterministic evidence checks. */ now: () => clock });
   const demoCase = { id: 'jasper-2024', name: 'Jasper townsite complex', drone: { telemetry: { provenance: 'demo-simulated' } } };
   try {
     const analysis = await (await t.req('POST', '/api/demo/analyze', { token: DASH, body: { case: demoCase, scenario: { wind: 50 }, image: 'AAAA', trigger: 'auto-detection' } })).json();
@@ -496,7 +505,7 @@ test('demo cases get live Gemini analysis and plans that are never stored', asyn
 test('map tiles are fetched once, then served from the disk cache', async () => {
   let fetches = 0;
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
-  const t = await startApp({ noGemini: true, tileFetch: async () => { fetches++; return new Response(png); } });
+  const t = await startApp({ noGemini: true, /* Return synthetic imagery and track fetches for tile-cache assertions. */ tileFetch: async () => { fetches++; return new Response(png); } });
   try {
     for (let i = 0; i < 2; i++) {
       const res = await t.req('GET', '/tiles/osm/18/73407/95495.png');
@@ -510,7 +519,7 @@ test('map tiles are fetched once, then served from the disk cache', async () => 
 
 test('satellite tiles use the imagery service z/y/x order', async () => {
   const urls = [];
-  const t = await startApp({ noGemini: true, tileFetch: async (url) => { urls.push(url); return new Response(Buffer.from([0xff, 0xd8, 0xff])); } });
+  const t = await startApp({ noGemini: true, /* Return synthetic imagery and track fetches for tile-cache assertions. */ tileFetch: async (url) => { urls.push(url); return new Response(Buffer.from([0xff, 0xd8, 0xff])); } });
   try {
     const res = await t.req('GET', '/tiles/sat/16/18000/21000.png');
     assert.equal(res.status, 200);
@@ -521,6 +530,7 @@ test('satellite tiles use the imagery service z/y/x order', async () => {
 
 test('Gemini transport retries an overloaded model, then falls back', async () => {
   const seen = [];
+  /** Emulate the model HTTP response, timeout or injected failure without external traffic. */
   const fetchImpl = async (url) => {
     seen.push(url.match(/models\/([^:]+)/)[1]);
     return seen.length <= 2
@@ -531,13 +541,14 @@ test('Gemini transport retries an overloaded model, then falls back', async () =
   const reply = await transport({});
   assert.deepEqual(seen, ['main', 'main', 'backup']);
   assert.ok(reply.candidates);
-  const failing = makeGeminiTransport({ apiKey: 'k', model: 'main', fetchImpl: async () => new Response('{"error":{"message":"bad key"}}', { status: 400 }), retryDelayMs: 1 });
+  const failing = makeGeminiTransport({ apiKey: 'k', model: 'main', /* Emulate the model HTTP response, timeout or injected failure without external traffic. */ fetchImpl: async () => new Response('{"error":{"message":"bad key"}}', { status: 400 }), retryDelayMs: 1 });
   await assert.rejects(failing({}), /HTTP 400: bad key/);
 });
 
 test('Gemini transport moves past a silent model and skips it while it cools down', async () => {
   const seen = [];
   let clock = 0;
+  /** Emulate the model HTTP response, timeout or injected failure without external traffic. */
   const fetchImpl = (url, { signal }) => {
     const name = url.match(/models\/([^:]+)/)[1];
     seen.push(name);
@@ -545,7 +556,7 @@ test('Gemini transport moves past a silent model and skips it while it cools dow
     // 'main' never answers; only the transport's own timeout ends the request
     return new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
   };
-  const transport = makeGeminiTransport({ apiKey: 'k', model: 'main', fallbackModels: ['backup'], fetchImpl, retryDelayMs: 1, timeoutMs: 20, now: () => clock });
+  const transport = makeGeminiTransport({ apiKey: 'k', model: 'main', fallbackModels: ['backup'], fetchImpl, retryDelayMs: 1, timeoutMs: 20, /* Return a fixed or test-controlled clock value for deterministic evidence checks. */ now: () => clock });
   assert.ok((await transport({})).candidates);
   assert.deepEqual(seen, ['main', 'backup'], 'no second wait on the silent model');
   assert.equal(transport.lastModel, 'backup');

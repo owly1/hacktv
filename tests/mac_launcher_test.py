@@ -17,6 +17,7 @@ spec.loader.exec_module(mac)
 
 class MacLauncherTests(unittest.TestCase):
     def supervisor_context(self, directory):
+        """Patch observation subprocesses and locks for an isolated supervisor test."""
         stack = contextlib.ExitStack()
         stack.enter_context(patch.object(mac, 'OBSERVER_LOCK', Path(directory) / 'lock'))
         stack.enter_context(patch.object(mac, 'OBSERVER_STOP', Path(directory) / 'stop'))
@@ -26,6 +27,7 @@ class MacLauncherTests(unittest.TestCase):
         return stack
 
     def test_off_at_start_then_two_sessions_without_restarting_backend(self):
+        """Verify off at start then two sessions without restarting backend."""
         # Missing Wi-Fi at startup, first live session loses link, next is
         # explicitly stopped. Each recovery reselects Wi-Fi and aligns clocks.
         with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
@@ -41,6 +43,7 @@ class MacLauncherTests(unittest.TestCase):
             self.assertEqual(sync.call_count, 2)
 
     def test_stop_while_drone_absent_cancels_retries(self):
+        """Verify stop while drone absent cancels retries."""
         with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
              patch.object(mac, 'backend_status'), \
              patch.object(mac, 'remote', side_effect=subprocess.CalledProcessError(10, 'wifi')) as remote, \
@@ -51,6 +54,7 @@ class MacLauncherTests(unittest.TestCase):
             launch.assert_not_called()
 
     def test_competing_flight_session_stops_recovery(self):
+        """Verify competing flight session stops recovery."""
         with tempfile.TemporaryDirectory() as directory, self.supervisor_context(directory), \
              patch.object(mac, 'backend_status'), \
              patch.object(mac, 'remote', side_effect=subprocess.CalledProcessError(73, 'guard')), \
@@ -60,6 +64,7 @@ class MacLauncherTests(unittest.TestCase):
             launch.assert_not_called()
 
     def test_observer_never_enables_execution(self):
+        """Verify observer never enables execution."""
         command = mac.runtime_command(mac.DEFAULTS, 'observe', False)
         self.assertIn('anafi_observer.py', command)
         self.assertIn('--camera-transport frame', command)
@@ -69,6 +74,7 @@ class MacLauncherTests(unittest.TestCase):
             mac.runtime_command(mac.DEFAULTS, 'observe', True)
 
     def test_preset_and_hover_need_explicit_execution_option(self):
+        """Verify preset and hover need explicit execution option."""
         for mode, program in [('qr-preset', 'qr_preset_demo.py'), ('hover', 'hover_checkout.py')]:
             rehearsal = mac.runtime_command(mac.DEFAULTS, mode, False)
             live = mac.runtime_command(mac.DEFAULTS, mode, True)
@@ -79,6 +85,7 @@ class MacLauncherTests(unittest.TestCase):
             self.assertNotIn('TAKEOFF TEST', live)
 
     def test_qr_circle_is_explicit_native_calibrated_and_not_supervised(self):
+        """Verify qr circle is explicit native calibrated and not supervised."""
         observe = mac.runtime_command(mac.DEFAULTS, 'observe', False)
         live = mac.runtime_command(mac.DEFAULTS, 'qr-circle', True)
         preview = mac.runtime_command(mac.DEFAULTS, 'qr-circle', False)
@@ -95,6 +102,7 @@ class MacLauncherTests(unittest.TestCase):
             mac.runtime_command(mac.DEFAULTS, 'unknown', True)
 
     def test_automatic_preset_selects_fixed_path_without_calibration(self):
+        """Verify automatic preset selects fixed path without calibration."""
         live=mac.runtime_command(mac.DEFAULTS,'qr-demo',True)
         rehearsal=mac.runtime_command(mac.DEFAULTS,'qr-demo',False)
         self.assertIn('qr_auto_circle.py',live)
@@ -108,6 +116,7 @@ class MacLauncherTests(unittest.TestCase):
             self.assertNotIn('ARM QR PRESET',text)
 
     def test_connection_guards_precede_runtime_start(self):
+        """Verify connection guards precede runtime start."""
         preparation = mac.prepare_command(mac.DEFAULTS)
         self.assertLess(preparation.index('A flight checkout is already running'), preparation.index('systemctl --user stop'))
         self.assertLess(preparation.index('Another observation receiver'), preparation.index('wifi-profile'))
@@ -119,6 +128,7 @@ class MacLauncherTests(unittest.TestCase):
         self.assertNotIn('wifi-profile', command)
 
     def test_stop_only_targets_the_observer_in_this_macs_directory(self):
+        """Verify stop only targets the observer in this macs directory."""
         code = shlex.split(mac.stop_observer_command(mac.DEFAULTS))[-1]
         self.assertIn("b'anafi_observer.py' in argv", code)
         self.assertIn("(process / 'cwd').resolve() == root.resolve()", code)
@@ -127,6 +137,7 @@ class MacLauncherTests(unittest.TestCase):
         compile(code, '<remote-stop-observer>', 'exec')
 
     def test_deployment_keeps_existing_pi_credentials_separate(self):
+        """Verify deployment keeps existing pi credentials separate."""
         token = "test token with ' quotes and $dollars"
         data = mac.bundle(mac.DEFAULTS, {'INGEST_TOKEN': token})
         with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
@@ -143,12 +154,14 @@ class MacLauncherTests(unittest.TestCase):
             self.assertNotIn('DATABASE_URL', text)
 
     def test_normal_ssh_never_accepts_unverified_keys(self):
+        """Verify normal ssh never accepts unverified keys."""
         args = mac.ssh_args(mac.DEFAULTS)
         self.assertIn('StrictHostKeyChecking=yes', args)
         self.assertIn('BatchMode=yes', args)
         self.assertIn('StrictHostKeyChecking=ask', mac.ssh_args(mac.DEFAULTS, interactive=True))
 
     def test_fetch_flights_uses_verified_ipv6_ssh_and_local_review(self):
+        """Verify fetch flights uses verified ipv6 ssh and local review."""
         with tempfile.TemporaryDirectory() as folder, patch.object(mac,'ROOT',Path(folder)), \
              patch.object(mac.subprocess,'run') as run, contextlib.redirect_stdout(io.StringIO()):
             mac.fetch_flights(mac.DEFAULTS)
@@ -160,6 +173,7 @@ class MacLauncherTests(unittest.TestCase):
         self.assertTrue(review[1].endswith('review_flights.py'))
 
     def test_native_resolution_is_opt_in_for_each_receiver(self):
+        """Verify native resolution is opt in for each receiver."""
         for mode, flag in [('observe', '--camera-width 0'), ('qr-preset', '--video-width 0')]:
             self.assertIn(flag, mac.runtime_command(mac.DEFAULTS, mode, False, native=True))
             self.assertNotIn(flag, mac.runtime_command(mac.DEFAULTS, mode, False))

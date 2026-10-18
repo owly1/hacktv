@@ -21,6 +21,7 @@ TEXT = "EW1:Alpha|120|X|35|M|30|60|31|18|18"
 @unittest.skipUnless(HAS_SDK, "Run inside the Pi Olympe environment")
 class QRTakeoffTests(unittest.TestCase):
     def make_bridge(self, execute=True, full_orbit=False):
+        """Construct the tested bridge around fake state, publisher and aircraft dependencies."""
         args = SimpleNamespace(ip=None, controller="direct", home_lat=0, home_lon=0,
                                execute=execute, terminal_control=True, full_orbit=full_orbit,
                                checkout_one_segment=not full_orbit, hover_seconds=1,
@@ -28,6 +29,7 @@ class QRTakeoffTests(unittest.TestCase):
         return QRTakeoffDemo(args, SimpleNamespace(), SimpleNamespace(), object(), Limits(), TEXT)
 
     def fly(self, full=False, wrong_pose=False, interrupt=False):
+        """Exercise flight logic against fake moves and a controlled clock, without aircraft access."""
         bridge = self.make_bridge(full_orbit=full)
         now, sends, movements, lands = [100.0], [], [], []
         bridge.connected = True
@@ -36,6 +38,7 @@ class QRTakeoffTests(unittest.TestCase):
         bridge.telemetry = {"state": "landed", "battery_pct": 70, "altitude_m": 0,
                             "ground_speed_mps": 0, "attitude_deg": {"roll": 0, "pitch": 6.7}}
         def advance(seconds):
+            """Advance the fake clock and refresh test sensor timestamps."""
             now[0] += seconds
             bridge.sensor_ages.ages = {key: now[0] for key in ("altitude", "speed", "attitude", "camera")}
             bridge.last_frame_time = time.time()
@@ -45,6 +48,7 @@ class QRTakeoffTests(unittest.TestCase):
                 bridge.telemetry.update(altitude_m=1, attitude_deg={"roll": 0, "pitch": 0})
             bridge.marker = Marker(now[0]-.001, TEXT, .5 if wrong_pose else 1, 0, 1, 0, 0)
         def receive(message):
+            """Supply a controlled SDK state/frame update to the tested flight runtime."""
             sends.append(str(message))
             bridge.telemetry["state"] = "motor_ramping"
             return SimpleNamespace(done=lambda: True, success=lambda: True, cancel=lambda: None)
@@ -53,8 +57,10 @@ class QRTakeoffTests(unittest.TestCase):
         bridge.drone = aircraft
         class Driver:
             def request_land(self):
+                """Record a nonblocking fake landing request for cancellation assertions."""
                 lands.append("request")
             def move(self, offset, speed, check):
+                """Record the requested relative move and simulate its result or injected failure."""
                 self_outer.assertIs(bridge.drone, aircraft)
                 movements.append(offset)
                 advance(.5)
@@ -62,6 +68,7 @@ class QRTakeoffTests(unittest.TestCase):
                     bridge.abort_flight.set()
                 check()
             def land(self):
+                """Record a fake landing attempt and return the fixture confirmation result."""
                 self_outer.assertIs(bridge.drone, aircraft)
                 lands.append("confirmed")
                 bridge.telemetry["state"] = "landed"
@@ -69,6 +76,7 @@ class QRTakeoffTests(unittest.TestCase):
         self_outer = self
         bridge.driver = Driver()
         def orbit(*args, **kwargs):
+            """Capture the integrated handoff into fake measured-orbit logic."""
             return fly_once(*args, **kwargs, clock=lambda: now[0], sleep=advance)
         with patch("qr_takeoff_demo.read_preflight"), \
              patch("qr_takeoff_demo.time.monotonic", side_effect=lambda: now[0]), \
@@ -78,6 +86,7 @@ class QRTakeoffTests(unittest.TestCase):
         return bridge, sends, movements, lands
 
     def test_same_connection_takeoff_qr_one_chord_and_confirmed_land(self):
+        """Verify same connection takeoff qr one chord and confirmed land."""
         bridge, sends, movements, lands = self.fly()
         self.assertEqual(len(sends), 1)
         self.assertIn("TakeOff", sends[0])
@@ -87,6 +96,7 @@ class QRTakeoffTests(unittest.TestCase):
         self.assertFalse(bridge.running)
 
     def test_full_orbit_requires_explicit_selection(self):
+        """Verify full orbit requires explicit selection."""
         bridge, sends, movements, lands = self.fly(full=True)
         self.assertEqual(bridge.start_phrase, "START QR ORBIT")
         self.assertEqual(len(sends), 1)
@@ -94,6 +104,7 @@ class QRTakeoffTests(unittest.TestCase):
         self.assertEqual(lands, ["confirmed"])
 
     def test_half_metre_marker_cannot_start_a_one_metre_orbit(self):
+        """Verify half metre marker cannot start a one metre orbit."""
         bridge, sends, movements, lands = self.fly(wrong_pose=True)
         self.assertEqual(len(sends), 1)
         self.assertEqual(movements, [])
@@ -102,12 +113,14 @@ class QRTakeoffTests(unittest.TestCase):
         self.assertTrue(any("arming expired" in entry[1] for entry in list(bridge.status_queue.queue)))
 
     def test_operator_interrupt_during_first_chord_prevents_remaining_orbit(self):
+        """Verify operator interrupt during first chord prevents remaining orbit."""
         bridge, sends, movements, lands = self.fly(full=True, interrupt=True)
         self.assertEqual(len(movements), 1)
         self.assertEqual(lands[-1], "confirmed")
         self.assertTrue(bridge.land_confirmed)
 
     def test_no_execute_has_no_driver_and_start_phrase_cannot_take_off(self):
+        """Verify no execute has no driver and start phrase cannot take off."""
         bridge = self.make_bridge(execute=False)
         bridge.drone = Mock()
         with patch("qr_takeoff_demo.terminal_commands", return_value=iter([bridge.start_phrase])):
@@ -117,6 +130,7 @@ class QRTakeoffTests(unittest.TestCase):
         self.assertIsNone(bridge.mission)
 
     def test_missing_physical_landing_record_blocks_takeoff(self):
+        """Verify missing physical landing record blocks takeoff."""
         bridge = self.make_bridge()
         bridge.drone = Mock()
         with patch("qr_takeoff_demo.read_preflight", side_effect=ValueError("terminal landing is untested")), \
@@ -126,6 +140,7 @@ class QRTakeoffTests(unittest.TestCase):
         self.assertIsNone(bridge.mission)
 
     def test_missing_calibration_rejected_before_aircraft_construction(self):
+        """Verify missing calibration rejected before aircraft construction."""
         with patch.object(sys, "argv", ["qr_takeoff_demo.py", "--execute"]), \
              patch.object(sys.stdin, "isatty", return_value=True), \
              patch.object(qr_takeoff_demo, "QRTakeoffDemo") as factory, \
@@ -135,6 +150,7 @@ class QRTakeoffTests(unittest.TestCase):
         factory.assert_not_called()
 
     def test_native_video_keeps_calibration_pixels_and_default_keeps_cap(self):
+        """Verify native video keeps calibration pixels and default keeps cap."""
         import cv2
         import numpy as np
         for width, expected in ((0, (720, 1280)), (960, (540, 960))):
@@ -145,6 +161,7 @@ class QRTakeoffTests(unittest.TestCase):
             bridge.latest_bgr = (np.zeros((720, 1280, 3), dtype=np.uint8), time.time())
             sizes = []
             def receive(jpeg, captured, overlay):
+                """Supply a controlled SDK state/frame update to the tested flight runtime."""
                 sizes.append(cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR).shape[:2])
                 bridge.running = False
             bridge.publisher = SimpleNamespace(frame=receive)

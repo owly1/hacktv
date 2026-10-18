@@ -15,6 +15,7 @@ LOOKALIKES = ['EW1:Ravine|300|X|35|M|45|90|31|18|18', 'EW1:Alpha|120|X|35|M|30|6
 
 
 def qr_frame(text):
+    """Render the selected QR into a synthetic frame for detector checks."""
     code = cv2.QRCodeEncoder.create().encode(text)
     code = cv2.resize(code, None, fx=12, fy=12, interpolation=cv2.INTER_NEAREST)
     code = cv2.copyMakeBorder(code, 120, 120, 120, 120, cv2.BORDER_CONSTANT, value=255)
@@ -23,16 +24,19 @@ def qr_frame(text):
 
 class FireMarkerTests(unittest.TestCase):
     def test_payload_is_the_printed_fire(self):
+        """Verify payload is the printed fire."""
         self.assertEqual(FIRE_MARKER_PAYLOAD, 'EW1:Alpha|120|X|35|M|30|60|31|18|18')
         self.assertEqual((ROOT/'bridge'/'orbit-marker.txt').read_text(encoding='utf-8').strip(), FIRE_MARKER_PAYLOAD)
         details = parse_marker(FIRE_MARKER_PAYLOAD)
         self.assertEqual((details['name'], details['area_ha'], details['intensity']), ('Alpha', 120, 'extreme'))
 
     def test_repository_marker_is_a_fire(self):
+        """Verify repository marker is a fire."""
         hit = FireDetector('', .5, use_yolo=False).detect(cv2.imread(str(ROOT/'dist'/'test-marker.png')))
         self.assertEqual((hit['source'], hit['qr_text']), ('qr-test', FIRE_MARKER_PAYLOAD))
 
     def test_every_other_qr_code_is_ignored(self):
+        """Verify every other qr code is ignored."""
         detector = FireDetector('', .5, use_yolo=False)
         for text in LOOKALIKES:
             self.assertIsNone(parse_marker(text), text)

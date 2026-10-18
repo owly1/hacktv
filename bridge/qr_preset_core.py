@@ -16,6 +16,7 @@ class Recognition:
 class RecognitionTrigger:
     """An explicit arm and five fresh QR frames trigger one session, once."""
     def __init__(self, expected, arm_seconds=20):
+        """Initialize one-use QR recognition with its freshness and arming limits."""
         if expected != FIRE_MARKER_PAYLOAD:
             raise ValueError(f"Only the fire marker {FIRE_MARKER_PAYLOAD} can be selected")
         self.expected, self.arm_seconds = expected, arm_seconds
@@ -24,14 +25,17 @@ class RecognitionTrigger:
         self.hits = 0
 
     def arm(self, now):
+        """Start a timed recognition window after validating the current aircraft state."""
         if self.state != "disarmed":
             raise ValueError("This session is consumed; restart before another attempt")
         self.state, self.arm_at, self.reason = "armed", now, "waiting for selected QR"
 
     def cancel(self, reason="operator cancelled"):
+        """Disarm and consume the active recognition attempt."""
         self.state, self.reason = "cancelled", reason
 
     def observe(self, observation, now):
+        """Confirm distinct selected-QR frames after arming without deriving marker position."""
         if self.state != "armed":
             return False
         if now-self.arm_at >= self.arm_seconds:
@@ -67,6 +71,7 @@ def fly_preset(driver, limits, sample, abort, report, hold_seconds=30, flight_st
     duration = limits.mission_seconds if flight_seconds is None else flight_seconds
 
     def check(stationary=False):
+        """Poll cancellation, the whole-flight deadline and optional stationary-hover requirements."""
         if abort.is_set():
             raise InterruptedError("operator requested landing")
         if clock()-started >= duration:

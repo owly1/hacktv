@@ -10,6 +10,7 @@ URL = f'https://huggingface.co/rabahdev/fire-smoke-yolov8n/resolve/{REVISION}/be
 
 
 def main():
+    """Install the pinned fire-model weights after verifying their expected SHA-256 hash."""
     target = Path.home() / 'emberwatch-models/fire-smoke-yolov8n.pt'
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() == SHA256:

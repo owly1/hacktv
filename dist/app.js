@@ -5,8 +5,11 @@
    Demo mode (historical fires from examples/ + flight-pattern replay) runs
    only when the Demo button is pressed. */
 const $ = id => document.getElementById(id), M = EmberModel;
+/** Escape untrusted text before inserting it into HTML templates. */
 const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/** Wait between asynchronous replay/Gemini retry attempts. */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** Format an evidence timestamp for display, retaining an unknown placeholder. */
 const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString() : '—';
 const STALE_MS = 10_000;
 const FLIGHT_STATES = {landed:'Landed', takingoff:'Taking off', hovering:'Hovering', flying:'Flying', landing:'Landing', emergency:'Emergency', usertakeoff:'Hand launch', motor_ramping:'Motors starting', emergency_landing:'Emergency landing'};
@@ -28,31 +31,40 @@ const state = {
 };
 let toastTimer;
 
+/** Show a short-lived status message, replacing the previous toast timer. */
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
+/** Export browser-local content through a temporary Blob URL. */
 function download(name, content, type = 'text/plain') { const url = URL.createObjectURL(new Blob([content], {type})); const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000); }
+/** Open the requested native dashboard dialog. */
 function openDialog(id) { $(id).showModal(); }
 
+/** Make a token-authenticated API call with JSON encoding, timeout and visible error details. */
 async function api(path, {method = 'GET', body, timeout = 12000} = {}) {
   const response = await fetch(path, {method, headers: {...(body !== undefined ? {'Content-Type': 'application/json'} : {}), Authorization: 'Bearer ' + state.token}, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeout)});
   if (!response.ok) { let message; try { message = (await response.json()).error; } catch {} const err = new Error(message || `Backend returned ${response.status}`); err.status = response.status; throw err; }
   return response;
 }
+/** Decode a successful authenticated API response as JSON. */
 const getJson = async (path, opts) => (await api(path, opts)).json();
 
 // ------------------------------------------------------------- banner/heading
 
+/** Set the incident/connection banner and optionally expose false-alarm dismissal. */
 function setBanner(kind, html, showDismiss = false) {
   const b = $('status-banner'); b.className = 'simulation-banner status-banner ' + kind;
   $('banner-text').innerHTML = html; $('dismiss-fire').hidden = !showDismiss;
 }
+/** Update the workspace mode badge and its visual state. */
 function setModePill(kind, text) { const p = $('mode-pill'); p.className = 'pill ' + kind; p.innerHTML = `<span class="dot"></span> ${escapeHTML(text)}`; }
 
+/** Return the current active live incident; replay never reuses live incident state. */
 function activeFire() {
   if (state.mode === 'demo') return null;
   const inc = state.incident;
   return inc && inc.active ? inc : null;
 }
 
+/** Show live monitoring, fire or disconnected status from current evidence freshness. */
 function renderHeading() {
   if (state.mode === 'demo') return;
   const inc = activeFire(), t = state.telemetry;
@@ -82,6 +94,7 @@ function renderHeading() {
 
 // ------------------------------------------------------------------- map
 
+/** Create base/overlay layers, shared drone rendering and person-search map controls. */
 function initMap() {
   const map = state.map = L.map('map', {zoomControl: false, attributionControl: false, maxZoom: 22}).setView([state.site.latitude, state.site.longitude], 17);
   state.tiles = {osm: L.tileLayer('/tiles/osm/{z}/{x}/{y}.png', {maxNativeZoom: 19, maxZoom: 22}), sat: L.tileLayer('/tiles/sat/{z}/{x}/{y}.png', {maxNativeZoom: 18, maxZoom: 22})};
@@ -100,6 +113,7 @@ function initMap() {
   window.addEventListener('resize', () => map.invalidateSize());
 }
 
+/** Switch OSM/satellite layers and keep the control and attribution in sync. */
 function setBasemap(kind) {
   state.map.removeLayer(state.tiles[kind === 'sat' ? 'osm' : 'sat']);
   state.tiles[kind].addTo(state.map).bringToBack();
@@ -117,7 +131,9 @@ ${ROTORS.map(([x, y]) => `<line class="arm${y < 0 ? ' front' : ''}" x1="0" y1="0
 ${ROTORS.map(([x, y, d]) => `<circle class="disc" cx="${x}" cy="${y}" r="9"/><line class="blade${d}" x1="${x - 8}" y1="${y}" x2="${x + 8}" y2="${y}"/>`).join('')}
 <rect class="body" x="-5.5" y="-10" width="11" height="22" rx="4"/><circle class="gimbal" cx="0" cy="-10" r="3"/><circle class="led rear" cx="-3" cy="10" r="1.2"/><circle class="led rear" cx="3" cy="10" r="1.2"/>
 </g></svg><span class="drone-alt"></span></div>`;
+/** Create the shared ANAFI map icon with camera cone, rotors and altitude label. */
 const droneMarker = ll => L.marker(ll, {icon: L.divIcon({className: 'drone-icon-wrap', html: DRONE_HTML, iconSize: [120, 120], iconAnchor: [60, 60]}), keyboard: false, interactive: false});
+/** Update map-icon heading in degrees, height label and grounded appearance. */
 function setDronePose(marker, heading, alt, landed = false) {
   const el = marker.getElement()?.querySelector('.drone-icon'); if (!el) return;
   el.querySelector('.drone-rot').setAttribute('transform', `rotate(${heading || 0})`);
@@ -127,15 +143,18 @@ function setDronePose(marker, heading, alt, landed = false) {
   el.classList.toggle('landed', landed);
 }
 
+/** Return the current live or simulated drone's geographic position when known. */
 function dronePosition() {
   if (state.mode === 'demo') return state.demo.pos ?? null;
   const t = state.telemetry; return t?.latitude != null ? [t.latitude, t.longitude] : null;
 }
+/** Toggle map following and centre on the selected drone position. */
 function setFollow(on) {
   state.follow = on; $('zoom-drone').classList.toggle('active', on);
   const p = on && dronePosition(); if (p) state.map.setView(p, Math.max(state.map.getZoom(), demoCase() ? 15 : 19));
 }
 
+/** Explain missing position or unavailable map tiles over the map. */
 function renderMapChip() {
   let title = '', text = '';
   if ($('map-viewport').classList.contains('tiles-offline')) { title = 'Map tiles offline.'; text = 'Showing a grid. Areas viewed once while online stay cached.'; }
@@ -143,6 +162,7 @@ function renderMapChip() {
   $('map-empty').hidden = !title; $('map-empty-title').textContent = title; $('map-empty-text').textContent = text;
 }
 
+/** Update the live aircraft marker, activity-colored trail and optional follow view. */
 function renderDrone() {
   const t = state.telemetry;
   if (!t || t.latitude == null || state.mode === 'demo') { state.droneMarker.setOpacity(0); return; }
@@ -159,8 +179,10 @@ function fireDetails() {
   if (state.mode === 'demo') return state.demo.selected?.id === 'people' ? state.demo.selected.details ?? null : null;
   return activeFire()?.latest.details ?? null;
 }
+/** Distinguish a modeled live/search fire from the separate historical burn replay. */
 const modelledFire = () => state.mode === 'live' ? !!activeFire() : !!(state.demo.selected?.id === 'people' && state.demo.selected.details);
 
+/** Return the usable fire coordinates without inventing GPS or prematurely locating replay fire. */
 function origin() {
   if (peopleDemoActive()) { const f = state.demo.selected; return f.lat != null ? [f.lat, f.lon] : null; }
   if (state.mode === 'demo') { const f = demoCase(); return f && state.demo.located ? [f.lat, f.lon] : null; }
@@ -176,6 +198,7 @@ function renderSpread() {
   state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
+  /** Supply scaled fire-outline bands for the active spread-rendering branch. */
   let outline, ring = scale => [];
   if (state.mode === 'demo' && !peopleDemoActive()) {
     // Demo: the fire ANAFI-01 sees now, growing to the recorded burn over the timeline.
@@ -196,6 +219,7 @@ function renderSpread() {
   L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), M.destPoint(o[0], o[1], sc.direction, reach)], {color: '#4E6A70', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
 }
 
+/** Draw only the positioned live fire, with its detection context. */
 function renderFirePin() {
   state.layers.fire.clearLayers();
   const inc = activeFire(); if (!inc || !origin()) return;
@@ -206,6 +230,7 @@ function renderFirePin() {
   if (d.drone?.latitude != null) L.polyline([[d.drone.latitude, d.drone.longitude], [d.fire.latitude, d.fire.longitude]], {color: '#E8562A', weight: 1.5, dashArray: '3 4'}).addTo(state.layers.fire);
 }
 
+/** Frame the relevant search sector, fire footprint or drone fallback on the map. */
 function fitToFire() {
   if (peopleDemoActive() && fitPeople()) return;
   const o = origin();
@@ -218,6 +243,7 @@ function fitToFire() {
 
 // ------------------------------------------------------------- telemetry
 
+/** Display measured drone values and mark missing or stale live telemetry clearly. */
 function renderTelemetry() {
   if (state.mode === 'demo') return;
   const t = state.telemetry;
@@ -236,6 +262,7 @@ function renderTelemetry() {
   $('telemetry-note').classList.toggle('error-text', stale);
 }
 
+/** Render live flight-phase progress and recent event messages. */
 function renderFlight() {
   if (state.mode === 'demo') return;
   const e = state.flight.events.at(-1);
@@ -250,7 +277,9 @@ function renderFlight() {
 // ---------------------------------------------------------------- video
 
 const CRLF2 = [13, 10, 13, 10];
+/** Join two byte arrays used by the incremental MJPEG parser. */
 function concat(a, b) { const c = new Uint8Array(a.length + b.length); c.set(a); c.set(b, a.length); return c; }
+/** Find a byte sequence inside buffered multipart data, or return minus one. */
 function findSeq(buf, seq) { outer: for (let i = 0; i <= buf.length - seq.length; i++) { for (let j = 0; j < seq.length; j++) if (buf[i + j] !== seq[j]) continue outer; return i; } return -1; }
 /* One part of the backend's multipart MJPEG stream, or null if incomplete. */
 function takeFrame(buf) {
@@ -265,6 +294,7 @@ function takeFrame(buf) {
   return {jpeg: buf.slice(start, start + len), captured: (/X-Captured-At:\s*(\S+)/i.exec(head) || [])[1], detections, rest: buf.subarray(Math.min(buf.length, start + len + 2))};
 }
 
+/** Maintain the authenticated MJPEG subscription and reconnect after stream failures. */
 async function streamVideo() {
   for (;;) {
     try {
@@ -281,6 +311,7 @@ async function streamVideo() {
   }
 }
 
+/** Decode a received JPEG, preserve capture freshness and draw its detection overlays. */
 async function drawFrame(f) {
   if (state.video.decoding || state.mode === 'demo') return; // decoder busy: skip, the next frame is newer anyway
   state.video.decoding = true;
@@ -302,6 +333,7 @@ async function drawFrame(f) {
   } catch {} finally { state.video.decoding = false; }
 }
 
+/** Render a clear placeholder when camera evidence is unavailable or simulated differently. */
 function drawWaiting(title, sub) {
   const canvas = $('camera'), ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
   ctx.fillStyle = '#2A2822'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#F3EFE6'; ctx.textAlign = 'center';
@@ -309,6 +341,7 @@ function drawWaiting(title, sub) {
   ctx.font = `${Math.round(w / 34)}px 'Instrument Sans', system-ui, sans-serif`; ctx.fillStyle = '#B9B3A6'; ctx.fillText(sub, w / 2, h * .24 + w / 18); ctx.textAlign = 'start';
 }
 
+/** Mark stale live video without replacing it with replay imagery. */
 function videoWatchdog() {
   if (state.mode === 'demo' || Date.now() - state.video.lastAt < 3000) return;
   drawWaiting(state.video.lastAt ? 'Video paused — reconnecting' : 'Waiting for live video', 'The bridge relays the ANAFI camera through the backend');
@@ -318,6 +351,7 @@ function videoWatchdog() {
 
 // -------------------------------------------------------------- incident
 
+/** Apply a newly detected live fire's scenario and refresh incident-dependent panels. */
 function renderIncident() {
   if (state.mode === 'demo') return;
   const inc = activeFire();
@@ -339,6 +373,7 @@ function renderIncident() {
 
 // -------------------------------------------------------------- analysis
 
+/** Present the current structured scene assessment, uncertainty and derived-wind context. */
 function renderAnalysis() {
   const meta = state.analysisMeta, a = state.analysis;
   let offline = null;
@@ -390,18 +425,22 @@ function applyWindEstimate(a) {
 
 // ------------------------------------------------------------------ plan
 
+/** Describe the selected fire's modeled spread for live or isolated replay planning. */
 function projection() {
   const o = origin(); if (!o) return null;
   if (demoCase()) return demoProjection();
   const details = fireDetails();
   return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(M.footprint(o, state.minute, state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(state.minute, state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1]}};
 }
+/** Invalidate an existing plan and its scenario cache after relevant conditions change. */
 function markPlanDirty() { if (state.plan && !state.planDirty) { state.planDirty = true; const r = demoResults(); if (r) r.planDirty = true; renderPlan(); } }
 
+/** Render a reviewed/draft plan, wording flags, named approval and export controls. */
 function renderPlan(offline) {
   const p = state.plan;
   const offlineHtml = offline ? `<div class="gemini-offline"><strong>Cannot connect to Gemini</strong><p>${escapeHTML(offline)}</p></div>` : '';
   if (!p) { if (offline) $('draft-area').innerHTML = `<div class="review-draft">${offlineHtml}</div>`; return; }
+  /** Render a titled escaped plan list only when entries exist. */
   const list = (title, items) => items?.length ? `<h4>${title}</h4><ul>${items.map(i => `<li>${escapeHTML(i)}</li>`).join('')}</ul>` : '';
   const approved = p.approvedBy && !state.planDirty;
   // The drone cannot certify ground as safe: point out any wording that claims it.
@@ -411,6 +450,7 @@ function renderPlan(offline) {
   $('export-plan').onclick = () => download(`bosco-plan-${p.id.slice(0, 8)}.json`, JSON.stringify(p, null, 2), 'application/json');
 }
 
+/** Request a live or scenario-specific replay plan and preserve visible service errors. */
 async function generatePlan() {
   $('generate-plan').disabled = true; $('generate-plan').innerHTML = '<svg><use href="#i-spark"/></svg>Gemini is planning…';
   try {
@@ -428,10 +468,15 @@ async function generatePlan() {
 
 const DEMO_FLIGHT_S = 26;
 const PANEL_DEFAULTS = {};
+/** Cache original analysis/plan placeholders before switching scenarios. */
 function savePanelDefaults() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit', 'draft-area']) PANEL_DEFAULTS[id] = $(id).innerHTML; }
+/** Restore empty analysis markup and clear prior severity/error indicators. */
 function resetAnalysisPanel() { for (const id of ['analysis-summary', 'analysis-detail', 'analysis-observations', 'analysis-limit']) $(id).innerHTML = PANEL_DEFAULTS[id]; $('analysis-severity').hidden = true; $('analysis-offline').hidden = true; }
+/** Restore the empty plan placeholder when changing evidence context. */
 function resetPlanPanel() { $('draft-area').innerHTML = PANEL_DEFAULTS['draft-area']; }
+/** Return only a historical camera case, excluding flight-pattern and person-search replay. */
 const demoCase = () => state.mode === 'demo' && state.demo.selected && state.demo.selected !== 'flight' && state.demo.selected.id !== 'people' ? state.demo.selected : null;
+/** Return an isolated analysis/plan cache for the currently selected replay scenario. */
 const demoResults = () => {
   const f = state.mode === 'demo' && state.demo.selected;
   if (!f || f === 'flight') return null;
@@ -461,10 +506,13 @@ function showDemoResults() {
    a real sighting would: detection confirmed, fire geolocated, Gemini. */
 const SIM = {r0: 280, alt0: 35, climbS: 32, orbitR: 450, orbitV: 8};
 const SIM_DELAY = {confirm: 2.5, locate: 4, analyze: 5};
+/** Smoothly interpolate a bounded zero-to-one simulation transition. */
 const ease = k => { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
 /* The burning front the camera sees; the map's T + 0 outline is the same ellipse. */
 function simFire(f, t) { const a = Math.min(300, 90 + t * .8); return {a, b: a / 2.4, shift: a * .45}; }
+/** Compute the historical replay drone's widening orbit about the incident. */
 function simTrack(f, t) {
+  /** Interpolate the replay's initial patrol radius toward its survey orbit. Interpolate the replay drone's speed as it enters the survey. */
   const radius = u => SIM.r0 + (SIM.orbitR - SIM.r0) * ease((u - 2) / SIM.climbS), speed = u => SIM.orbitV * ease((u - 2) / 6);
   const end = 2 + SIM.climbS; let ang = 0;
   for (let u = 0; u < Math.min(t, end); u += .5) ang += speed(u) * Math.min(.5, Math.min(t, end) - u) / radius(u);
@@ -472,6 +520,7 @@ function simTrack(f, t) {
   const bearing = (f.drone.detection.fire.bearing_deg + 180) % 360 + ang * 180 / Math.PI, b = bearing * Math.PI / 180, R = radius(t);
   return {bearing, R, e: R * Math.sin(b), n: R * Math.cos(b), alt: SIM.alt0 + (f.drone.telemetry.altitude_m - SIM.alt0) * ease((t - 2) / SIM.climbS)};
 }
+/** Compute replay camera/drone pose and display measurements at the elapsed simulation time. */
 function simPose(f, t) {
   const tel = f.drone.telemetry, {bearing, R, e, n, alt: climb} = simTrack(f, t), next = simTrack(f, t + .2);
   const phase = t < 2 ? 'Detection hover' : t < 2 + SIM.climbS ? 'Climb to survey' : 'Survey orbit';
@@ -486,6 +535,7 @@ function simConfidence(f, t) {
   const c = f.drone.detection.confidence * (.55 + .45 * ease(t / SIM_DELAY.confirm)) + .03 * ease((t - 2) / SIM.climbS);
   return Math.max(.3, Math.min(.99, c + .012 * Math.sin(t * 5.3) + .008 * Math.sin(t * 11.1)));
 }
+/** Return elapsed time in the current historical replay, in seconds. */
 const demoT = () => (performance.now() - state.demo.started) / 1000;
 /* Spread outline at `minute`: the live fire at T + 0, growing geometrically to
    the recorded final burn area at T + 60, in the recorded burn's shape. */
@@ -497,6 +547,7 @@ function demoOutline(f, minute, scale = 1) {
 
 /* Once ANAFI-01 has placed the fire on the map. */
 function locateDemoFire(f) {
+  /** Format an available historical impact count without inventing missing values. */
   const i = f.impacts, n = v => v == null ? '—' : '≈' + v.toLocaleString();
   state.demo.located = true;
   L.marker([f.lat, f.lon], {icon: L.divIcon({className: 'fire-pin-wrap', html: '<div class="fire-pin">🔥</div>', iconSize: [34, 34], iconAnchor: [17, 17]})}).addTo(state.demo.layer)
@@ -547,6 +598,7 @@ function simCase(f) {
   };
 }
 
+/** Lazily create the shared simulated camera renderer when WebGL support exists. */
 function camera() {
   if (!state.camera && window.EmberCamera) { const c = $('camera'); state.camera = EmberCamera.create(c.width, c.height); }
   return state.camera;
@@ -560,6 +612,7 @@ async function loadDemoVideos() {
   state.demo.videos = {};
   try { const r = await fetch('demo-video/videos.json'); if (r.ok) state.demo.videos = await r.json(); } catch {}
 }
+/** Select an optional credited reference clip or return to rendered replay imagery. */
 function setDemoVideo(f) {
   const cam = camera(), entry = f && state.demo.videos?.[f.id];
   state.demo.video?.pause(); state.demo.video = null; state.demo.videoCredit = null;
@@ -571,6 +624,7 @@ function setDemoVideo(f) {
 }
 
 let lastPanel = 0;
+/** Advance only the selected historical camera case, detection timing and automatic analysis. */
 function animateDemoCase(now) {
   const f = demoCase(); if (!f || !state.demo.marker) return;
   const t = (now - state.demo.started) / 1000, p = simPose(f, t), conf = simConfidence(f, t), confirmed = t >= SIM_DELAY.confirm;
@@ -601,6 +655,7 @@ function animateDemoCase(now) {
   $('video-status').textContent = video ? `Reference clip · ${state.demo.videoCredit}` : cam?.ok ? 'ANAFI-01 camera · replay' : 'Camera view needs WebGL';
 }
 
+/** Describe the historical burn projection at the selected replay minute. */
 function demoProjection() {
   const f = demoCase(); if (!f) return null;
   return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(demoOutline(f, state.minute)).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: f.lat, longitude: f.lon}, basis: 'detected fire front growing to the recorded final burn area over a 60-minute replay'};
@@ -612,6 +667,7 @@ function cameraFrame() {
   try { return $('camera').toDataURL('image/jpeg', .85).split(',')[1]; } catch { return undefined; }
 }
 
+/** Submit the selected simulated incident/leads through the replay-only Gemini endpoint. */
 async function demoGemini(kind, trigger = 'manual') {
   const f = demoCase(), snap = peopleDemoActive() ? peopleState.snap : null;
   if (!f && !snap?.simulated) { toast('Select an incident and wait for its observations first.'); return null; }
@@ -623,6 +679,7 @@ async function demoGemini(kind, trigger = 'manual') {
   return getJson(`/api/demo/${kind}`, {method: 'POST', timeout: 100000, body: {case: incident, scenario: state.scenario, ...(kind === 'analyze' ? {...(f ? {image: cameraFrame()} : {}), trigger} : {}), ...(kind === 'plan' ? {objective: $('objective').value, notes: $('notes').value, projection: projection(), analysis: a && {summary: a.summary, severity: a.severity, spread_outlook: a.spread_outlook}} : {})}});
 }
 
+/** Enter explicit replay with per-scenario state, or restore live monitoring. */
 async function toggleDemo() {
   if (state.mode === 'demo') { exitDemo(); return; }
   state.demo.fires = window.EMBER_DEMO?.cases ?? [];
@@ -637,6 +694,7 @@ async function toggleDemo() {
   $('incident-eyebrow').textContent = 'INCIDENT REPLAY'; $('incident-title').textContent = 'Incident replay'; $('incident-tag').hidden = true; $('incident-dot').classList.remove('alert');
   $('detect-value').textContent = '—'; $('detect-unit').textContent = ''; $('detect-context').textContent = 'watching the camera feed';
   const sel = $('demo-fire'); sel.hidden = false;
+  /** Format the recorded fire's year for the replay selector. */
   const yr = f => escapeHTML(f.startDate.slice(0, 4));
   sel.innerHTML = '<optgroup label="Person search · fire first (simulated)"><option value="people">UTSC · Highland Creek ravine</option>'
     + state.demo.fires.map(f => `<option value="people:${escapeHTML(f.id)}">${escapeHTML(f.name)} · ${yr(f)}</option>`).join('') + '</optgroup>'
@@ -648,6 +706,7 @@ async function toggleDemo() {
   selectDemo('people'); sel.value = 'people';
 }
 
+/** Reset incompatible replay state before starting a search, historical case or flight pattern. */
 function selectDemo(id) {
   state.demo.layer?.remove();
   state.demo.layer = L.layerGroup().addTo(state.map);
@@ -723,6 +782,7 @@ function selectDemo(id) {
   renderSpread();
 }
 
+/** Stop simulations and restore saved live evidence, plan, basemap and polling state. */
 function exitDemo() {
   stopPeopleDemo();
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.map.closePopup();
@@ -738,6 +798,7 @@ function exitDemo() {
   pollPeople().catch(() => {});
 }
 
+/** Animate the labeled fixed flight-pattern preview without aircraft commands. */
 function animateDemoFlight(now) {
   if (state.mode !== 'demo' || state.demo.selected !== 'flight') return;
   const pts = state.demo.flightPts, t = ((now - state.demo.started) / 1000) % DEMO_FLIGHT_S, side = 2 * Math.sin(Math.PI / 8);
@@ -769,16 +830,22 @@ function animateDemoFlight(now) {
 // --------------------------------------------------------------- polling
 
 const busy = {};
-function every(ms, name, fn) { const run = async () => { if (busy[name]) return; busy[name] = true; try { await fn(); } catch {} finally { busy[name] = false; } }; run(); setInterval(run, ms); }
+/** Poll a named resource without overlapping requests for that resource. */
+function every(ms, name, fn) { /* Execute one guarded poll and release its busy flag even when the request fails. */ const run = async () => { if (busy[name]) return; busy[name] = true; try { await fn(); } catch {} finally { busy[name] = false; } }; run(); setInterval(run, ms); }
 
+/** Read current telemetry and update freshness, measurements and the live drone marker. */
 async function pollTelemetry() {
   const data = await getJson('/api/telemetry/latest');
   state.telemetry = data.sample && data.sample.provenance === 'live' ? data.sample : null;
   state.connected = true; renderTelemetry(); renderDrone(); renderMapChip();
 }
+/** Read the latest live incident and update detection-dependent panels. */
 async function pollIncident() { state.incident = (await getJson('/api/incident')).incident; renderIncident(); }
+/** Refresh flight-event/path data and redraw its live map representation. */
 async function pollFlight() { state.flight = await getJson('/api/flight'); renderFlight(); renderDrone(); }
+/** Refresh valid live analysis while preventing a late response from replacing replay state. */
 async function pollAnalysis() { if (state.mode === 'demo') return; const m = await getJson('/api/analysis/latest'); if (state.mode === 'demo') return; state.analysisMeta = m; if (typeof m.analysis?.summary === 'string') state.analysis = m.analysis; renderAnalysis(); }
+/** Refresh connection/service health and current site without overwriting replay labels. */
 async function pollStatus() {
   try { state.status = await getJson('/api/status'); state.connected = true; } catch (e) { state.connected = false; renderHeading(); throw e; }
   const s = state.status; state.site = s.site || state.site; if (state.mode !== 'demo') $('map-location').textContent = state.site.name;
@@ -790,6 +857,7 @@ async function pollStatus() {
   renderHeading();
 }
 
+/** Load and draw the stored per-minute telemetry history in integrations. */
 async function renderHistory() {
   const data = await getJson('/api/telemetry/summary?minutes=60');
   const pts = data.buckets.filter(b => b.avg_altitude_m != null);
@@ -804,13 +872,16 @@ async function renderHistory() {
 
 // --------------------------------------------------------------- controls
 
+/** Keep the spread play/pause icon and accessible label consistent with playback state. */
 function setPlayButton() { $('play').innerHTML = `<svg aria-hidden="true"><use href="#${state.playing ? 'i-pause' : 'i-play'}"/></svg>`; $('play').setAttribute('aria-label', state.playing ? 'Pause spread projection' : 'Play spread projection'); }
+/** Populate the condition dialog from the supplied spread inputs. */
 function scenarioControls(sc) {
   for (const [id, key, out] of [['wind-input', 'wind', 'wind-output'], ['dry-input', 'dryness', 'dry-output'], ['temp-input', 'temp', 'temp-output'], ['rh-input', 'rh', 'rh-output']]) { $(id).value = sc[key]; $(out).textContent = Math.round(sc[key]); }
   $('direction-input').value = sc.direction; $('direction-output').textContent = `${Math.round(sc.direction)}° · ${M.compass(sc.direction)}`;
 }
 let pending = {...M.BASE};
 
+/** Connect dashboard controls to planning, replay, map and local review actions. */
 function bindUi() {
   for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => b.closest('dialog').close());
   for (const d of document.querySelectorAll('dialog')) d.addEventListener('click', e => { const r = d.getBoundingClientRect(); if (e.target === d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) d.close(); });
@@ -845,6 +916,7 @@ function bindUi() {
   $('export-brief').onclick = exportBrief;
 }
 
+/** Export the current evidence, lead review, projection and plan with source labels. */
 function exportBrief() {
   const inc = activeFire(), a = state.analysis, p = state.plan, proj = projection();
   const lines = ['# BOSCO incident brief', '', `Generated: ${new Date().toISOString()}`, `Site: ${state.site.name} (${state.site.latitude}, ${state.site.longitude})`, `Mode: ${state.mode === 'demo' ? 'incident replay' : state.mode}`, '',
@@ -860,6 +932,7 @@ function exportBrief() {
 // ------------------------------------------------------------------ boot
 
 let started = false;
+/** Verify the serving backend contract and start one set of authenticated polling/video tasks. */
 async function connect() {
   try {
     state.status = await getJson('/api/status');
@@ -875,6 +948,7 @@ async function connect() {
 }
 
 let lastFrame = 0, lastSpread = 0;
+/** Advance active spread/replay animations and schedule the next browser frame. */
 function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
   if (state.playing) { state.minute = (state.minute + delta * .002 * state.speed) % 60; if (now - lastSpread > 66) { lastSpread = now; renderSpread(); } }
@@ -883,6 +957,7 @@ function animate(now) {
   requestAnimationFrame(animate);
 }
 
+/** Initialize the dashboard, bootstrap local access and enter explicit replay only when requested. */
 async function boot() {
   savePanelDefaults(); initMap(); bindUi(); drawWaiting('Waiting for live video', 'The bridge relays the ANAFI camera through the backend'); renderSpread(); renderMapChip();
   // Opened straight from disk there is no backend to talk to: say so instead of asking for a token.

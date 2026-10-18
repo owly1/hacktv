@@ -30,6 +30,7 @@ def board_pattern(columns=10, rows=7):
 
 
 def board_corners(image, pattern=PATTERN):
+    """Locate checkerboard corners with normalized lighting and a classic-detector fallback."""
     # CPU detection avoids macOS OpenCL cache-write failures during capture.
     cv2.ocl.setUseOpenCL(False)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -48,6 +49,7 @@ def board_corners(image, pattern=PATTERN):
 
 
 def session_pattern(root, columns, rows):
+    """Load saved board dimensions so fitting uses the capture session's actual pattern."""
     path = root / "session.json"
     if path.exists():
         saved = json.loads(path.read_text())
@@ -56,6 +58,7 @@ def session_pattern(root, columns, rows):
 
 
 def rejection_reason(image, columns, rows):
+    """Return why a camera frame cannot be used for a new calibration capture."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     reason = f"Could not find {columns-1} × {rows-1} inner corners for a {columns} × {rows}-square board."
     if np.percentile(gray, 90) < 45:
@@ -64,6 +67,7 @@ def rejection_reason(image, columns, rows):
 
 
 def fetch_camera(base, token):
+    """Fetch a fresh authenticated backend snapshot and its capture identifier."""
     request = Request(base+"/api/snapshot", headers={"Authorization": "Bearer "+token})
     with urlopen(request, timeout=5) as response:
         stamp = response.headers["X-Captured-At"]
@@ -80,6 +84,7 @@ def fetch_camera(base, token):
 
 
 def capture(args):
+    """Save varied grounded checkerboard views using terminal or browser capture."""
     pattern = board_pattern(args.columns, args.rows)
     if args.web:
         from calibration_web import serve
@@ -133,6 +138,7 @@ def capture(args):
 
 
 def fit_views(views, image_size, square_m, pattern=PATTERN):
+    """Fit camera intrinsics from detected views and reject poor coverage or reprojection quality."""
     if len(views) < 15:
         raise ValueError("At least 15 usable, varied board views are required (aim for 20)")
     if not math.isfinite(square_m) or not .005 <= square_m <= .1:
@@ -155,6 +161,7 @@ def fit_views(views, image_size, square_m, pattern=PATTERN):
 
 
 def fit(args):
+    """Load the saved images, fit intrinsics and write an explicitly unverified calibration file."""
     output = args.directory/"camera.local.json"
     if output.exists():
         raise ValueError("camera.local.json already exists; use a new session folder")
@@ -183,6 +190,7 @@ def fit(args):
 
 
 def main():
+    """Parse capture/fit options and run the requested calibration step."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("capture", "fit"))
     parser.add_argument("--directory", type=Path, default=Path("anafi_out/calibration"))

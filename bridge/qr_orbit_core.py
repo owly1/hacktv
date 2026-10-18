@@ -16,6 +16,7 @@ class Limits:
     mission_seconds: float = 75.0
 
     def __post_init__(self):
+        """Reject radius, height, speed and timing settings outside this experiment's bounds."""
         for value, low, high in ((self.radius_m, .75, 1.5), (self.height_m, .8, 1.5),
                                  (self.speed_mps, .1, .3), (self.arm_seconds, 5, 30),
                                  (self.mission_seconds, 30, 90)):
@@ -49,6 +50,7 @@ class Marker:
 
 
 def vehicle_reason(v, limits, now, starting=False):
+    """Return why the sampled aircraft is outside its state, freshness or motion limits."""
     if v is None or not v.connected or not 0 <= now - v.at <= 1.0:
         return "aircraft link or received sensor samples are stale"
     if v.controller_source_ok is not True:
@@ -68,6 +70,7 @@ def vehicle_reason(v, limits, now, starting=False):
 
 
 def marker_reason(m, expected, limits, now):
+    """Return why the selected measured floor-marker pose is unusable for a centred orbit."""
     if m is None or m.text != expected or not 0 <= now - m.at <= .8:
         return "the selected QR marker is missing or stale"
     numbers = (m.forward_m, m.right_m, m.down_m, m.floor_tilt_deg, m.reprojection_px)
@@ -87,6 +90,7 @@ class Trigger:
     consumes this instance; restart and explicitly arm again for another attempt.
     """
     def __init__(self, expected, limits):
+        """Configure one-use recognition for the selected marker and bounded flight limits."""
         if expected != FIRE_MARKER_PAYLOAD:
             raise ValueError(f"Only the fire marker {FIRE_MARKER_PAYLOAD} can be selected")
         self.expected, self.limits = expected, limits
@@ -97,14 +101,17 @@ class Trigger:
         self.reason = "pilot has not armed the orbit"
 
     def arm(self, now):
+        """Open one timed recognition window only when the required aircraft state is valid."""
         if self.state != "disarmed":
             raise ValueError("This arming session is already consumed; restart to try again")
         self.state, self.arm_at, self.reason = "armed", now, "waiting for the selected QR marker"
 
     def cancel(self, reason="operator cancelled"):
+        """Consume/disarm recognition so cancelled input cannot later start a mission."""
         self.state, self.reason = "cancelled", reason
 
     def observe(self, marker, vehicle, now, rehearsal=False):
+        """Confirm fresh, consistent selected-marker samples while the arming window remains valid."""
         if self.state != "armed":
             return False
         if now - self.arm_at >= self.limits.arm_seconds:
@@ -155,6 +162,7 @@ def fly_once(driver, limits, expected, sample, abort, report, clock=time.monoton
     started = clock()
 
     def check():
+        """Recheck cancellation, elapsed time, aircraft health and measured marker validity during flight."""
         if abort.is_set():
             raise InterruptedError("operator requested landing")
         if clock() - started > limits.mission_seconds:

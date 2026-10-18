@@ -11,6 +11,7 @@ import { createApp, MemoryStorage, findUnsafeWording } from '../backend/server.m
 
 const REF = { lat: 43.78, lon: -79.19 };
 const T0 = Date.parse('2026-10-17T12:00:00Z');
+/** Convert the controlled elapsed seconds into a fixture observation timestamp. */
 const at = (s) => new Date(T0 + s * 1000).toISOString();
 const CAM = { hfov_deg: 69, vfov_deg: 2 * Math.atan(Math.tan(34.5 * Math.PI / 180) / (16 / 9)) * 180 / Math.PI };
 
@@ -152,6 +153,7 @@ const FIRE_O = [43.7840, -79.1880];
 const spread = { origin: FIRE_O, scenario: EM.scenarioFrom(SIM_FIRE_DETAILS), details: SIM_FIRE_DETAILS };
 
 test('fire arrival: inside now is 0, downwind is sooner than crosswind, upwind never', () => {
+  /** Convert the controlled elapsed seconds into a fixture observation timestamp. */
   const at = (bearing, dist) => fireArrival(spread, ...EM.destPoint(FIRE_O[0], FIRE_O[1], bearing, dist));
   assert.equal(at(0, 0), 0);
   const downwind = at(225, 200), crosswind = at(315, 200);
@@ -163,6 +165,7 @@ test('fire arrival: inside now is 0, downwind is sooner than crosswind, upwind n
 test('leads carry projected fire arrival and the sooner one ranks first within a tier', () => {
   const s = new PersonSearch();
   const ref = { lat: FIRE_O[0], lon: FIRE_O[1] };
+  /** Build a synthetic observation at the specified local test position. */
   const place = (bearing, dist, t) => {
     const [lat, lon] = EM.destPoint(FIRE_O[0], FIRE_O[1], bearing, dist);
     const [e, n] = toLocal(REF, lat, lon);
@@ -195,6 +198,7 @@ test('the simulated survey flies the fire\'s path first and never enters the sta
 
 test('a lead at the fire outranks everything, even a stronger lead further away', () => {
   const s = new PersonSearch();
+  /** Build a synthetic observation at the specified local test position. */
   const place = (bearing, dist, de = 0, dn = -60, t = 0) => {
     const [lat, lon] = EM.destPoint(FIRE_O[0], FIRE_O[1], bearing, dist);
     const [e, n] = toLocal(REF, lat, lon);
@@ -241,9 +245,11 @@ test('every example fire: the search starts at the fire, keeps the standoff, and
 // ------------------------------------------------------------------ HTTP
 
 const INGEST = 'ingest-token-aaa', DASH = 'dashboard-token-bbb', ORIGIN = 'http://127.0.0.1:8787';
+/** Bind the test handler to an ephemeral loopback port. */
 function listen(app) {
   return new Promise((resolve) => { const srv = http.createServer(app).listen(0, '127.0.0.1', () => resolve(srv)); });
 }
+/** Send one token-authenticated request to the isolated person-search test server. */
 async function call(base, path, { method = 'GET', token = DASH, body } = {}) {
   const res = await fetch(base + path, { method, headers: { origin: ORIGIN, authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body && JSON.stringify(body) });
   return { status: res.status, body: res.status === 204 ? null : await res.json() };
@@ -251,7 +257,7 @@ async function call(base, path, { method = 'GET', token = DASH, body } = {}) {
 
 test('person ingest, lead listing, acknowledgement and the demo endpoint over HTTP', async () => {
   const nowMs = Date.now();
-  const srv = await listen(createApp({ ingestToken: INGEST, dashboardToken: DASH, allowedOrigins: [ORIGIN], storage: new MemoryStorage(), now: () => nowMs }));
+  const srv = await listen(createApp({ ingestToken: INGEST, dashboardToken: DASH, allowedOrigins: [ORIGIN], storage: new MemoryStorage(), /* Return a fixed or test-controlled clock value for deterministic evidence checks. */ now: () => nowMs }));
   const base = `http://127.0.0.1:${srv.address().port}`;
   try {
     const obs = { ...obsOf(0, 60, { de: 0, dn: 0 }), observed_at: new Date(nowMs - 1000).toISOString() };

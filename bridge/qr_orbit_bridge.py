@@ -27,38 +27,46 @@ from terminal_controls import commands as terminal_commands
 class SensorAges(olympe.EventListener):
     """Use received event ages; repeated cache reads cannot refresh these."""
     def __init__(self, drone):
+        """Track received sensor timestamps independently of repeated SDK cache reads."""
         super().__init__(drone)
         self.ages = {}
         self.landed_at = float("-inf")
 
     @olympe.listen_event(AltitudeChanged(_policy="wait"))
     def altitude(self, event, scheduler):
+        """Stamp receipt of a real altitude event with the monotonic clock."""
         self.ages["altitude"] = time.monotonic()
 
     @olympe.listen_event(SpeedChanged(_policy="wait"))
     def speed(self, event, scheduler):
+        """Stamp receipt of a real speed event for flight freshness checks."""
         self.ages["speed"] = time.monotonic()
 
     @olympe.listen_event(AttitudeChanged(_policy="wait"))
     def attitude(self, event, scheduler):
+        """Stamp receipt of a real aircraft-attitude event for freshness checks."""
         self.ages["attitude"] = time.monotonic()
 
     @olympe.listen_event(gimbal.attitude(_policy="wait"))
     def camera(self, event, scheduler):
+        """Stamp receipt of a real gimbal-attitude event for pose freshness."""
         self.ages["camera"] = time.monotonic()
 
     @olympe.listen_event(FlyingStateChanged(_policy="wait"))
     def flight(self, event, scheduler):
+        """Record the time an actual landed-state event is received."""
         if getattr(event.args.get("state"), "name", None) == "landed":
             self.landed_at = time.monotonic()
 
 
 class OlympeOrbitDriver:
     def __init__(self, bridge):
+        """Bind bounded movement/landing commands to the bridge's existing SDK connection."""
         self.bridge = bridge
         self.first_land_request = None
 
     def move(self, offset, speed, check):
+        """Execute a bounded body-frame move; poll aborts and validate measured displacement/radians."""
         # The explicit event expectation filters errors; cached hovering alone
         # cannot acknowledge a new move. No unbounded wait blocks the watchdog.
         dx, dy, dz, yaw = offset
@@ -108,17 +116,20 @@ class OlympeOrbitDriver:
             raise
 
     def _diagnostic(self, kind, data):
+        """Forward movement evidence to the bridge's local publisher when supported."""
         publisher = getattr(self.bridge, "publisher", None)
         if publisher is not None and hasattr(publisher, "diagnostic"):
             publisher.diagnostic(kind, data)
 
     def request_land(self):
+        """Send a nonblocking landing request and stamp the first request time."""
         if self.bridge.drone is not None:
             if self.first_land_request is None:
                 self.first_land_request = time.monotonic()
             self.bridge.drone(Landing(_no_expect=True))
 
     def land(self):
+        """Repeat landing requests and return success only after fresh landed confirmation."""
         # Keep receiving telemetry and video while awaiting an actual landed
         # event; sending Landing is never reported as proof of landing.
         if self.bridge.drone is None:
@@ -147,6 +158,7 @@ class OlympeOrbitDriver:
 
 class QROrbitBridge(AnafiBridge):
     def __init__(self, args, publisher, detector, pose, limits, marker):
+        """Initialize measured QR pose, one-shot arming, sensor ages and flight reporting."""
         super().__init__(args, publisher, detector)
         self.pose, self.limits = pose, limits
         self.trigger = Trigger(marker, limits)
@@ -164,6 +176,7 @@ class QROrbitBridge(AnafiBridge):
         self.status_queue = queue.Queue(maxsize=32)
 
     def _connect(self):
+        """Connect reception and register timestamped sensor listeners on the same SDK object."""
         ok = super()._connect()
         if ok:
             self.sensor_ages = SensorAges(self.drone)
@@ -171,6 +184,7 @@ class QROrbitBridge(AnafiBridge):
         return ok
 
     def _disconnect(self):
+        """Remove sensor listeners and close reception without replacing a live flight connection."""
         if self.hold_connection and not self.land_confirmed:
             self.abort_flight.set()
             self._land()
@@ -180,6 +194,7 @@ class QROrbitBridge(AnafiBridge):
         super()._disconnect()
 
     def _connection_step(self):
+        """Keep an active mission on its owned connection and abort on link failure."""
         if self.hold_connection:
             # Never destroy/reconnect the aircraft object during an armed session
             # or an unconfirmed landing. Reconnection cannot restart the mission.
@@ -194,6 +209,7 @@ class QROrbitBridge(AnafiBridge):
             super()._connection_step()
 
     def _controller_source_ok(self):
+        """Verify a paired controller route still reports the expected piloting source."""
         # Never switch to Controller here: that setting disables RC joysticks.
         # This only verifies the reported source; physical override/landing still
         # require the separate supervised preflight and actual hardware testing.
@@ -205,6 +221,7 @@ class QROrbitBridge(AnafiBridge):
         return getattr(source, "name", source) == "SkyController"
 
     def sample(self):
+        """Return current guarded vehicle state and the latest measured selected-marker pose."""
         t = self.telemetry or {}
         attitude = t.get("attitude_deg") or {}
         ages = dict(self.sensor_ages.ages) if self.sensor_ages else {}
@@ -219,6 +236,7 @@ class QROrbitBridge(AnafiBridge):
         return vehicle, marker
 
     def _poll_telemetry(self):
+        """Refresh telemetry while preserving received-event ages used by flight gates."""
         with self.lock:
             super()._poll_telemetry()
             if self.telemetry["extra"]["position_source"] != "gps":
@@ -226,6 +244,7 @@ class QROrbitBridge(AnafiBridge):
                 self.telemetry["extra"]["position_source"] = "unavailable; marker-relative demo"
 
     def _telemetry_loop(self):
+        """Publish telemetry and flight status while the measured-orbit runtime runs."""
         while self.running:
             with self.lock:
                 sample = self.telemetry
@@ -237,6 +256,7 @@ class QROrbitBridge(AnafiBridge):
             time.sleep(1)
 
     def _overlay_lines(self):
+        """Display arming, measured pose and mission status over local video."""
         t = self.telemetry or {}
         return ["QR ORBIT: " + ("LIVE EXPERIMENT" if self.args.execute else "REHEARSAL / MOTORS DISABLED"),
                 f"QR session: {self.trigger.state}", f"Battery: {t.get('battery_pct')} %",
@@ -244,12 +264,14 @@ class QROrbitBridge(AnafiBridge):
                 f"GPS: {t.get('extra', {}).get('position_source', 'unknown')}"]
 
     def _detect_step(self, img, captured):
+        """Decode one camera image and feed its selected-marker pose into the trigger."""
         if self.last_processed_frame == captured:
             return
         self.last_processed_frame = captured
         self._process_hit(img, captured, self.detector.detect(img))
 
     def _process_hit(self, img, captured, hit):
+        """Derive a calibrated pose and update fresh recognition without using synthetic coordinates."""
         marker = None
         if hit and hit.get("source") == "qr-test":
             self.overlay = [{k: hit[k] for k in ("source", "label", "confidence", "bbox")}]
@@ -289,6 +311,7 @@ class QROrbitBridge(AnafiBridge):
         # access to the flight driver. Detection handling never moves the drone.
 
     def report(self, phase, message, step=None, steps=None):
+        """Record a mission phase and update the operator/dashboard status."""
         prefix = "LIVE EXPERIMENT" if self.args.execute else "REHEARSAL / NO MOTOR COMMANDS"
         if self.args.execute:
             self.flight_phase = phase
@@ -306,6 +329,7 @@ class QROrbitBridge(AnafiBridge):
             pass
 
     def _publish_status(self):
+        """Send the latest phase/progress through the existing flight-event endpoint."""
         while self.running or not self.status_queue.empty():
             try:
                 phase, message, step, steps = self.status_queue.get(timeout=.2)
@@ -322,6 +346,7 @@ class QROrbitBridge(AnafiBridge):
                 print("[!] Dashboard status not delivered; local supervision continues", flush=True)
 
     def _request_landing(self, force=True):
+        """Cancel the mission and dispatch controlled landing through the existing driver."""
         self.abort_flight.set()
         if self.land_confirmed:
             return
@@ -334,6 +359,7 @@ class QROrbitBridge(AnafiBridge):
                 print("[!] Landing request not delivered; pilot intervention required", flush=True)
 
     def _land(self):
+        """Wait for the active driver's landing confirmation and report an unconfirmed result."""
         if self.driver and self.hold_connection and not self.land_confirmed:
             self.abort_flight.set()
             if self.mission and self.mission.is_alive() and threading.current_thread() != self.mission:
@@ -347,11 +373,13 @@ class QROrbitBridge(AnafiBridge):
                         "LANDING UNCONFIRMED: pilot intervention required")
 
     def _orbit(self):
+        """Execute the pure measured-orbit controller using this runtime's sample/report callbacks."""
         fly_once(self.driver, self.limits, self.trigger.expected, self.sample,
                  self.abort_flight, self.report,
                  one_segment=getattr(self.args, "checkout_one_segment", False))
 
     def _terminal(self):
+        """Parse one-shot arming and priority landing commands from the operator terminal."""
         arm_phrase = "ARM QR CHECKOUT" if getattr(self.args, "checkout_one_segment", False) else "ARM QR ORBIT"
         try:
             for command in terminal_commands(sys.stdin, stopped=lambda: not self.running):
@@ -385,6 +413,7 @@ class QROrbitBridge(AnafiBridge):
             self._request_landing(force=False)
 
     def run(self):
+        """Start reception, terminal input and supervision, then guarantee mission cleanup."""
         print("REHEARSAL: motors disabled" if not self.args.execute else "LIVE EXPERIMENT: disarmed", flush=True)
         checkout = getattr(self.args, "checkout_one_segment", False)
         arm_phrase = "ARM QR CHECKOUT" if checkout else "ARM QR ORBIT"
@@ -394,6 +423,7 @@ class QROrbitBridge(AnafiBridge):
         threading.Thread(target=self._terminal, daemon=True).start()
 
         def supervise():
+            """Check active flight health and cancel a mission whose required state becomes invalid."""
             last_reason = None
             while self.running:
                 v, m = self.sample()
@@ -424,6 +454,7 @@ class QROrbitBridge(AnafiBridge):
 
 
 def read_preflight(path, terminal_control=False):
+    """Validate actual human preflight flags and the record's one-hour expiry for the control route."""
     c = json.loads(Path(path).read_text(encoding="utf-8"))
     landing_check = "terminal_landing_tested_with_pi" if terminal_control else "landing_control_tested_with_pi"
     needed = ("cleared_area", "pilot_present", landing_check,
@@ -439,6 +470,7 @@ def read_preflight(path, terminal_control=False):
 
 
 def main():
+    """Validate measured-orbit CLI/configuration and start the explicit rehearsal or flight runtime."""
     parser = argument_parser()
     parser.description = __doc__
     parser.add_argument("--execute", action="store_true", help="opt in to hardware commands; still requires typed arming")
@@ -478,6 +510,7 @@ def main():
     bridge = QROrbitBridge(args, Publisher(args.out_dir, args.backend, token),
                            FireDetector(args.model, args.conf, use_yolo=False), pose, limits, marker)
     def stop_on_signal(signum, frame):
+        """Request landing and stop reception on a catchable termination signal."""
         bridge.running = False  # Main loop exits into the bounded landing cleanup.
     for name in ("SIGTERM", "SIGHUP"):
         if hasattr(signal, name):

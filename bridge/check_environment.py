@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 def read_text(path):
+    """Read optional system metadata, returning a fallback if the file is unavailable."""
     try:
         return Path(path).read_text().strip().strip("\x00")
     except OSError:
@@ -16,6 +17,7 @@ def read_text(path):
 
 
 def package_import(name):
+    """Probe a package import and capture a compact result without connecting to hardware."""
     # Import in a bounded child process; native SDK imports can fail or hang.
     try:
         result = subprocess.run(
@@ -28,6 +30,7 @@ def package_import(name):
 
 
 def main():
+    """Report the runtime/SDK/camera dependency readiness as local diagnostic output."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--camera", action="store_true", help="Also check OpenCV for JPEG snapshots")
     args = parser.parse_args()

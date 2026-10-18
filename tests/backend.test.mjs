@@ -22,14 +22,17 @@ let nowMs;
 let fakeGeminiCalls;
 let fakeGeminiReplies;
 
+/** Build a fake Gemini text candidate for response-validation tests. */
 const geminiTextReply = (jsonText) => ({
   candidates: [{ content: { parts: [{ text: jsonText }] } }],
 });
 
+/** Build a fake Gemini tool-call candidate for the agent-loop fixture. */
 const geminiCallReply = (name, args = {}) => ({
   candidates: [{ content: { parts: [{ functionCall: { name, args } }] } }],
 });
 
+/** Reset fake storage/clock/Gemini state and construct an isolated backend fixture. */
 function makeApp() {
   nowMs = Date.now();
   fakeGeminiCalls = [];
@@ -47,6 +50,7 @@ function makeApp() {
     dashboardToken: DASH,
     allowedOrigins: [ORIGIN],
     storage,
+    /** Return the queued fake model/tool response without making external requests. */
     geminiTransport: async (requestBody) => {
       // deep-copy: the server keeps appending turns to contents between rounds
       fakeGeminiCalls.push(structuredClone(requestBody));
@@ -56,6 +60,7 @@ function makeApp() {
       return fakeGeminiReplies.shift();
     },
     geminiModel: 'fake-model',
+    /** Return a fixed or test-controlled clock value for deterministic evidence checks. */
     now: () => nowMs,
   });
 }
@@ -71,6 +76,7 @@ after(() => {
   server.closeAllConnections?.();
 });
 
+/** Send an HTTP request to this isolated test server with the selected test credentials. */
 function req(method, path, { token, body, origin } = {}) {
   return fetch(`${base}${path}`, {
     method,
@@ -83,6 +89,7 @@ function req(method, path, { token, body, origin } = {}) {
   });
 }
 
+/** Build a valid telemetry fixture with overridable measurements. */
 const goodTelemetry = () => ({
   drone_id: 'ANAFI-01',
   provenance: 'live',
@@ -291,6 +298,7 @@ test('analyze returns 503 when Gemini is not configured', async () => {
     allowedOrigins: [ORIGIN],
     storage: new MemoryStorage(),
     geminiTransport: null,
+    /** Return a fixed or test-controlled clock value for deterministic evidence checks. */
     now: () => nowMs,
   });
   const s = http.createServer(app);
@@ -453,10 +461,15 @@ test('telemetry history endpoint returns newest-first samples', async () => {
 test('failing configured storage reports 503, not a memory fallback', async () => {
   const failing = {
     kind: 'postgres',
+    /** Return the fixture storage/service status without accessing an external service. */
     status: () => 'postgres-unavailable',
+    /** Emulate telemetry insertion or its injected storage failure for this test. */
     insertTelemetry: async () => { throw new ApiError(503, 'storage failure: connection refused'); },
+    /** Return the fixture telemetry or the injected database failure. */
     latestTelemetry: async () => { throw new ApiError(503, 'storage failure: connection refused'); },
+    /** Emulate storing an analysis without contacting a database. */
     insertAnalysis: async () => { throw new ApiError(503, 'storage failure'); },
+    /** Return the fixture analysis list without contacting a database. */
     latestAnalyses: async () => { throw new ApiError(503, 'storage failure'); },
   };
   const app = createApp({
@@ -465,6 +478,7 @@ test('failing configured storage reports 503, not a memory fallback', async () =
     allowedOrigins: [ORIGIN],
     storage: failing,
     geminiTransport: null,
+    /** Return a fixed or test-controlled clock value for deterministic evidence checks. */
     now: () => nowMs,
   });
   const s = http.createServer(app);

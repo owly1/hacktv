@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 def lines(path):
+    """Load available JSONL records while tolerating a final partial crash-written line."""
     if not path.exists():
         return []
     entries = []
@@ -18,6 +19,7 @@ def lines(path):
 
 
 def review(path):
+    """Write recording statistics, airborne height range and movement/control failures to review.json."""
     events, frames = lines(path/'events.jsonl'), lines(path/'frames.jsonl')
     controls = [e for e in events if e['kind'] == 'flight_control']
     failures = [e for e in events if e['kind'] == 'move_failed' or
@@ -71,6 +73,7 @@ def preview(path):
 
 
 def main():
+    """Review each recorded session and attempt a local timestamp-preserving MP4 preview."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)
     args = parser.parse_args()

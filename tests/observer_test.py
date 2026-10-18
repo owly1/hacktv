@@ -17,6 +17,7 @@ spec.loader.exec_module(bridge)
 
 class BridgeContractTests(unittest.TestCase):
     def test_camera_rate_allows_full_source_rate_or_explicit_throttling(self):
+        """Verify camera rate allows full source rate or explicit throttling."""
         self.assertEqual(bridge.camera_fps('0'),0)
         self.assertEqual(bridge.camera_fps('30'),30)
         self.assertEqual(bridge.camera_fps('0.5'),.5)
@@ -24,12 +25,14 @@ class BridgeContractTests(unittest.TestCase):
             with self.assertRaises(bridge.argparse.ArgumentTypeError):bridge.camera_fps(value)
 
     def test_camera_watchdog_covers_startup_and_stalled_stream(self):
+        """Verify camera watchdog covers startup and stalled stream."""
         self.assertFalse(bridge.session_stalled(None, 100, 110))
         self.assertTrue(bridge.session_stalled(None, 100, 116))
         self.assertFalse(bridge.session_stalled(120, 100, 121))
         self.assertTrue(bridge.session_stalled(120, 100, 136))
 
     def run_bridge(self, camera=False, connect=True, lose_stream=False):
+        """Run the receiver against fake SDK state and capture its published payloads."""
         modules = {}
         for name in ["olympe", "olympe.messages", "olympe.messages.common",
                      "olympe.messages.common.CommonState", "olympe.messages.ardrone3",
@@ -54,6 +57,7 @@ class BridgeContractTests(unittest.TestCase):
         connection_states = iter([True, False])
 
         def connection_state():
+            """Return the test aircraft connection state without a radio connection."""
             connected = next(connection_states)
             if not connected and lose_stream:
                 controller.streaming = None
@@ -73,6 +77,7 @@ class BridgeContractTests(unittest.TestCase):
         frame.unref.side_effect = lambda: retained.__setitem__(0, retained[0] - 1)
 
         def play(*, streams_list):
+            """Exercise registered stream callbacks using synthetic SDK frame fixtures."""
             callbacks = streams_list[0].callbacks[0]
             # Repeated flush/drain requests must release each retained frame once.
             callbacks.video_frame(frame)
@@ -102,6 +107,7 @@ class BridgeContractTests(unittest.TestCase):
         return post.call_args.args[3], retained[0]
 
     def test_unknown_gps_stays_unknown_and_units_are_preserved(self):
+        """Verify unknown gps stays unknown and units are preserved."""
         sample, _ = self.run_bridge()
         self.assertEqual(sample["provenance"], "live")
         self.assertIsNone(sample["latitude"])
@@ -110,15 +116,18 @@ class BridgeContractTests(unittest.TestCase):
         self.assertEqual(sample["ground_speed_mps"], 5)
 
     def test_camera_failure_and_flush_do_not_leak_frames(self):
+        """Verify camera failure and flush do not leak frames."""
         sample, references = self.run_bridge(camera=True)
         self.assertEqual(sample["battery_pct"], 80)
         self.assertEqual(references, 0)
 
     def test_power_loss_can_clear_sdk_stream_before_cleanup(self):
+        """Verify power loss can clear sdk stream before cleanup."""
         _, references = self.run_bridge(camera=True, lose_stream=True)
         self.assertEqual(references, 0)
 
     def test_drone_off_at_start_requests_retry_without_fake_telemetry(self):
+        """Verify drone off at start requests retry without fake telemetry."""
         self.run_bridge(connect=False)
 
 

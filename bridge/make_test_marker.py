@@ -31,6 +31,7 @@ FIRE = SimpleNamespace(name="Alpha", area=120.0, intensity="X", spread=35.0, fue
 
 
 def main():
+    """Generate the pinned fire QR image and its printable page without changing its payload."""
     a = FIRE
     # Short payload -> few, large modules, so the code still reads from ~2 m away.
     values = [a.name, a.area, a.intensity, a.spread, a.fuel, a.wind, a.dir, a.temp, a.rh, a.size_cm]

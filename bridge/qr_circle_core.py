@@ -14,6 +14,7 @@ class ScanGate:
     The caller serializes access with its takeoff lock.
     """
     def __init__(self, expected):
+        """Restrict a one-use scan/incident gate to the pinned fire-marker payload."""
         if expected != FIRE_MARKER_PAYLOAD:
             raise ValueError('Only the FireSimulationDemo marker can authorize automatic flight')
         self.expected = expected
@@ -23,6 +24,7 @@ class ScanGate:
         self.used = False
 
     def observe(self, text, captured, now):
+        """Count distinct fresh selected-QR frames, resetting gaps or mismatches."""
         if self.used:
             return False
         if text != self.expected or not 0 <= now-captured <= .8:
@@ -39,10 +41,12 @@ class ScanGate:
         return self.stable(now)
 
     def stable(self, now):
+        """Require five hits spanning at least 0.8 seconds and a still-fresh latest frame."""
         return (not self.used and self.last_at is not None and self.hits >= 5
                 and self.last_at-self.first_at >= .8 and 0 <= now-self.last_at <= .8)
 
     def acknowledge(self, response, now):
+        """Accept a backend incident identifier only while its scan evidence remains stable."""
         if (isinstance(response, dict) and response.get('accepted') is True
                 and isinstance(response.get('id'), str) and response['id'] and self.stable(now)):
             self.ack_at = now
@@ -50,6 +54,7 @@ class ScanGate:
         return False
 
     def consume(self, now):
+        """Consume fresh recognition plus a recent backend acknowledgement exactly once."""
         if self.stable(now) and self.ack_at is not None and 0 <= now-self.ack_at <= 5:
             self.used = True
             return True
@@ -57,6 +62,7 @@ class ScanGate:
 
 
 def acquisition_reason(marker, expected, limits, now):
+    """Reject stale, off-floor or out-of-envelope measured marker geometry after takeoff."""
     if marker is None or marker.text != expected or not 0 <= now-marker.at <= .8:
         return 'selected QR pose missing or stale'
     values = (marker.forward_m, marker.right_m, marker.down_m,
@@ -84,6 +90,7 @@ def centered_move(marker, radius, angle=0):
 
 
 def camera_pitch(marker, offset=(0, 0, 0)):
+    """Calculate downward gimbal degrees toward the marker after camera-offset correction."""
     forward, right, down = (marker.forward_m-offset[0], marker.right_m-offset[1], marker.down_m-offset[2])
     return max(-90., min(0., -math.degrees(math.atan2(down, math.hypot(forward, right)))))
 
@@ -97,6 +104,7 @@ def circle(driver, limits, expected, sample, abort, report, *, started=None,
     """
     started = clock() if started is None else started
     def check(require_marker=True):
+        """Poll cancellation, mission deadline, aircraft health and optional marker freshness."""
         if abort.is_set():
             raise InterruptedError('landing requested')
         if clock()-started > limits.mission_seconds:
@@ -127,6 +135,7 @@ def circle(driver, limits, expected, sample, abort, report, *, started=None,
         sleep(.05)
 
     def settle(completed):
+        """Require a fresh centred marker and stable hover after the last move, with a timeout."""
         until = clock()+2
         while True:
             v, m = check()

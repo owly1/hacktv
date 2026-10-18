@@ -15,15 +15,18 @@ LIMITS = Limits(segments=24, mission_seconds=90)
 
 class GateTests(unittest.TestCase):
     def test_only_exact_fire_marker_can_be_selected_for_automatic_flight(self):
+        """Verify only exact fire marker can be selected for automatic flight."""
         for text in (TEXT+' ', TEXT.replace('Alpha', 'Ravine'), TEXT[:-2]+'19', '', None):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 ScanGate(text)
 
     def stable(self, gate):
+        """Build a confirmed fresh scan sequence for the one-shot gate test."""
         for i in range(6):
             gate.observe(TEXT, 100+i*.2, 100+i*.2)
 
     def test_incident_ack_and_five_fresh_scans_required_once(self):
+        """Verify incident ack and five fresh scans required once."""
         g = ScanGate(TEXT)
         self.stable(g)
         self.assertFalse(g.consume(101))
@@ -35,6 +38,7 @@ class GateTests(unittest.TestCase):
         self.assertFalse(g.observe(TEXT, 102, 102))
 
     def test_cached_wrong_missing_future_stale_scans_never_start(self):
+        """Verify cached wrong missing future stale scans never start."""
         for text, at, now in [(TEXT, 100, 102), (TEXT,103,102), ('wrong',102,102),(None,102,102)]:
             g = ScanGate(TEXT)
             for _ in range(20): g.observe(text,at,now)
@@ -44,6 +48,7 @@ class GateTests(unittest.TestCase):
         self.assertFalse(g.stable(100))
 
     def test_ack_is_invalidated_by_loss_and_expiry(self):
+        """Verify ack is invalidated by loss and expiry."""
         g = ScanGate(TEXT); self.stable(g)
         g.acknowledge({'accepted':True,'id':'x'}, 101)
         g.observe(None,101.1,101.1)
@@ -57,9 +62,11 @@ class GateTests(unittest.TestCase):
 
 class GeometryTests(unittest.TestCase):
     def marker(self, at=100, forward=1, right=0):
+        """Build a measured-marker fixture with explicit values for the geometry test."""
         return Marker(at,TEXT,forward,right,1,0,0)
 
     def test_24_chords_stay_on_one_metre_radius_and_close_the_circle(self):
+        """Verify 24 chords stay on one metre radius and close the circle."""
         x=y=yaw=0.
         for _ in range(24):
             dx,dy,dz,turn = centered_move(self.marker(),1,2*math.pi/24)
@@ -71,6 +78,7 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(yaw,2*math.pi)
 
     def test_camera_points_to_measured_center_and_initial_move_corrects_radius(self):
+        """Verify camera points to measured center and initial move corrects radius."""
         m = self.marker(forward=1.2,right=.1)
         dx,dy,_,yaw = centered_move(m,1)
         self.assertAlmostEqual(math.hypot(m.forward_m-dx,m.right_m-dy),1)
@@ -80,18 +88,22 @@ class GeometryTests(unittest.TestCase):
         self.assertIsNotNone(acquisition_reason(replace(m,forward_m=2),TEXT,LIMITS,100))
 
     def flight(self, fail=None, initial=1):
+        """Run a mission with fake driver, sensor samples and a controlled clock."""
         now=[100.]; marker=[self.marker(forward=initial)]; moves=[]; events=[]
         aborted=threading.Event()
         def advance(seconds):
+            """Advance the fake clock and refresh test sensor timestamps."""
             now[0]+=seconds
             if fail != 'cached': marker[0]=replace(marker[0], at=now[0]-.001)
         def sample():
+            """Return the current fake vehicle/marker sample and any injected fault."""
             v = Vehicle(now[0],True,'hovering',70,1,0,0)
             if fail == 'low-battery': v=replace(v,battery_pct=20)
             if fail == 'link-loss' and moves: v=replace(v,connected=False)
             return v, marker[0]
         class Driver:
             def move(self, offset, speed, check):
+                """Record the requested relative move and simulate its result or injected failure."""
                 moves.append(offset)
                 advance(.4)
                 if fail == 'cancel': aborted.set()
@@ -103,12 +115,14 @@ class GeometryTests(unittest.TestCase):
         return moves,events
 
     def test_full_circle_uses_fresh_feedback_after_every_chord(self):
+        """Verify full circle uses fresh feedback after every chord."""
         moves,events=self.flight()
         self.assertEqual(len(moves),24)
         self.assertEqual([e[2] for e in events if e[0]=='circle'],list(range(1,25)))
         self.assertEqual(len(self.flight(initial=1.2)[0]),25)
 
     def test_bad_pose_missing_frames_link_battery_or_cancel_stops_movement(self):
+        """Verify bad pose missing frames link battery or cancel stops movement."""
         for failure in ['cached','low-battery','link-loss','cancel','marker-loss']:
             with self.subTest(failure=failure), self.assertRaises(InterruptedError):
                 self.flight(fail=failure)

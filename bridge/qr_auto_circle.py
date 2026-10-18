@@ -33,6 +33,7 @@ class QRAutoCircle(HoverCheckout):
     path_reference = 'measured-marker'
 
     def __init__(self, args, publisher, detector, pose, marker):
+        """Initialize the one-shot measured-marker mission, incident queue and camera tracker."""
         super().__init__(args, publisher, detector)
         self.pose = pose
         self.limits = Limits(radius_m=1., height_m=1., segments=24, mission_seconds=90)
@@ -47,20 +48,24 @@ class QRAutoCircle(HoverCheckout):
         self.camera_stop = threading.Event()
 
     def _ready_message(self):
+        """Explain automatic takeoff when execution is enabled, or incident-only rehearsal."""
         return ('AUTONOMOUS: selected QR + accepted fire incident starts one flight' if self.args.execute
                 else 'READ ONLY: QR creates a fire incident; no flight commands')
 
     def _print_instructions(self):
+        """Print measured-circle geometry, recognition trigger and landing controls."""
         print(self._ready_message(), flush=True)
         print('One metre RADIUS, two metre diameter; 24 measured chords, then land.', flush=True)
         print('Place the measured QR flat on the launch floor about 1 m ahead. Keep the terminal open.', flush=True)
         print('X, Esc, LAND or Ctrl+C requests landing. Restart deliberately for another flight.', flush=True)
 
     def _overlay_lines(self):
+        """Show scan count, accepted incident and current one-metre flight phase."""
         return [self._ready_message(), f'QR scans: {self.scan.hits}; incident: {self.incident_id or "waiting"}',
                 f'Flight: {self.flight_phase or "waiting"}; radius: 1 m; X requests landing']
 
     def _detect_step(self, image, captured):
+        """Process each fresh selected-QR frame and queue its incident before considering takeoff."""
         if self.last_processed_frame is not None and captured <= self.last_processed_frame:
             return
         self.last_processed_frame = captured
@@ -88,6 +93,7 @@ class QRAutoCircle(HoverCheckout):
             self._maybe_start()
 
     def _publish_incidents(self):
+        """Submit queued sightings off the camera thread and recheck the one-shot gate."""
         # Network latency never blocks frame decoding or the airborne watchdog.
         while self.running:
             try:
@@ -109,11 +115,13 @@ class QRAutoCircle(HoverCheckout):
                 self._maybe_start()
 
     def _validate_flight_setup(self):
+        """Require measured camera calibration and a current physical terminal preflight."""
         if self.pose is None:
             raise ValueError('measured camera calibration is required')
         read_preflight(self.args.preflight_file, terminal_control=True)
 
     def _maybe_start(self):
+        """Under the takeoff lock, consume a fresh incident/scan gate and launch one mission."""
         # Caller holds takeoff_lock. LAND wins this same lock before TakeOff.
         if self.scan.ack_at is not None and time.monotonic()-self.scan.ack_at > 5:
             self.scan.ack_at = None
@@ -135,6 +143,7 @@ class QRAutoCircle(HoverCheckout):
             self.mission.start()
 
     def _automatic_mission(self):
+        """Run takeoff/mission with camera tracking and bounded tracker cleanup."""
         self.started_at = time.monotonic()
         camera = threading.Thread(target=self._camera_loop, daemon=True)
         camera.start()
@@ -145,12 +154,15 @@ class QRAutoCircle(HoverCheckout):
             camera.join(timeout=1)
 
     def _takeoff_message(self):
+        """Identify the accepted incident that triggered this automatic takeoff."""
         return f"QR fire incident {self.incident_id} accepted; automatic takeoff"
 
     def _hover_observed_message(self):
+        """Describe post-takeoff acquisition of the measured marker centre."""
         return 'hover established; acquiring measured QR center for a one-metre-radius circle'
 
     def checkout_reason(self, starting=False):
+        """Extend hover guards with selected-QR freshness and the whole-mission deadline."""
         reason = super().checkout_reason(starting=starting)
         if reason:
             return reason
@@ -164,6 +176,7 @@ class QRAutoCircle(HoverCheckout):
         return None
 
     def _camera_pitch(self):
+        """Aim at a fresh measured marker or the planned floor point during vertical takeoff."""
         _, marker = self.sample()
         if marker and marker.text == self.scan.expected and 0 <= time.monotonic()-marker.at <= .8:
             return camera_pitch(marker, self.pose.offset)
@@ -173,6 +186,7 @@ class QRAutoCircle(HoverCheckout):
         return -math.degrees(math.atan2(max(0., height), self.limits.radius_m))
 
     def _camera_loop(self):
+        """Update gimbal pitch without blocking and request landing if aiming fails."""
         pending = None
         sent_at = None
         try:
@@ -200,11 +214,13 @@ class QRAutoCircle(HoverCheckout):
             self._request_landing(force=False)
 
     def _after_hover(self):
+        """Fly one measured circle, then hand back to guaranteed landing cleanup."""
         circle(self.driver, self.limits, self.scan.expected, self.sample,
                self.abort_flight, self.report, started=self.started_at)
         self.report('landing', 'one circle complete; landing at the current position')
 
     def _terminal(self):
+        """Accept landing/abort input without a second arm prompt in automatic mode."""
         try:
             for command in terminal_commands(sys.stdin, stopped=lambda: not self.running):
                 if self.land_confirmed or not self.running:
@@ -216,6 +232,7 @@ class QRAutoCircle(HoverCheckout):
             self._request_landing(force=False)
 
     def run(self):
+        """Run reception plus the nonblocking incident worker and stop it on shutdown."""
         worker = threading.Thread(target=self._publish_incidents, daemon=True)
         worker.start()
         try:
@@ -235,19 +252,23 @@ class QRAutoPreset(QRAutoCircle):
     path_reference = 'launch-heading'
 
     def __init__(self, args, publisher, detector, marker):
+        """Select the calibration-free fixed preset and its five-minute session cap."""
         super().__init__(args, publisher, detector, None, marker)
         self.flight_seconds = 300
 
     def _validate_flight_setup(self):
+        """Skip marker-pose calibration because this path is defined by launch heading."""
         # This path uses the aircraft's relative movement commands. There is
         # no camera-derived target position to calibrate or verify here.
         pass
 
     def _ready_message(self):
+        """Explain the automatic repeated preset or its incident-only rehearsal mode."""
         return ('AUTONOMOUS PRESET: selected QR + fire incident starts repeated circles' if self.args.execute
                 else 'PRESET REHEARSAL: QR creates a fire incident; no flight commands')
 
     def _print_instructions(self):
+        """Print fixed-path geometry, repetition limits and landing controls."""
         print(self._ready_message(), flush=True)
         print('One metre radius, centre 1 m ahead of launch heading; repeat until LAND or a protection limit.', flush=True)
         print('Flight cap: 5 minutes including takeoff; landing below 40% battery.', flush=True)
@@ -255,9 +276,11 @@ class QRAutoPreset(QRAutoCircle):
         print('X, Esc, LAND or Ctrl+C requests landing. Keep this terminal open. Restart for another flight.', flush=True)
 
     def _hover_observed_message(self):
+        """Describe the fixed circle that starts after a stable takeoff hover."""
         return 'hover established; beginning the demo circle relative to launch heading'
 
     def _preset_vehicle(self):
+        """Build the guarded aircraft sample used by the fixed preset controller."""
         sample = self.telemetry or {}
         ages = dict(self.sensor_ages.ages) if self.sensor_ages else {}
         attitude = sample.get('attitude_deg') or {}
@@ -270,16 +293,19 @@ class QRAutoPreset(QRAutoCircle):
                        not self.input_closed.is_set())
 
     def _camera_pitch(self):
+        """Aim toward the planned centre using height, without inventing a measured QR pose."""
         height = (self.telemetry or {}).get('altitude_m') or 0
         return -math.degrees(math.atan2(max(0., height), self.limits.radius_m))
 
     def _after_hover(self):
+        """Repeat the measured-feedback fixed preset until landing or a protection limit."""
         fly_preset(self.driver, self.limits, self._preset_vehicle, self.abort_flight, self.report,
                    hold_seconds=1, flight_started=self.started_at, clock=time.monotonic, sleep=time.sleep,
                    circles=0, flight_seconds=self.flight_seconds)
 
 
 def main():
+    """Select measured-circle or fixed-preset mode and validate its explicit execution configuration."""
     parser = argument_parser()
     parser.description = __doc__
     parser.add_argument('--execute', action='store_true', help='enable one automatic flight after QR/incident confirmation')
@@ -314,6 +340,7 @@ def main():
     bridge = (QRAutoPreset(args, publisher, detector, marker) if args.preset else
               QRAutoCircle(args, publisher, detector, pose, marker))
     def stop(signum, frame):
+        """Cancel the automatic mission and request landing on process termination."""
         bridge._request_landing(force=False)
         bridge.running = False
     for name in ('SIGINT', 'SIGTERM', 'SIGHUP'):

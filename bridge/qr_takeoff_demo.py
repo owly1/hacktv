@@ -22,19 +22,23 @@ from terminal_controls import commands as terminal_commands
 
 class QRTakeoffDemo(HoverCheckout):
     def __init__(self, args, publisher, detector, pose, limits, marker):
+        """Combine operator takeoff and measured QR waiting on one owned SDK connection."""
         super().__init__(args, publisher, detector)
         self.pose, self.limits = pose, limits
         self.trigger = Trigger(marker, limits)
         self.start_phrase = "START QR ORBIT" if args.full_orbit else "START QR CHECKOUT"
 
     def _ready_message(self):
+        """Describe typed-start readiness or the non-executing reception mode."""
         return (f"READY: {self.start_phrase} + Enter requests takeoff and QR waiting" if self.args.execute else
                 "READY: read-only QR reception; no takeoff or movement commands enabled")
 
     def _hover_observed_message(self):
+        """Describe the QR-waiting stage entered after a stable takeoff hover."""
         return "hover established; checking the calibrated QR session before movement"
 
     def _print_instructions(self):
+        """Print the integrated start phrase, selected arc/orbit and landing controls."""
         print("QR FLIGHT: DISARMED" if self.args.execute else "QR RECEPTION ONLY: no motor commands", flush=True)
         print("One full orbit, then landing" if self.args.full_orbit else "One short arc, then landing", flush=True)
         print(f"{self.start_phrase} + Enter: take off, settle in hover, then wait for the selected QR.", flush=True)
@@ -42,6 +46,7 @@ class QRTakeoffDemo(HoverCheckout):
         print("Esc or X requests landing without Enter. LAND + Enter and Ctrl+C also request landing.", flush=True)
 
     def _overlay_lines(self):
+        """Show the current checkout stage and measured QR readiness."""
         sample = self.telemetry or {}
         return ["QR FLIGHT: " + ("LIVE / TERMINAL CONTROL" if self.args.execute else "READ ONLY"),
                 f"QR: {self.trigger.state}; measured pose: {'available' if self.pose else 'unavailable'}",
@@ -49,9 +54,11 @@ class QRTakeoffDemo(HoverCheckout):
                 f"Height above launch: {sample.get('altitude_m')} m; X requests landing"]
 
     def _detect_step(self, image, captured):
+        """Decode a fresh image into the measured-pose pipeline used by the checkout."""
         QROrbitBridge._detect_step(self, image, captured)
 
     def _terminal(self):
+        """Accept the typed start phrase while giving immediate landing input priority."""
         try:
             for command in terminal_commands(sys.stdin, stopped=lambda: not self.running):
                 if not self.running or self.land_confirmed:
@@ -88,6 +95,7 @@ class QRTakeoffDemo(HoverCheckout):
             self._request_landing(force=False)
 
     def _after_hover(self):
+        """Wait for one valid QR trigger, then fly the selected arc/orbit with the same driver."""
         # This hook runs on the same worker and SDK connection as TakeOff.
         # It never runs in the ordinary three-second hover checkout.
         if not self.args.execute or self.pose is None:
@@ -123,6 +131,7 @@ class QRTakeoffDemo(HoverCheckout):
 
 
 def main():
+    """Validate calibrated integrated-checkout options and construct its one-shot runtime."""
     parser = argument_parser()
     parser.description = __doc__
     parser.add_argument("--execute", action="store_true")
@@ -154,6 +163,7 @@ def main():
     bridge = QRTakeoffDemo(args, Publisher(args.out_dir, args.backend, token),
                            FireDetector(args.model, args.conf, use_yolo=False), pose, limits, marker)
     def stop(signum, frame):
+        """Cancel the integrated checkout and request landing on termination."""
         bridge._request_landing(force=False)
         bridge.running = False
     for name in ("SIGINT", "SIGTERM", "SIGHUP"):

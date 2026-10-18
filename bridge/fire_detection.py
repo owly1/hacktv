@@ -73,6 +73,7 @@ class FireDetector:
     ignored unless detect_smoke (it fires on fog, dust, haze and clouds)."""
 
     def __init__(self, model_path, conf=DEFAULT_CONF, use_yolo=True, detect_smoke=False):
+        """Initialize QR readers and the optional filtered fire/smoke model."""
         self.conf = conf
         self.labels = ('fire', 'smoke') if detect_smoke else ('fire',)
         # Two QR readers: the classic one is fast; the ArUco-based one finds
@@ -163,6 +164,7 @@ def flame_fraction(bgr, box):
 
 
 def box_iou(a, b):
+    """Measure normalized-box overlap for same-location fire confirmation."""
     ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
     inter = ix * iy

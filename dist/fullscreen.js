@@ -11,6 +11,7 @@
   const railLinks = [...document.querySelectorAll('.rail-links a[href^="#"]')];
   let current = null;
 
+  /** Update a panel's expand/exit icon and accessible full-screen state. */
   function setButton(panel, on) {
     const button = panel.querySelector('.fs-button');
     button.innerHTML = `<svg aria-hidden="true"><use href="#${on ? 'i-shrink' : 'i-expand'}"/></svg>`;
@@ -19,10 +20,12 @@
     button.title = on ? 'Exit full screen (Esc)' : 'Full screen';
   }
 
+  /** Mark the navigation link for the currently expanded panel. */
   function syncRail() {
     for (const link of railLinks) link.classList.toggle('active', !!current && link.hash === '#' + current.id);
   }
 
+  /** Expand one panel, request available browser fullscreen and refit its content. */
   function open(panel) {
     if (current === panel) return;
     if (current) close(true);
@@ -45,6 +48,7 @@
     setTimeout(() => window.dispatchEvent(new Event('resize')), 260);
   }
 
+  /** Briefly explain the Escape control for leaving a full-screen panel. */
   function showHint() {
     document.querySelector('.fs-hint')?.remove();
     const hint = document.createElement('div');
@@ -55,6 +59,7 @@
     setTimeout(() => hint.remove(), 2800);
   }
 
+  /** Restore the dashboard layout and optionally preserve browser fullscreen for a panel switch. */
   function close(keepBrowserFullscreen = false) {
     if (!current) return;
     const panel = current;

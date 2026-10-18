@@ -25,6 +25,7 @@ HIT = {'source': 'qr-test', 'label': 'fire', 'confidence': 1., 'bbox': [0., 0., 
 
 class FireMonitorTests(unittest.TestCase):
     def test_repository_marker_classifies_as_fire_even_without_quiet_zone(self):
+        """Verify repository marker classifies as fire even without quiet zone."""
         detector = FireDetector('', .5, use_yolo=False)
         hit = detector.detect(cv2.imread(str(ROOT/'dist/test-marker.png')))
         self.assertEqual(hit['source'], 'qr-test')
@@ -33,11 +34,13 @@ class FireMonitorTests(unittest.TestCase):
         self.assertEqual(hit['details']['area_ha'], 120)
 
     def test_invalid_marker_does_not_create_fire(self):
+        """Verify invalid marker does not create fire."""
         for value in ['https://example.com', MARKER.replace('120', 'nan'), MARKER.replace('|18|18', '|200|18')]:
             self.assertIsNone(parse_marker(value))
         self.assertIsNone(FireDetector('', .5, False).detect(np.zeros((360, 640, 3), np.uint8)))
 
     def test_confirmation_needs_distinct_fresh_frames_and_retries_same_episode(self):
+        """Verify confirmation needs distinct fresh frames and retries same episode."""
         e = Episodes()
         self.assertIsNone(e.observe(HIT, 100, 100.1))
         self.assertIsNone(e.observe(HIT, 100, 100.2))
@@ -53,6 +56,7 @@ class FireMonitorTests(unittest.TestCase):
         self.assertNotEqual(e.observe(HIT, 121.4, 121.5), episode)
 
     def test_temporary_occlusion_does_not_retrigger_analysis(self):
+        """Verify temporary occlusion does not retrigger analysis."""
         e = Episodes()
         for at in [100, 100.2, 100.4]:
             episode = e.observe(HIT, at, at+.01)
@@ -63,6 +67,7 @@ class FireMonitorTests(unittest.TestCase):
         self.assertEqual(e.episode, episode)
 
     def test_yolo_needs_five_hits_in_the_same_spot(self):
+        """Verify yolo needs five hits in the same spot."""
         e = Episodes()
         yolo = {'source': 'yolo', 'label': 'fire', 'confidence': .8, 'bbox': [.1, .1, .3, .3], 'details': None}
         moved = {**yolo, 'bbox': [.6, .6, .8, .8]}
@@ -73,6 +78,7 @@ class FireMonitorTests(unittest.TestCase):
         self.assertTrue(e.observe(moved, 101.4, 101.41))
 
     def test_yolo_filters_drop_non_flame_boxes(self):
+        """Verify yolo filters drop non flame boxes."""
         from fire_detection import flame_fraction
         frame = np.full((100, 100, 3), 200, np.uint8)  # grey: haze, sky, concrete
         frame[:50, :50] = (0, 120, 255)                 # orange flame patch
@@ -80,6 +86,7 @@ class FireMonitorTests(unittest.TestCase):
         self.assertEqual(flame_fraction(frame, [.5, .5, 1, 1]), 0)
 
     def test_only_qr_uses_labeled_scenario_position(self):
+        """Verify only qr uses labeled scenario position."""
         site = {'latitude': 43., 'longitude': -79.}
         qr = detection_payload(HIT, b'jpeg', 100, 'test', site=site)
         self.assertTrue(qr['details']['position_simulated'])
@@ -89,6 +96,7 @@ class FireMonitorTests(unittest.TestCase):
         self.assertIsNone(rgb['fire']['longitude'])
 
     def test_real_decoder_reaches_incident_and_auto_analysis_on_isolated_backend(self):
+        """Verify real decoder reaches incident and auto analysis on isolated backend."""
         # Real QR decoding and HTTP ingest, with a fake Gemini transport and
         # memory-only storage so no test image is submitted to production.
         js = """

@@ -10,7 +10,11 @@
   const HFOV = 69 * Math.PI / 180;
   const RAD = Math.PI / 180;
 
+  // Vertex main passes the full-screen quad directly into clip coordinates.
   const VERT = 'attribute vec2 p; void main() { gl_Position = vec4(p, 0., 1.); }';
+  // Fragment helpers: hash gives stable grain; noise interpolates it; fbm layers scales.
+  // terrain blends map textures, pad draws the launch floor/QR, and main casts each
+  // camera pixel onto the ground before adding fire, haze and sensor effects.
   const FRAG = `
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
@@ -98,6 +102,7 @@ void main() {
   gl_FragColor = vec4(clamp(col, 0., 1.), 1.);
 }`;
 
+  /** Convert latitude/longitude into Web Mercator tile-pixel coordinates. */
   function lonLatToPx(lat, lon, z) {
     const s = 256 * 2 ** z, sin = Math.sin(lat * RAD);
     return [(lon + 180) / 360 * s, (.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * s];
@@ -112,8 +117,10 @@ void main() {
       up: [fh[0] * Math.sin(p), fh[1] * Math.sin(p), Math.cos(p)],
     };
   }
+  /** Return the three-component dot product used by camera projection. */
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
+  /** Initialize the WebGL terrain renderer and its offscreen camera resources. */
   function create(w = 960, h = 540) {
     const glCanvas = document.createElement('canvas');
     glCanvas.width = w; glCanvas.height = h;
@@ -122,6 +129,7 @@ void main() {
     const cam = {gl, w, h, f, scene: null, smoke: [], lastSmokeT: null, video: null};
     if (!gl) return Object.assign(cam, {ok: false});
 
+    /** Compile one shader and surface its compiler error when initialization fails. */
     const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
     const prog = gl.createProgram();
     gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG)); gl.linkProgram(prog);
@@ -130,6 +138,7 @@ void main() {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     const U = {}; for (const n of ['uRes', 'uF', 'uTime', 'uMode', 'uPos', 'uFwd', 'uRight', 'uUp', 'uHi', 'uLo', 'uMarker', 'uHiSize', 'uLoSize', 'uMarkerSize', 'uWind', 'uMarkerPos', 'uFire']) U[n] = gl.getUniformLocation(prog, n);
+    /** Allocate/configure one camera texture for map imagery or reference video. */
     const tex = unit => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([70, 80, 55, 255])); gl.generateMipmap(gl.TEXTURE_2D); return t; };
     cam.tex = {hi: tex(0), lo: tex(1), marker: tex(2)};
     gl.uniform1i(U.uHi, 0); gl.uniform1i(U.uLo, 1); gl.uniform1i(U.uMarker, 2);
@@ -138,6 +147,7 @@ void main() {
     return cam;
   }
 
+  /** Upload an available image/video source into the selected texture unit. */
   function upload(cam, unit, source) {
     const gl = cam.gl;
     gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, [cam.tex.hi, cam.tex.lo, cam.tex.marker][unit]);
@@ -161,6 +171,7 @@ void main() {
         img.src = `tiles/sat/${z}/${((tx % n) + n) % n}/${ty}.png`;
       }
     }
+    /** Paint the current tile mosaic into the camera texture when imagery is available. */
     const flush = () => { if (cam.scene !== scene) return; if (dirty) { dirty = false; upload(cam, unit, c); } if (pending > 0 || dirty) setTimeout(flush, 400); };
     upload(cam, unit, c); setTimeout(flush, 300);
     return size * 156543.03392 * Math.cos(lat * RAD) / n;
@@ -180,6 +191,7 @@ void main() {
     }
   }
 
+  /** Select the optional credited reference-video source for the simulated camera. */
   function setVideo(cam, video) { cam.video = video; }
 
   /* Screen position of a world point for a pose, or null when behind the camera. */
@@ -196,6 +208,7 @@ void main() {
     return [wx * a - wy * c, wy * a + wx * c];
   }
 
+  /** Advance the local smoke particles according to the simulated fire and wind. */
   function stepSmoke(cam, fire, t) {
     const scene = cam.scene, dt = cam.lastSmokeT == null ? 0 : Math.min(.5, t - cam.lastSmokeT);
     cam.lastSmokeT = t;
@@ -209,8 +222,10 @@ void main() {
     }
   }
 
+  /** Seed an established smoke plume before the first visible replay frame. */
   function prewarm(cam, fire) { for (let t = 0; t < 70; t += .25) stepSmoke(cam, fire, t - 70); cam.lastSmokeT = null; }
 
+  /** Project and draw the active simulated smoke particles over the terrain image. */
   function drawSmoke(ctx, cam, pose) {
     const pts = [];
     for (const s of cam.smoke) { const p = project(cam, pose, [s.e, s.n, s.z]); if (p) pts.push([p, s]); }
@@ -225,12 +240,14 @@ void main() {
     }
   }
 
+  /** Draw the labeled simulated detection box within the camera viewport. */
   function box(ctx, cam, x1, y1, x2, y2, label) {
     const lw = Math.max(3, cam.w / 240);
     ctx.strokeStyle = '#ff5a1f'; ctx.lineWidth = lw; ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
     ctx.fillStyle = '#ff5a1f'; ctx.font = `600 ${Math.round(cam.w / 34)}px Segoe UI`; ctx.fillText(label, x1, Math.max(cam.h / 14, y1 - 8));
   }
 
+  /** Draw the replay's attitude, altitude, power and source labels over the camera view. */
   function hud(ctx, cam, pose, info) {
     const w = cam.w, h = cam.h, fs = Math.round(w / 34);
     ctx.save();

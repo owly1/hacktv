@@ -1,43 +1,33 @@
-# Blackboard system flow
-
-Draw a horizontal data pipeline first, then the analysis/UI lane, then the human review gate. Use solid arrows for observed data and dashed arrows for synthetic scenario data. **Do not draw an arrow from the dashboard back to flight controls or field crews.**
+# System flow
 
 ```text
-   PILOT: manual flight remains outside the software
-                      |
-                      v
-[1 ANAFI] ---> [2 Linux bridge] ---> [3 API: auth + validate] ---> [4 TigerData]
- RGB + state     Olympe read only      time + source + units        time series
-                       |                        |                        |
-                       | JPEG snapshots         | fresh evidence         |
-                       +------------------------+----> [5 Gemini]        |
-                                                |      descriptive       |
-                                                |          |             |
-                                                v          v             v
-[S Synthetic scenario] - - - - - - - - -> [6 Dashboard + provenance] <--- API read
- map + camera + spread illustration             |
-                                                v
-                                     [7 Briefing draft]
-                                     evidence / gaps / questions
-                                                |
-                                                v
-                                     <8 Human review complete?>
-                                      no |                 | yes
-                                         v                 v
-                                 Verify / revise     [9 Export review record]
-                                      |               local, self-reported
-                                      +------> 7
+ANAFI camera + state
+  → Pi/Linux receiver (Olympe)
+  → authenticated HTTP through an SSH reverse tunnel
+  → Node backend: validate → storage + video relay + Gemini
+  → browser dashboard: incident, spread, leads, analysis, plan
+  → named human review → export
 
-No automatic flight, crew dispatch, suppression tactic or evacuation order.
+Historical/person-search simulation → separate replay API/UI
+Operator terminal → explicitly enabled flight runtime → aircraft commands
 ```
 
-## Copying instructions
+| Component | Responsibility |
+|---|---|
+| `anafi_observer.py` | Reception only; no motors or gimbal commands |
+| `anafi_bridge.py`, `fire_monitor.py` | Shared detection pipeline and evidence publishing |
+| `backend/server.mjs` | Auth, HTTP, Gemini, PostgreSQL/memory adapters, tiles and JPEG relay |
+| `backend/people.mjs` | Location uncertainty, lead association, coverage, review state |
+| `dist/` | Display and human planning controls; no aircraft command channel |
+| `qr_*`, `hover_checkout.py` | Separate terminal flight experiments and their gates |
 
-1. Put boxes 1–4 across the top third. Write “pilot manual” above box 1, with a downward arrow.
-2. Put box 5 beneath box 3. Label its incoming arrow “fresh image/telemetry.” Gemini is an inference, not a sensor.
-3. Put box 6 across the center, underneath boxes 3–5. Draw arrows from the API read side and Gemini. Label the TigerData return “via API”; the browser never receives database credentials.
-4. Put S on the left and use a dashed arrow into box 6. Write “SIMULATION” beside it. In Simulation the sample Gemini output is a fixture; connected mode does not blend in the fictional heatmap.
-5. Under box 6 stack box 7, diamond 8, then box 9. The “no” branch loops to verification and back to 7. The “yes” branch only records a local review and enables export.
-6. Underline “human decisions” at the bottom. Keep any operational decision outside the software boundary.
+The laptop keeps Internet access; Pi Wi-Fi joins the aircraft. The current
+tunnel normally maps **Pi loopback 8788 → laptop loopback 8787**.
 
-Use the included `dist/blackboard-flow.svg` for a clean printable version. The dashed simulation branch feeds UI data independently of the authenticated real-data pipeline. API failure is reported as unavailable; it does not silently switch the meaning of the data.
+Replay Gemini calls are real requests when configured, but replay results stay
+out of live storage. Model output and spread are estimates; human approval is
+a local review record. The old `dist/blackboard-flow.svg` is an early design
+illustration; use the flow above for the integrated codebase.
+
+See [API contract](BRIDGE_CONTRACT.md), [source map](../README.md#source-map)
+and [verification](VERIFIED.md).

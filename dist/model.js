@@ -6,7 +6,9 @@
 (function(root) {
   const BASE = Object.freeze({wind:18, direction:45, dryness:65, temp:20, rh:40});
   const M_PER_DEG = 111320;
+  /** Convert a clockwise-from-north bearing into an eight-point compass label. */
   function compass(deg) { return ['N','NE','E','SE','S','SW','W','NW'][Math.round(((deg%360)+360)%360/45)%8]; }
+  /** Approximate a geographic offset from a bearing in degrees and distance in metres. */
   function destPoint(lat, lon, bearingDeg, distM) {
     const b = bearingDeg*Math.PI/180;
     return [lat + distM*Math.cos(b)/M_PER_DEG, lon + distM*Math.sin(b)/(M_PER_DEG*Math.cos(lat*Math.PI/180))];
@@ -22,6 +24,7 @@
     if (details && Number.isFinite(details.spread_m_per_min)) return details.spread_m_per_min*baseRate(sc)/baseRate(scenarioFrom(details));
     return baseRate(sc);
   }
+  /** Convert reported hectares into an equivalent initial fire radius in metres. */
   function startRadius(details) {
     const ha = details && Number.isFinite(details.area_ha) && details.area_ha > 0 ? details.area_ha : .05;
     return Math.sqrt(ha*10000/Math.PI);
@@ -56,6 +59,7 @@
     }
     return pts;
   }
+  /** Estimate polygon area in hectares using a local geographic projection. */
   function areaHa(points) {
     if (!points.length) return 0;
     const lat0 = points[0][0]*Math.PI/180;
@@ -66,6 +70,7 @@
     }
     return Math.abs(s)/2*M_PER_DEG*M_PER_DEG/10000;
   }
+  /** Return projected downwind head distance in metres after the specified minutes. */
   function headDistance(minutes, sc, details) { return startRadius(details) + spreadRate(sc, details)*Math.max(0, minutes); }
   /* Recorded burn ellipse for a historical (demo) fire, elongated along its spread direction. */
   function recordedPerimeter(f) {
@@ -78,6 +83,7 @@
     }
     return pts;
   }
+  /** Test whether a latitude/longitude point lies within the modeled outline. */
   function insidePolygon(pt, poly) {
     let inside = false;
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {

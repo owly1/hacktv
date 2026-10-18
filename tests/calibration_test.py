@@ -18,6 +18,7 @@ spec.loader.exec_module(observer)
 
 class CalibrationTests(unittest.TestCase):
     def test_printed_pattern_has_expected_inner_corner_count(self):
+        """Verify printed pattern has expected inner corner count."""
         image = np.full((560, 740, 3), 255, np.uint8)
         for row in range(7):
             for col in range(10):
@@ -28,6 +29,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(len(corners), PATTERN[0]*PATTERN[1])
 
     def test_calibration_recovers_known_synthetic_camera(self):
+        """Verify calibration recovers known synthetic camera."""
         k = np.array([[920., 0, 640], [0, 910., 360], [0, 0, 1]])
         objects = np.zeros((54, 3), np.float32)
         objects[:, :2] = np.mgrid[0:9, 0:6].T.reshape(-1, 2)*.02
@@ -43,6 +45,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(len(errors), 20)
 
     def test_insufficient_or_unvaried_views_do_not_produce_calibration(self):
+        """Verify insufficient or unvaried views do not produce calibration."""
         with self.assertRaises(ValueError):
             fit_views([], (1280, 720), .02)
         point = np.zeros((54, 1, 2), np.float32)
@@ -50,6 +53,7 @@ class CalibrationTests(unittest.TestCase):
             fit_views([point]*20, (1280, 720), .02)
 
     def test_native_frames_are_preserved_for_both_supported_yuv_formats(self):
+        """Verify native frames are preserved for both supported yuv formats."""
         sdk = SimpleNamespace(VDEF_I420=1, VDEF_NV12=2)
         raw = np.full((720*3//2, 1280), 128, np.uint8)
         for fmt in (1, 2):

@@ -1,171 +1,103 @@
-# Emberwatch
+# BOSCO / Emberwatch
 
-Live wildfire monitoring from a Parrot ANAFI drone. The drone's camera feed is
-checked for fire several times a second; when it finds one, the fire is pinned
-on the map, its spread is projected, Gemini analyzes the scene and writes an
-operational plan, and everything is stored in TigerData.
-It also looks for **people who cannot ask for help**. Person detections are
-geolocated with an explicit error model, confirmed from several angles, and
-listed as rescue leads with a ±metres location for a responder to
-acknowledge. See [docs/PERSON_SEARCH.md](docs/PERSON_SEARCH.md).
-Read [TEAM_AI_CONTEXT.md](TEAM_AI_CONTEXT.md) for decisions, architecture and the API contract.
+Wildfire-monitoring prototype for a Parrot ANAFI: live camera and telemetry,
+fire detection, illustrative spread, Gemini analysis, and human-reviewed plans.
+Person search adds rescue leads, location uncertainty, and coverage views.
 
-**Restart the configured Windows laptop and Pi:** use the desktop
-`Start BOSCO.cmd` launcher or follow [the restart guide](docs/RESTART_CURRENT_LAPTOP.md).
-Its source is `scripts/Start-BOSCO.ps1`; it uses the saved backend
-configuration, SSH key and aircraft Wi-Fi profile. No API keys belong in Git.
+## Start here
 
-**MacBook + Pi:** follow [the Mac setup guide](docs/MAC_SETUP.md). Run
-`bash scripts/setup-mac.sh` once, then use `scripts/mac.py` to configure SSH,
-deploy a separate Mac receiver directory, and start observation or QR testing.
-Olympe runs on the Pi; the dashboard, RGB fire/smoke detector and QR preview
-run on the Mac. Observation mode automatically starts fire detection: show
-the [fire marker](http://127.0.0.1:8787/test-marker.html) to trigger the incident
-and automatic analysis. See the flight-mode table below for rehearsal and
-explicitly enabled aircraft flight.
+- New teammate: [codebase tour](explain_max.md).
+- AI assistant: [shared context](TEAM_AI_CONTEXT.md).
+- Architecture: [system flow](docs/SYSTEM_FLOW.md).
+- Current evidence and limits: [verification record](docs/VERIFIED.md).
 
-## 1. Backend + dashboard (macOS, Windows or Linux, Node 22+)
+## Run the dashboard
 
-```bash
-npm install
-cp .env.example .env     # set INGEST_TOKEN and DASHBOARD_TOKEN (different), GEMINI_API_KEY
-npm start                # http://127.0.0.1:8787 — opens live, no token needed on this computer
-```
-
-TigerData: put the service URL in `DATABASE_URL`, then `npm run db:init` once
-(creates the hypertables, continuous aggregate and compression policy, then
-proves an insert and read-back).
-
-### Demo cases (no drone)
+Use Node 22+ from the repository root:
 
 ```sh
-npm run demo                   # macOS, Windows and Linux
-npm run demo -- --port 9000     # run beside another backend
+npm ci
+cp .env.example .env
+# Set distinct INGEST_TOKEN and DASHBOARD_TOKEN in .env.
+npm start
 ```
 
-The Windows wrapper ` .\demo.ps1 -Port 9000` is also supported.
+On PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
+Open <http://127.0.0.1:8787/>. Live mode waits for real input. Gemini and
+TigerData are optional; configure their values in `.env` using [KEYS.md](docs/KEYS.md).
+Run `npm run db:init` once when configuring a database; it applies the schema
+and checks an insert/readback.
 
-Starts the backend and opens the dashboard in Demo mode (`/?demo`). The
-historical fires from `examples/` are hardcoded in `dist/demo-cases.js`, each
-with a simulated ANAFI-01 (telemetry + detection, labeled DEMO). **Analyze** and
-**Generate plan** call Gemini live on the selected case through
-`/api/demo/analyze` and `/api/demo/plan`. Demo results are never written to
-TigerData.
-
-Each case starts as a fresh sighting: the simulated drone, patrolling at 35 m
-about 280 m from the fire, confirms the detection, geolocates the fire (pin
-and spread appear on the map) and climbs to a 450 m survey orbit at 120 m.
-Gemini analyzes the fire automatically about 5 s in. The map's T + 0 outline is
-the fire the camera shows; the timeline grows it to the recorded burn area.
-The camera panel shows a rendered view
-(`dist/sim-camera.js`, WebGL): satellite imagery of the real location, a
-modelled fire front and smoke, a HUD and the detection box. All of it is labeled
-SIMULATED. Demo mode switches the map to satellite imagery (Esri, proxied and
-cached by the backend like the street tiles); the drone button under the map zoom
-controls follows the drone.
-To show a real reference clip for a case instead, put it in `dist/demo-video/`
-and list it in `dist/demo-video/videos.json` as
-`{"<case id>": {"file": "clip.mp4", "credit": "source and licence"}}`. It is
-labeled as not recorded by ANAFI-01.
-
-If scripts are blocked, run
-`powershell -ExecutionPolicy Bypass -File .\demo.ps1`.
-
-## 2. Bridge (WSL Ubuntu, on the drone's Wi-Fi)
-
-```bash
-bash bridge/setup.sh                     # once, with internet: venv deps + fire model + test marker
-source ~/anafi-env/bin/activate
-set -a; source .env; set +a              # INGEST_TOKEN
-python3 bridge/anafi_bridge.py --backend http://127.0.0.1:8787
-python3 bridge/anafi_bridge.py --backend http://127.0.0.1:8787 --demo-flight   # + autonomous demo circle
-```
-
-The drone's Wi-Fi has no internet: Gemini needs a second connection (phone
-USB tether). Open the dashboard once while online so the UTSC map tiles are
-cached.
-
-### Pi 4B observation receiver (grounded hardware path)
-
-The Pi 4B + USB Ethernet setup tested in this chat is included as
-[`bridge/anafi_observer.py`](bridge/anafi_observer.py). It receives telemetry
-and JPEG frames at a configurable resolution and rate. The Mac launcher uses
-the available source frame rate; `--native-video` preserves the source resolution.
-The standalone example below caps transmission at 10 FPS. It implements no
-flight controls, gimbal movement or fire detection. The existing
-`bridge/anafi_bridge.py` remains the team's separate detection/flight bridge.
-
-See [Pi setup and launch paths](docs/PI_RUNTIME_HANDOFF.md),
-[SDK build notes](docs/PI4_SDK_BUILD_NOTES.md) and
-[AI handoff](docs/PI_OBSERVER_CONTEXT.md). The Pi Wi-Fi joins the aircraft;
-Ethernet carries the encrypted backend tunnel to the laptop, whose Wi-Fi
-stays online. The backend now relays these snapshots into the existing
-dashboard camera viewer as well as retaining `/api/snapshot` compatibility.
-
-On the Pi, from the repository root with its tested SDK environment and
-local ingest token loaded:
+For a demonstration without an aircraft:
 
 ```sh
-set -a; . "$HOME/emberwatch/bridge.env"; set +a
-bash "$HOME/emberwatch/sdk/olympe-8.5.0/products/olympe/linux/env/setenv" \
-  python bridge/anafi_observer.py --camera --controller direct \
-  --ip 192.168.42.1 --drone-id ANAFI-H084882 --backend http://127.0.0.1:8788 \
-  --camera-transport frame --camera-fps 10
+npm run demo
+npm run demo -- --port 9000
 ```
 
-The Pi loopback port above is the current tunnel to laptop port 8787.
-See [test the actual dashboard camera](docs/PI_CAMERA_TEST.md) for the current
-working setup and a simple grounded test.
+Replay offers simulated person searches, historical incidents, and a flight
+pattern. Its Gemini calls require a configured key; replay results stay out
+of live storage. The Windows wrapper is `.\demo.ps1 -Port 9000`.
 
-Run `python3 tests/observer_test.py` for the two mocked receiver tests.
-The actual grounded reception check used ANAFI Extended firmware 1.8.2 / HW_03;
-flight, controller coexistence and fire detection were not part of that test.
+## Source map
 
-## 3. Test without a real fire
+| Path | Responsibility |
+|---|---|
+| `backend/server.mjs` | HTTP routes, storage, Gemini, video relay, tile cache |
+| `backend/validation.mjs` | Ingest validation and shared QR contract |
+| `backend/people*.mjs` | Rescue-lead logic and deterministic simulations |
+| `backend/schema.sql` | TigerData tables and telemetry aggregate |
+| `dist/` | Browser dashboard; plain JavaScript/CSS, no build step |
+| `bridge/` | Linux aircraft receivers, detection, calibration and flight experiments |
+| `scripts/` | Laptop setup, launchers and flight-recording review |
+| `examples/` | Historical fire dataset and standalone example renderer |
+| `tests/` | Isolated Node/Python checks; SDK tests mock the aircraft |
 
-Print [the fire marker](http://127.0.0.1:8787/test-marker.html). Only its exact
-FireSimulationDemo payload counts as a QR fire; other QR codes, including other
-`EW1:` payloads, are ignored by the detector and rejected by backend ingest.
-Printed size does not select or change the automatic preset path. The separate
-measured-marker orbit requires the actual printed size in its calibration.
+`dist/vendor/` contains third-party Leaflet files; keep upstream code intact.
 
-## Automatic QR flight experiment
+## Choose a hardware workflow
 
-These modes are included in main. Ordinary observation and historical replay
-do not enable flight. Both automatic flight modes require the exact fire marker,
-five fresh scans and an accepted backend incident before takeoff.
+Only one receiver may own the aircraft connection at a time. Ordinary
+dashboard startup and observation do not start a flight.
 
-| Mode | Behaviour | Guide |
-| --- | --- | --- |
-| Browser rehearsal | Recognizes QR and animates a flight; no aircraft commands | [Mac setup](docs/MAC_SETUP.md) |
-| Automatic preset (`qr-demo` / `QrAutoPreset`) | Repeats 1 m-radius circles around a centre 1 m ahead of launch, aiming the camera there; no visual QR position tracking or camera calibration required | [Automatic preset](docs/QR_AUTO_DEMO.md) |
-| Measured-marker orbit (`qr-circle` / `QrAutoCircle`) | One calibrated orbit around the measured QR centre with camera tracking; requires measured calibration and physical preflight | [Measured orbit](docs/QR_AUTO_CIRCLE.md) |
+| Task | Guide |
+|---|---|
+| Provisioned Windows laptop + Pi | [Restart](docs/RESTART_CURRENT_LAPTOP.md) |
+| Mac + provisioned Pi | [Mac setup](docs/MAC_SETUP.md) |
+| First Ethernet/SSH connection | [Pi Ethernet](docs/PI4_ETHERNET_SETUP.md) |
+| Pi paths, ports and service | [Runtime](docs/PI_RUNTIME_HANDOFF.md) |
+| Check a real camera stream | [Camera test](docs/PI_CAMERA_TEST.md) |
+| Windows Skycontroller camera only | [USB camera](docs/SKYCONTROLLER_USB_CAMERA.md) |
+| Short hover and terminal landing | [Hover checkout](docs/TERMINAL_FLIGHT_TEST.md) |
+| Automatic QR-triggered preset | [Automatic demo](docs/QR_AUTO_DEMO.md) |
+| Automatic orbit around a measured QR | [Measured circle](docs/QR_AUTO_CIRCLE.md) |
+| Older typed-arm preset | [Preset](docs/QR_PRESET_DEMO.md) |
+| Calibration and staged orbit test | [Cold start](docs/QR_DEMO_FROM_OFF.md), [checkout](docs/QR_FLIGHT_CHECKOUT.md) |
+| Recognition-only browser preview | [Rehearsal](docs/QR_ORBIT_DEMO.md) |
 
-Live launchers require `--execute` on Mac or `-Execute` on Windows. The repeated
-preset lands on operator request, a protection limit, or its five-minute cap.
-Flight-enabled sessions record video and diagnostics; the Mac launcher copies
-them back and creates MP4 previews and flight review reports after exit.
+Print the selected fire QR from <http://127.0.0.1:8787/test-marker.html>.
+Only the exact payload in `bridge/orbit-marker.txt` is accepted as a test fire.
+For flight modes, read the selected guide before enabling `--execute`:
+automatic modes can take off as soon as the marker is recognized.
 
-## Demo
+## Test
 
-For the new QR recognition rehearsal, run `python bridge/qr_orbit_rehearsal.py`
-on the laptop and open <http://127.0.0.1:8789/>. It reads the existing camera
-and animates a simulated orbit; it cannot command the aircraft.
-Live flight modes remain opt-in and are not installed as the default Pi service.
-The latest repeated-circle changes have automated test coverage; a complete
-hardware flight remains to be verified. See [QR orbit setup and physical checks](docs/QR_ORBIT_DEMO.md).
-The [step-by-step cold-start guide](docs/QR_DEMO_FROM_OFF.md) includes grounded
-calibration capture and a gated one-segment checkout before a full orbit.
+```sh
+npm test
+python3 -m unittest discover -s tests -p '*_test.py'
+```
 
-The **Demo** button opens a simulated person search: multi-view revisits, a
-hot rock that never confirms, and a radio outage with delayed alerts. It also
-replays recorded historical fires from `examples/historical-fires.mjs` and the
-drone's flight pattern. It is only
-shown when requested.
+Run Python checks in Linux/WSL or the Mac environment from its setup guide.
+Some require OpenCV/NumPy; Olympe adapter checks skip without the SDK.
+Tests use fixtures and mocked aircraft, not live cloud services or motors.
 
-## Tests
+## Further reading
 
-`npm test` — backend contract and person-search tests (Gemini, TigerData and the drone are faked).
-`python3 tests/observer_test.py` — two observation-receiver tests with a fake SDK.
-`python -m unittest discover -s tests -p '*_test.py'` — observer, QR trigger,
-geometry and orbit watchdog checks; SDK adapter checks also run in Olympe.
+- [API contract](docs/BRIDGE_CONTRACT.md), [person search](docs/PERSON_SEARCH.md).
+- [Acceptance checklist](docs/ACCEPTANCE.md), [team handoff](handoff.md).
+- [Pi observer context](docs/PI_OBSERVER_CONTEXT.md), [SDK build notes](docs/PI4_SDK_BUILD_NOTES.md).
+- [Work areas](docs/EXECUTION_PLAN.md), [Gemini handoff](docs/HANDOFF_D.md).
+- [Proposed orbit-loop extension](spec.md), [integration references](docs/SOURCES.md).
+
+Spread and rescue locations are model estimates. A reviewer evaluates plans;
+the dashboard and Gemini do not issue aircraft commands or dispatch crews.

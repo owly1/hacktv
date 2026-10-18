@@ -4,9 +4,11 @@
    It never calls the backend and never changes app state. */
 (function () {
   'use strict';
+  /** Find a presentation-layer element by its identifier. */
   const $ = id => document.getElementById(id);
 
   // ---- workspace mode: idle | live | alert | demo
+  /** Mirror the existing workspace mode labels into visual styling and replay accessibility state. */
   function syncMode() {
     const pill = $('mode-pill'), mapPill = $('map-pill');
     let mode = 'idle';
@@ -26,6 +28,7 @@
   };
   const PILL = {ok: 'pill ok', warn: 'pill warn', bad: 'pill warn', off: 'pill muted'};
 
+  /** Mirror an existing service label into its status pill and top-bar chip. */
   function syncService(id) {
     const el = $(id); if (!el) return;
     const text = el.textContent.trim();
@@ -40,12 +43,14 @@
     }
   }
 
+  /** Style the existing drone-source label for live, stale or unavailable evidence. */
   function syncDrone() {
     const el = $('drone-source'), t = el.textContent.trim();
     const cls = t === 'Live telemetry' ? 'pill ok' : /stale/i.test(t) ? 'pill warn' : 'pill muted';
     if (el.className !== cls) el.className = cls;
   }
 
+  /** Observe relevant DOM label/class changes without calling the backend or changing app state. */
   const watch = (el, fn) => el && new MutationObserver(fn).observe(el, {attributes: true, attributeFilter: ['class'], childList: true, characterData: true, subtree: true});
 
   watch($('mode-pill'), syncMode); watch($('map-pill'), syncMode);

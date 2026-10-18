@@ -24,24 +24,28 @@ const LEG_SPACING = 75;
 const STANDOFF_M = FIRE_STANDOFF_M;
 const ORBIT_POINTS = 16;
 
+/** Return a deterministic uniform random generator from the scenario seed. */
 function rng(seed) {
   let a = seed >>> 0;
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
+/** Draw a standard normal sample from the supplied seeded random generator. */
 function gauss(r) { return Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r()); }
+/** Normalize a bearing to the 0–360 degree range. */
 const wrap = (a) => ((a % 360) + 360) % 360;
+/** Test whether a bearing lies in a wrapped visibility arc. */
 const inArc = (deg, [a, b]) => { const x = wrap(deg - a), w = wrap(b - a); return x < w; };
 
 /* Ground truth in the fire's wind frame: u metres downwind of the fire, v metres across
    (to the right of the wind). Directions are relative to the wind. Never shown as truth. */
 const TARGETS = [
   // Trapped at the fire's flank: the reason the search starts at the fire.
-  { id: 'trapped', u: () => 18, v: () => 40, hiddenRel: [], thermal: 0.6, visible: 0.3 },   // inside the fire's edge
-  { id: 'injured', u: () => 175, v: () => -20, hiddenRel: [[135, 215]], thermal: 0.85, visible: 0.35 },
-  { id: 'walker', u: (t) => 230 + 55 * Math.min(1, t * 1.1 / 240), v: (t) => 185 - 190 * Math.min(1, t * 1.1 / 240), hiddenRel: [], thermal: 0.8, visible: 0.5 },
+  { id: 'trapped', /* Return the target's downwind position in metres at simulated time. */ u: () => 18, /* Return the target's crosswind position in metres at simulated time. */ v: () => 40, hiddenRel: [], thermal: 0.6, visible: 0.3 },   // inside the fire's edge
+  { id: 'injured', /* Return the target's downwind position in metres at simulated time. */ u: () => 175, /* Return the target's crosswind position in metres at simulated time. */ v: () => -20, hiddenRel: [[135, 215]], thermal: 0.85, visible: 0.35 },
+  { id: 'walker', /* Return the target's downwind position in metres at simulated time. */ u: (t) => 230 + 55 * Math.min(1, t * 1.1 / 240), /* Return the target's crosswind position in metres at simulated time. */ v: (t) => 185 - 190 * Math.min(1, t * 1.1 / 240), hiddenRel: [], thermal: 0.8, visible: 0.5 },
   // A sun-heated rock: hot only on its downwind face, and the hot spot sits on a slope, so its
   // apparent ground position shifts with the viewing angle (it fails multi-view agreement).
-  { id: 'hot-rock', u: () => 131, v: () => -18, seenFromRel: [-12, 12], thermal: 0.9, visible: 0, parallax: 7 },
+  { id: 'hot-rock', /* Return the target's downwind position in metres at simulated time. */ u: () => 131, /* Return the target's crosswind position in metres at simulated time. */ v: () => -18, seenFromRel: [-12, 12], thermal: 0.9, visible: 0, parallax: 7 },
 ];
 
 /* The UTSC scenario: a small ravine fire near the Sam Ibrahim Building, spreading south-west. */
@@ -129,6 +133,7 @@ export class PersonSearchSim {
     for (let k = 0; k <= ORBIT_POINTS; k++) {
       const a = start + (k / ORBIT_POINTS) * 2 * Math.PI;
       let r = base;
+      /** Convert an orbit angle into a waypoint around the simulated fire. */
       const at = (rr) => [this.F[0] + rr * Math.sin(a), this.F[1] + rr * Math.cos(a)];
       // Clear of the fire, and so is the straight hop from the previous orbit point.
       while ((this.excluded(...at(r)) || (pts.length && !this.clear(pts.at(-1), at(r)))) && r < 400) r += 5;
@@ -201,11 +206,15 @@ export class PersonSearchSim {
     return a != null && a <= FIRE_PATH_MIN ? 'path' : 'other';
   }
 
+  /** Return the fire/spread context used to rank simulated rescue leads. */
   context() { return { fire: this.fireLL(), spread: this.spread }; }
 
+  /** Append a timestamped mission-log event using the simulation clock. */
   say(t, text) { this.log.push({ at: new Date(this.startMs + t * 1000).toISOString(), t, text }); }
+  /** Convert local east/north metres to scenario latitude/longitude. */
   ll(e, n) { return toLatLon(this.origin, e, n); }
 
+  /** Advance deterministic one-second steps up to the requested simulation time. */
   advanceTo(tTarget) {
     const until = Math.min(Math.floor(tTarget), SIM_DURATION_S);
     while (this.t < until) this.step(++this.t);
@@ -229,6 +238,7 @@ export class PersonSearchSim {
       this.route = [];
       if (!this.clear(this.pos, target)) {
         const R = this.safeRadius;
+        /** Calculate a waypoint's angle about the simulated fire for a detour. */
         const ang = (q) => Math.atan2(q[0] - this.F[0], q[1] - this.F[1]);
         let a0 = ang(this.pos), a1 = ang(target), da = a1 - a0;
         while (da > Math.PI) da -= 2 * Math.PI;
@@ -247,6 +257,7 @@ export class PersonSearchSim {
     return this.fly(target, t);
   }
 
+  /** Move the simulated drone toward a waypoint at its bounded cruise speed. */
   fly(target, t) {
     const dx = target[0] - this.pos[0], dy = target[1] - this.pos[1], d = Math.hypot(dx, dy);
     if (d > 0.5) this.heading = (Math.atan2(dx, dy) / RAD + 360) % 360;
@@ -255,6 +266,7 @@ export class PersonSearchSim {
     return false;
   }
 
+  /** Advance the simulated mission, sensor views, radio outage and revisit decisions. */
   step(t) {
     const nowMs = this.startMs + t * 1000;
     const linkUp = t < OUTAGE[0] || t >= OUTAGE[1];
@@ -346,6 +358,7 @@ export class PersonSearchSim {
     if (t === OUTAGE[1]) { for (const o of this.queue.splice(0)) this.deliver(o, nowMs, t); }
   }
 
+  /** Deliver a simulated person observation through the same search logic as live ingest. */
   deliver(obs, receivedMs, t) {
     let res;
     try { res = this.search.addObservation(obs, receivedMs); } catch { return; }
@@ -361,6 +374,7 @@ export class PersonSearchSim {
     }
   }
 
+  /** Choose the next useful candidate viewpoint without entering the modeled fire standoff. */
   pickRevisit() {
     // Leads are already ordered: anyone at the fire's edge first, then by status, then by fire arrival.
     const snap = this.search.snapshot(this.startMs + this.t * 1000, this.context());
@@ -368,8 +382,10 @@ export class PersonSearchSim {
       ?? snap.leads.find((l) => l.status === 'possible-person' && l.next_look?.kind === 'recheck' && (this.revisited.get(l.id) ?? 0) < 3);
   }
 
+  /** Return the simulated fire centre in geographic coordinates. */
   fireLL() { const [lat, lon] = this.ll(...this.F); return { latitude: lat, longitude: lon }; }
 
+  /** Return the labeled simulation state, leads, coverage, drone and mission log. */
   snapshot() {
     const nowMs = this.startMs + Math.max(0, this.t) * 1000;
     const fire = this.fireLL();

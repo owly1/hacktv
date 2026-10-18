@@ -3,6 +3,7 @@
 // establish sensor truth — so every field is checked before it is stored.
 
 export class ApiError extends Error {
+  /** Attach an intentional HTTP status to a client/upstream validation error. */
   constructor(status, message) {
     super(message);
     this.status = status;
@@ -20,6 +21,7 @@ const FORBIDDEN_INGEST_PROVENANCE = new Set([
   'sim', 'simulation', 'synthetic', 'fixture', 'demo', 'sample', 'test',
 ]);
 
+/** Parse an explicit-zone ISO timestamp or throw a field-specific client error. */
 export function parseIsoTimestamp(value, field = 'timestamp') {
   if (typeof value !== 'string' || value.length === 0) {
     throw new ApiError(400, `${field} must be a non-empty ISO 8601 string`);
@@ -36,6 +38,7 @@ export function parseIsoTimestamp(value, field = 'timestamp') {
   return ms;
 }
 
+/** Reject timestamps beyond the allowed ingest clock skew. */
 export function assertWithinClockWindow(tsMs, nowMs, field = 'timestamp') {
   if (Math.abs(tsMs - nowMs) > INGEST_CLOCK_WINDOW_MS) {
     throw new ApiError(
@@ -45,14 +48,17 @@ export function assertWithinClockWindow(tsMs, nowMs, field = 'timestamp') {
   }
 }
 
+/** Return evidence age in milliseconds while retaining unknown timestamps. */
 export function ageMs(tsMs, nowMs) {
   return nowMs - tsMs;
 }
 
+/** Check age and future-skew bounds for evidence used as current input. */
 export function isFresh(tsMs, nowMs, maxAgeMs = EVIDENCE_FRESH_MS) {
   return ageMs(tsMs, nowMs) <= maxAgeMs;
 }
 
+/** Validate a finite numeric measurement or preserve an explicit unknown. */
 function checkNumberOrNull(value, name, { min = -Infinity, max = Infinity } = {}) {
   if (value === null || value === undefined) return;
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -234,6 +240,7 @@ const FLIGHT_PHASES = new Set([
   'preflight', 'takeoff', 'climb', 'circle', 'return', 'landing', 'landed', 'aborted', 'error',
 ]);
 
+/** Check a buffer's JPEG signature before accepting camera evidence. */
 function isJpeg(buf) {
   return buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
 }
@@ -249,6 +256,7 @@ export function validateFrame(body, capturedAtHeader, nowMs) {
   return capturedAtMs;
 }
 
+/** Validate a bounded optional number used by detection geometry. */
 function finiteOrNull(value, name, range = {}) {
   checkNumberOrNull(value, name, range);
   return value ?? null;
@@ -337,6 +345,7 @@ export function validateDetection(body, nowMs) {
   };
 }
 
+/** Validate a reporting-only flight phase, progress and timestamp. */
 export function validateFlightEvent(body, nowMs) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     throw new ApiError(400, 'flight event must be a JSON object');
@@ -368,6 +377,7 @@ export function isOriginAllowed(originHeader, allowedOrigins) {
   return allowedOrigins.includes(originHeader);
 }
 
+/** Parse configured exact browser origins into an allowlist. */
 export function parseAllowedOrigins(envValue) {
   // :8787 is the backend's own origin; :8000 covers the README's
   // `python3 -m http.server -d dist 8000` dev path.

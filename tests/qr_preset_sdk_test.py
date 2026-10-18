@@ -23,11 +23,13 @@ TEXT = "EW1:Alpha|120|X|35|M|30|60|31|18|18"
 @unittest.skipUnless(HAS_SDK, "Run in the installed Pi Olympe environment")
 class PresetSDKTests(unittest.TestCase):
     def make_bridge(self, execute=True):
+        """Construct the tested bridge around fake state, publisher and aircraft dependencies."""
         args = SimpleNamespace(ip=None, controller="direct", home_lat=0, home_lon=0,
                                execute=execute, terminal_control=True, hover_seconds=1, hold_seconds=30)
         return QRPresetDemo(args, SimpleNamespace(), SimpleNamespace(), Limits(mission_seconds=90), TEXT)
 
     def fly(self, stop=None):
+        """Exercise flight logic against fake moves and a controlled clock, without aircraft access."""
         bridge = self.make_bridge()
         now, sends, moves, land_requests, lands = [100.0], [], [], [], []
         bridge.connected = True
@@ -36,6 +38,7 @@ class PresetSDKTests(unittest.TestCase):
         bridge.sensor_ages = SimpleNamespace(ages={key: now[0] for key in ("altitude", "speed", "attitude")})
         bridge.last_frame_time = time.time()
         def advance(seconds):
+            """Advance the fake clock and refresh test sensor timestamps."""
             now[0] += seconds
             bridge.sensor_ages.ages = {key: now[0] for key in ("altitude", "speed", "attitude")}
             bridge.last_frame_time = time.time()
@@ -49,6 +52,7 @@ class PresetSDKTests(unittest.TestCase):
             if stop == "hover" and bridge.flight_phase == "return":
                 bridge._request_landing(force=False)
         def receive(message):
+            """Supply a controlled SDK state/frame update to the tested flight runtime."""
             sends.append(str(message))
             bridge.telemetry["state"] = "motor_ramping"
             return SimpleNamespace(done=lambda: True, success=lambda: True, cancel=lambda: None)
@@ -56,8 +60,10 @@ class PresetSDKTests(unittest.TestCase):
         bridge.drone = bridge.armed_drone = aircraft
         class Driver:
             def request_land(self):
+                """Record a nonblocking fake landing request for cancellation assertions."""
                 land_requests.append(now[0])
             def move(self, offset, speed, check):
+                """Record the requested relative move and simulate its result or injected failure."""
                 self_outer.assertIs(bridge.drone, aircraft)
                 moves.append(offset)
                 advance(.5)
@@ -65,6 +71,7 @@ class PresetSDKTests(unittest.TestCase):
                     bridge._request_landing(force=False)
                 check()
             def land(self):
+                """Record a fake landing attempt and return the fixture confirmation result."""
                 lands.append(now[0])
                 bridge.telemetry["state"] = "landed"
                 return True
@@ -72,10 +79,13 @@ class PresetSDKTests(unittest.TestCase):
         bridge.driver = Driver()
         class InlineWorker:
             def __init__(self, target):
+                """Capture worker arguments for the synchronous test-thread substitute."""
                 self.target = target
             def start(self):
+                """Run the fake worker synchronously so assertions can inspect its effects."""
                 self.target()
             def is_alive(self):
+                """Report completion of the synchronous worker substitute."""
                 return False
         bridge.trigger.arm(now[0])
         with patch("qr_preset_demo.time.monotonic", side_effect=lambda: now[0]), \
@@ -90,6 +100,7 @@ class PresetSDKTests(unittest.TestCase):
         return bridge, sends, moves, land_requests, lands
 
     def test_qr_triggers_takeoff_circle_hover_timeout_and_single_landing(self):
+        """Verify qr triggers takeoff circle hover timeout and single landing."""
         bridge, sends, moves, requests, lands = self.fly()
         self.assertEqual(len(sends), 1)
         self.assertIn("TakeOff", sends[0])
@@ -100,6 +111,7 @@ class PresetSDKTests(unittest.TestCase):
         self.assertFalse(bridge.running)
 
     def test_x_during_circle_or_hold_sends_land_and_no_remaining_movement(self):
+        """Verify x during circle or hold sends land and no remaining movement."""
         for stop, count in (("circle", 1), ("hover", 12)):
             bridge, sends, moves, requests, lands = self.fly(stop)
             self.assertEqual(len(moves), count)
@@ -108,6 +120,7 @@ class PresetSDKTests(unittest.TestCase):
             self.assertTrue(bridge.land_confirmed)
 
     def test_rehearsal_recognition_does_not_create_a_flight_worker(self):
+        """Verify rehearsal recognition does not create a flight worker."""
         bridge = self.make_bridge(execute=False)
         bridge.drone = Mock()
         bridge.trigger.arm(10)
@@ -121,6 +134,7 @@ class PresetSDKTests(unittest.TestCase):
         bridge.drone.assert_not_called()
 
     def test_connection_change_consumes_arming_without_takeoff(self):
+        """Verify connection change consumes arming without takeoff."""
         bridge = self.make_bridge()
         bridge.drone = Mock()
         bridge.armed_drone = Mock()
@@ -131,6 +145,7 @@ class PresetSDKTests(unittest.TestCase):
         bridge.drone.assert_not_called()
 
     def test_grounded_x_cancels_without_sending_a_motor_or_landing_command(self):
+        """Verify grounded x cancels without sending a motor or landing command."""
         bridge = self.make_bridge()
         bridge.connected = True
         bridge.drone, bridge.driver = Mock(), Mock()
@@ -142,6 +157,7 @@ class PresetSDKTests(unittest.TestCase):
         self.assertEqual(bridge.trigger.state, "cancelled")
 
     def test_preset_main_has_no_camera_or_preflight_file_requirement(self):
+        """Verify preset main has no camera or preflight file requirement."""
         for flags, live in (([], False), (["--execute"], True)):
             with patch.object(sys, "argv", ["qr_preset_demo.py", *flags]), \
                  patch.object(sys.stdin, "isatty", return_value=True), \
@@ -154,6 +170,7 @@ class PresetSDKTests(unittest.TestCase):
             factory.return_value.run.assert_called_once()
 
     def test_unbounded_hover_is_rejected_before_constructing_a_runtime(self):
+        """Verify unbounded hover is rejected before constructing a runtime."""
         with patch.object(sys, "argv", ["qr_preset_demo.py", "--hold-seconds", "999"]), \
              patch.object(sys.stdin, "isatty", return_value=True), \
              patch.object(qr_preset_demo, "QRPresetDemo") as factory, \

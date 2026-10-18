@@ -44,6 +44,7 @@ $destination = 'pet@' + $PiAddress
 $url = 'http://127.0.0.1:8787/'
 $startupScriptPath = $PSCommandPath
 
+# Read authenticated health only from a compatible local backend, or return no status.
 function Get-BackendStatus {
     try {
         $session = Invoke-RestMethod ($url + 'api/session') -TimeoutSec 4
@@ -52,6 +53,7 @@ function Get-BackendStatus {
     } catch { return $null }
 }
 
+# Probe the Pi's loopback forward without changing the receiver or network configuration.
 function Test-PiTunnel {
     try {
         $probe = & $sshClient @sshBase -T $destination 'curl -fsS --connect-timeout 2 --max-time 3 -o /dev/null http://127.0.0.1:8788/api/session && printf ready' 2>$null
@@ -82,6 +84,7 @@ if ($Mode -eq 'Backend') {
 
 $startObservation = 'sudo -n /usr/local/sbin/emberwatch-maintenance set-clock __EMBERWATCH_UTC_EPOCH__ >/dev/null || exit 1; if test x$(nmcli -g GENERAL.CON-UUID device show wlan0) != x64e43de0-e0ff-4ee0-a9cb-5d5cd824d732; then sudo -n /usr/local/sbin/emberwatch-maintenance wifi-profile 64e43de0-e0ff-4ee0-a9cb-5d5cd824d732 || exit 1; fi; systemctl --user reset-failed emberwatch-bridge.service; systemctl --user start emberwatch-bridge.service || exit 1; systemctl --user is-active emberwatch-bridge.service; exec bash -l'
 
+# Build observation startup with a fresh laptop clock and an optional interactive shell.
 function Get-ObservationCommand([bool]$Interactive) {
     # A Pi 4 can lose wall-clock time while powered off; it has no Internet
     # on aircraft Wi-Fi. Fresh evidence requires the laptop and Pi clocks
@@ -103,6 +106,7 @@ if ($Mode -eq 'Pi') {
 
 # These are visible interactive terminals: the user needs them to monitor
 # the running services, keep the tunnel open and stop the setup later.
+# Open the operator-visible backend or tunnel terminal using this launcher's selected paths.
 function Open-StartupWindow([string]$ChildMode) {
     $windowsShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $arguments = @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File',

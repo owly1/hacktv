@@ -17,6 +17,7 @@ from calibration_web import CaptureSession, handler_for
 
 
 def board(columns=10, rows=7):
+    """Create a synthetic checkerboard fixture without accessing a camera."""
     image=np.full((600,800,3),230,np.uint8)
     for row in range(rows):
         for col in range(columns):
@@ -26,12 +27,14 @@ def board(columns=10, rows=7):
 
 class CaptureTests(unittest.TestCase):
     def test_square_counts_convert_to_inner_corners_and_support_chessboards(self):
+        """Verify square counts convert to inner corners and support chessboards."""
         self.assertEqual(board_pattern(10,7),(9,6))
         self.assertEqual(board_pattern(8,8),(7,7))
         self.assertEqual(len(board_corners(board(8,8),(7,7))),49)
         with self.assertRaises(ValueError): board_pattern(0,7)
 
     def test_tilted_unevenly_lit_board_is_detected(self):
+        """Verify tilted unevenly lit board is detected."""
         image=board()
         transform=cv2.getPerspectiveTransform(np.float32([[100,70],[600,70],[600,420],[100,420]]),
             np.float32([[140,110],[650,65],[590,460],[95,390]]))
@@ -41,12 +44,14 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(len(board_corners(image)),54)
 
     def test_low_contrast_board_previously_rejected_by_original_detector(self):
+        """Verify low contrast board previously rejected by original detector."""
         image=cv2.warpAffine(board(),cv2.getRotationMatrix2D((400,300),20,.85),
                             (800,600),borderValue=(230,230,230))
         image=np.uint8(image*.06+94)
         self.assertEqual(len(board_corners(image)),54)
 
     def test_nondefault_board_fit_uses_saved_inner_corner_dimensions(self):
+        """Verify nondefault board fit uses saved inner corner dimensions."""
         k=np.array([[920.,0,640],[0,910.,360],[0,0,1]])
         objects=np.zeros((49,3),np.float32)
         objects[:,:2]=np.mgrid[0:7,0:7].T.reshape(-1,2)*.02
@@ -60,10 +65,12 @@ class CaptureTests(unittest.TestCase):
         self.assertLess(rms,.01)
 
     def test_classic_detector_is_used_when_sector_detector_misses(self):
+        """Verify classic detector is used when sector detector misses."""
         with patch('calibrate_camera.cv2.findChessboardCornersSB',return_value=(False,None)):
             self.assertEqual(len(board_corners(board())),54)
 
     def test_undetected_frame_is_saved_but_not_counted_as_detected(self):
+        """Verify undetected frame is saved but not counted as detected."""
         with tempfile.TemporaryDirectory() as d:
             s=CaptureSession(Path(d),10,7,lambda:(np.zeros((600,800,3),np.uint8),'1'))
             result=s.capture(10,7)
@@ -74,6 +81,7 @@ class CaptureTests(unittest.TestCase):
             self.assertTrue((Path(d)/'view-01.png').exists())
 
     def test_append_fifty_to_twenty_preserves_every_original_and_resume_target(self):
+        """Verify append fifty to twenty preserves every original and resume target."""
         with tempfile.TemporaryDirectory() as d, patch('calibration_web.board_corners',return_value=None):
             root=Path(d);stamps=iter(range(100))
             camera=lambda:(np.zeros((20,30,3),np.uint8),str(next(stamps)))
@@ -90,6 +98,7 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(CaptureSession(root,10,7,camera,resume=True).status()['target'],70)
 
     def test_detector_error_still_keeps_saved_photo(self):
+        """Verify detector error still keeps saved photo."""
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);s=CaptureSession(root,10,7,lambda:(board(),'1'))
             with patch('calibration_web.board_corners',side_effect=cv2.error('detector failed')):
@@ -98,6 +107,7 @@ class CaptureTests(unittest.TestCase):
             self.assertTrue((root/'view-01.png').exists())
 
     def test_acceptance_saves_corners_locks_shape_and_preserves_fit_dimensions(self):
+        """Verify acceptance saves corners locks shape and preserves fit dimensions."""
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);s=CaptureSession(root,8,8,lambda:(board(8,8),'1'))
             self.assertEqual(s.capture(8,8)['count'],1)
@@ -109,6 +119,7 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'already contains'):CaptureSession(root,8,8,s.camera)
 
     def test_changed_resolution_does_not_mix_views(self):
+        """Verify changed resolution does not mix views."""
         with tempfile.TemporaryDirectory() as d:
             s=CaptureSession(Path(d),10,7,lambda:(board(),'1'));s.capture(10,7)
             s.camera=lambda:(np.zeros((720,1280,3),np.uint8),'2')
@@ -116,6 +127,7 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(s.count,1)
 
     def test_resume_preserves_photos_and_uses_saved_board_dimensions(self):
+        """Verify resume preserves photos and uses saved board dimensions."""
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);s=CaptureSession(root,8,8,lambda:(board(8,8),'1'));s.capture(8,8)
             original=(root/'view-01.png').read_bytes()
@@ -128,6 +140,7 @@ class CaptureTests(unittest.TestCase):
                 CaptureSession(root,10,7,s.camera,resume=True)
 
     def test_new_set_keeps_old_photos_and_resets_coverage(self):
+        """Verify new set keeps old photos and resets coverage."""
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)/'session';s=CaptureSession(root,10,7,lambda:(board(),'1'))
             s.capture(10,7)
@@ -144,11 +157,13 @@ class CaptureTests(unittest.TestCase):
             self.assertTrue((s.root/'view-01.png').exists())
 
     def test_video_proxy_streams_original_bytes_without_camera_decoding(self):
+        """Verify video proxy streams original bytes without camera decoding."""
         payload=b'--frame\r\nContent-Type: image/jpeg\r\n\r\nfirst\r\n--frame\r\nsecond\r\n'
         with tempfile.TemporaryDirectory() as d:
-            def camera(): raise AssertionError('Video must not fetch/decode snapshots')
+            def camera(): """Return the synthetic camera frame used by the capture test."""; raise AssertionError('Video must not fetch/decode snapshots')
             s=CaptureSession(Path(d),10,7,camera)
             def stream():
+                """Yield original MJPEG bytes to test transparent streaming without decoding."""
                 upstream=io.BytesIO(payload)
                 upstream.headers={'Content-Type':'multipart/x-mixed-replace; boundary=frame'}
                 return upstream
@@ -167,6 +182,7 @@ class CaptureTests(unittest.TestCase):
             finally:conn.close();server.shutdown();server.server_close();thread.join()
 
     def test_browser_capture_requires_same_origin_and_returns_feedback(self):
+        """Verify browser capture requires same origin and returns feedback."""
         with tempfile.TemporaryDirectory() as d:
             s=CaptureSession(Path(d),10,7,lambda:(board(),'1'))
             server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(s))

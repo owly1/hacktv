@@ -172,6 +172,7 @@ class Publisher:
     """
 
     def __init__(self, out_dir, backend=None, token=None):
+        """Initialize local evidence, per-thread HTTP state and the persistent person outbox."""
         self.out_dir = out_dir
         self.token = token
         self.url = urllib.parse.urlsplit(backend) if backend else None
@@ -194,12 +195,14 @@ class Publisher:
                 print(f"[*] {len(self.outbox)} stored person observations waiting to be delivered")
 
     def start_recording(self):
+        """Start a local flight recorder without coupling disk writes to flight control."""
         if self.recorder is None:
             self.recorder = FlightRecorder(self.out_dir)
             threading.Thread(target=self._upload_frames, daemon=True, name='frame-upload').start()
             print(f'[*] Flight video and diagnostics: {self.recorder.path}', flush=True)
 
     def _upload_frames(self):
+        """Upload queued camera frames on a worker so slow HTTP cannot block decoding."""
         while not self.closing.is_set():
             try:
                 jpeg, captured_at, overlay = self.frame_uploads.get(timeout=.2)
@@ -208,20 +211,24 @@ class Publisher:
             self._post_frame(jpeg, captured_at, overlay)
 
     def _post_frame(self, jpeg, captured_at, overlay):
+        """Send one JPEG with its capture time and detection overlay."""
         self._post("/api/ingest/frame", jpeg, "image/jpeg",
                    {"X-Captured-At": utc_iso(captured_at), "X-Detections": json.dumps(overlay)})
 
     def diagnostic(self, kind, data):
+        """Append SDK/control diagnostics to the active local recording."""
         if self.recorder is not None:
             self.recorder.event(kind, data)
 
     def close(self):
+        """Stop background publishing and finish the local recording."""
         self.closing.set()
         if self.recorder is not None:
             self.recorder.close()
 
     # -- files
     def _write_atomic(self, name, data):
+        """Replace one evidence file via a temporary file in the output directory."""
         path = os.path.join(self.out_dir, name)
         tmp = path + ".tmp"
         with open(tmp, "wb") as f:
@@ -229,11 +236,13 @@ class Publisher:
         os.replace(tmp, path)  # readers never see a half-written file
 
     def _append(self, name, obj):
+        """Append a JSON record to the named local evidence log."""
         with open(os.path.join(self.out_dir, name), "a", encoding="utf-8") as f:
             f.write(json.dumps(obj) + "\n")
 
     # -- http
     def _conn(self):
+        """Return this thread's reusable HTTP connection, creating it when needed."""
         conn = getattr(self.local, "conn", None)
         if conn is None:
             cls = http.client.HTTPSConnection if self.url.scheme == "https" else http.client.HTTPConnection
@@ -241,6 +250,7 @@ class Publisher:
         return conn
 
     def _post(self, path, body, content_type="application/json", headers=None):
+        """POST a payload with bounded retries; retain response status for outbox decisions."""
         if not self.url:
             return None
         hdrs = {"Authorization": f"Bearer {self.token}", "Content-Type": content_type, **(headers or {})}
@@ -270,12 +280,14 @@ class Publisher:
         return None
 
     def _log_error(self, msg):
+        """Report a changed publishing error without flooding the terminal."""
         if msg != self.last_error:  # don't spam the same failure every second
             print(f"[!] Backend ingest failed - {msg}")
             self.last_error = msg
 
     # -- payloads
     def telemetry(self, sample):
+        """Persist and publish telemetry, flushing queued person observations when the link returns."""
         self.diagnostic('telemetry', sample)
         line = json.dumps(sample)
         self._write_atomic("telemetry.json", (line + "\n").encode())
@@ -285,6 +297,7 @@ class Publisher:
 
     # -- person search: small alert first, crop after, store-and-forward on failure
     def person(self, obs, crop_jpeg=None):
+        """Record a person observation, send its alert/crop, and queue failed deliveries on disk."""
         self._append("people.jsonl", obs)
         item = {"obs": obs, "crop_b64": base64.b64encode(crop_jpeg).decode() if crop_jpeg else None}
         if self.url and not self._send_person(item):
@@ -308,6 +321,7 @@ class Publisher:
         return True
 
     def flush_outbox(self):
+        """Retry queued person observations oldest first and persist the remaining queue."""
         with self.outbox_lock:
             sent = 0
             while self.outbox and self._send_person(self.outbox[0]):
@@ -318,10 +332,12 @@ class Publisher:
             print(f"[+] Delivered {sent} stored person observations (the backend marks them delayed)")
 
     def _save_outbox(self):
+        """Atomically save the bounded person retry queue."""
         self._write_atomic("person_outbox.jsonl",
                            "".join(json.dumps(i) + "\n" for i in self.outbox).encode())
 
     def frame(self, jpeg, captured_at, overlay):
+        """Record a camera frame and queue its newest upload without blocking flight supervision."""
         if self.recorder is not None:
             self.recorder.frame(jpeg, captured_at)
             # Keep recording at camera speed even if HTTP ingest stalls. A
@@ -340,10 +356,12 @@ class Publisher:
                 {"captured_at": utc_iso(captured_at), "bytes": len(jpeg), "file": "snapshot.jpg"}) + "\n").encode())
 
     def detection(self, payload):
+        """Log and submit a fire sighting, returning the backend acknowledgement."""
         self._append("detections.jsonl", {k: v for k, v in payload.items() if k != "frame_jpeg_base64"})
         return self._post("/api/ingest/detection", json.dumps(payload).encode())
 
     def flight(self, phase, message="", step=None, steps=None):
+        """Publish a timestamped flight-phase event to local evidence and the dashboard."""
         print(f"[flight] {phase}{f' {step}/{steps}' if step else ''} {message}")
         event = {"at": utc_iso(time.time()), "phase": phase, "message": message, "step": step, "steps": steps}
         self._append('flight.jsonl', event)
@@ -361,6 +379,7 @@ class PersonDetector:
     """
 
     def __init__(self, model_path, conf):
+        """Load the configured YOLO person class; disable detection if loading fails."""
         self.conf = conf
         self.model = None
         self.cls = None
@@ -378,6 +397,7 @@ class PersonDetector:
             print(f"[!] Person model unavailable ({e!r}); person search off")
 
     def detect(self, bgr):
+        """Return normalized person boxes and raw model scores for one BGR frame."""
         if self.model is None:
             return []
         result = self.model(bgr, imgsz=640, conf=self.conf, classes=[self.cls], verbose=False)[0]
@@ -386,6 +406,7 @@ class PersonDetector:
 
 
 def iou(a, b):
+    """Return intersection-over-union for two normalized rectangles."""
     ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
     inter = ix * iy
@@ -397,6 +418,7 @@ def iou(a, b):
 
 class AnafiBridge:
     def __init__(self, args, publisher, detector, person_detector=None):
+        """Initialize the aircraft link, frame queues, telemetry and optional detection/flight state."""
         self.args = args
         self.person_detector = person_detector
         self.person_tracks = []  # dict(id, bbox, hits, last_seen, last_post)
@@ -443,6 +465,7 @@ class AnafiBridge:
             return None
 
     def _gimbal_pitch(self):
+        """Read the camera's current absolute pitch in degrees when available."""
         s = self._state(gimbal.attitude)
         if s is None:
             return None
@@ -525,6 +548,7 @@ class AnafiBridge:
         self.telemetry = t
 
     def _overlay_lines(self):
+        """Build status and measurement lines for the optional local video window."""
         lines = [f"FPS: {self.fps:.1f}"]
         t = self.telemetry
         if not t:
@@ -554,6 +578,7 @@ class AnafiBridge:
         return lines
 
     def _draw_overlay(self, img):
+        """Draw detection boxes and status text on the displayed BGR frame."""
         h, w = img.shape[:2]
         if time.time() - self.overlay_time < OVERLAY_TTL_S:
             for d in self.overlay:
@@ -623,6 +648,7 @@ class AnafiBridge:
     # ---------- camera auto-tilt ----------
 
     def _aim_gimbal(self, pitch):
+        """Adjust camera pitch toward a detected fire when automatic aiming is enabled."""
         if self.drone is None:
             return
         try:
@@ -652,6 +678,7 @@ class AnafiBridge:
     # ---------- detection loop (own thread) ----------
 
     def _detect_loop(self):
+        """Process the latest image at the bounded detector rate while the bridge runs."""
         period = 1.0 / DETECT_HZ
         while self.running:
             started = time.time()
@@ -664,6 +691,7 @@ class AnafiBridge:
             time.sleep(max(0.0, period - (time.time() - started)))
 
     def _detect_step(self, img, captured):
+        """Run person/fire detection, confirm an episode and publish current fire evidence."""
         if self.person_detector is not None:
             self.person_pass += 1
             if self.person_pass % PERSON_EVERY_N == 0:
@@ -734,6 +762,7 @@ class AnafiBridge:
                     track["last_post"] = now
 
     def _report_person(self, track, det, img, captured):
+        """Build a posed live person observation and a small JPEG crop; reject incomplete poses."""
         t = self.telemetry or {}
         extra = t.get("extra") or {}
         pitch = extra.get("gimbal_pitch_deg")
@@ -773,6 +802,7 @@ class AnafiBridge:
     # ---------- video publishing (own thread) ----------
 
     def _video_loop(self):
+        """Encode recent camera frames for recording and asynchronous dashboard delivery."""
         period = 1.0 / self.args.video_fps
         last_sent = None
         while self.running:
@@ -795,6 +825,7 @@ class AnafiBridge:
             time.sleep(max(0.0, period - (time.time() - started)))
 
     def _telemetry_loop(self):
+        """Periodically sample and publish state while the aircraft is connected."""
         while self.running:
             if self.connected and self.telemetry:
                 try:
@@ -806,6 +837,7 @@ class AnafiBridge:
     # ---------- demo flight (own thread) ----------
 
     def _flight_ok(self, expectation, what):
+        """Wait for a legacy demo SDK expectation and raise if its command did not succeed."""
         if not expectation.wait().success():
             raise RuntimeError(f"{what} did not complete")
 
@@ -820,6 +852,7 @@ class AnafiBridge:
         self.odo_e += dx * math.sin(heading)
 
     def _abort_listener(self):
+        """Listen for the terminal landing command during the older demo flight."""
         try:
             for line in sys.stdin:
                 if line.strip().lower() in ("x", "l", "land", "abort"):
@@ -831,6 +864,7 @@ class AnafiBridge:
             self.abort_flight.set()
 
     def _demo_flight(self):
+        """Run the typed-confirmed takeoff/circle demo and request landing on completion or failure."""
         climb = min(self.args.climb, MAX_CLIMB_M)
         radius = min(self.args.radius, MAX_RADIUS_M)
         while self.running and not (self.connected and self.telemetry):
@@ -887,6 +921,7 @@ class AnafiBridge:
             self._land()
 
     def _land(self):
+        """Send the older bridge's controlled-landing request when a drone object exists."""
         if self.drone is None:
             return
         self.flight_phase = "landing"
@@ -901,6 +936,7 @@ class AnafiBridge:
     # ---------- Olympe streaming callbacks (run in Olympe's thread) ----------
 
     def _yuv_frame_cb(self, yuv_frame):
+        """Retain a decoded SDK frame for the bounded processing queue."""
         yuv_frame.ref()
         if self.frame_queue.full():
             try:
@@ -913,10 +949,12 @@ class AnafiBridge:
             yuv_frame.unref()
 
     def _flush_cb(self, stream):
+        """Release queued SDK frames before the stream flush completes."""
         self._drain_queue()
         return True
 
     def _drain_queue(self):
+        """Unreference every retained frame still waiting in the queue."""
         while True:
             try:
                 self.frame_queue.get_nowait().unref()
@@ -926,9 +964,11 @@ class AnafiBridge:
     # ---------- connection management (background thread) ----------
 
     def _set_status(self, text, hint=""):
+        """Update connection text and print transitions for the operator."""
         self.status = (text, hint)
 
     def _connect(self):
+        """Create the selected SDK connection and initialize camera/state reception."""
         target = "Skycontroller 3" if self.controller_kind == "skycontroller3" else "drone"
         hint = ("Check the controller USB data link and aircraft pairing" if self.controller_kind == "skycontroller3"
                 else "Make sure this PC is on the drone's Wi-Fi (ANAFI-xxxxxxx)")
@@ -994,6 +1034,7 @@ class AnafiBridge:
             print(f"[!] FC wind capability probe failed (estimate fields stay off): {e!r}")
 
     def _aircraft_link(self):
+        """Return the aircraft endpoint used by a direct or controller connection."""
         if self.drone is None or not self.drone.connected:
             return False
         if self.controller_kind == "skycontroller3":
@@ -1001,10 +1042,12 @@ class AnafiBridge:
         return True
 
     def _start_video(self, drone):
+        """Register raw-frame callbacks and start the compatible classic-ANAFI stream."""
         # Olympe 8's play() asks for a stream named "Front camera", which the classic
         # ANAFI / ANAFI Extended doesn't expose. Ask for the drone's default stream instead
         # (plus a specific one by name if --stream was given).
         def raw_callbacks():
+            """Construct SDK raw-frame callbacks for this bridge's frame queue."""
             cb = Callbacks(media_type=(video_frame_type.raw.value, None))
             cb.video_frame = self._yuv_frame_cb
             cb.flush = self._flush_cb
@@ -1016,6 +1059,7 @@ class AnafiBridge:
         return drone.streaming.play_multiple_stream(streams_list=streams)
 
     def _disconnect(self):
+        """Stop streaming, release retained frames and close the SDK connection."""
         with self.lock:
             drone, self.drone = self.drone, None
             self.connected = False
@@ -1033,6 +1077,7 @@ class AnafiBridge:
         self._drain_queue()
 
     def _connection_loop(self):
+        """Maintain reception across connection failures while the bridge remains active."""
         while self.running:
             try:
                 self._connection_step()
@@ -1046,6 +1091,7 @@ class AnafiBridge:
         self._disconnect()
 
     def _connection_step(self):
+        """Perform one connected-session iteration and detect a stalled camera/link."""
         if not self.connected:
             if not self._connect():
                 time.sleep(2)
@@ -1067,6 +1113,7 @@ class AnafiBridge:
     # ---------- display (main thread — required by OpenCV/GTK) ----------
 
     def _to_bgr(self, yuv_frame):
+        """Convert an SDK I420/NV12 decoded frame into an OpenCV BGR image."""
         fmt = yuv_frame.format()
         flag = {
             olympe.VDEF_I420: cv2.COLOR_YUV2BGR_I420,
@@ -1080,6 +1127,7 @@ class AnafiBridge:
         return cv2.cvtColor(yuv_frame.as_ndarray(), flag)
 
     def _waiting_screen(self):
+        """Draw the disconnected/waiting state in the optional local window."""
         text, hint = self.status
         img = np.zeros((480, 854, 3), dtype=np.uint8)
         cv2.putText(img, text, (40, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
@@ -1089,11 +1137,13 @@ class AnafiBridge:
         return img
 
     def _request_landing(self):
+        """Set the abort flag and request controlled landing from the active aircraft."""
         if self.flight_phase not in (None, "landed", "landing"):
             print("[!] Landing requested from the video window")
             self.abort_flight.set()
 
     def run(self):
+        """Start workers and receive/display frames, then release resources during shutdown."""
         workers = [self._connection_loop, self._telemetry_loop, self._video_loop, self._detect_loop]
         if self.args.demo_flight:
             workers.append(self._demo_flight)
@@ -1154,6 +1204,7 @@ class AnafiBridge:
 
 
 def video_width_arg(value):
+    """Accept zero for native video or validate a positive output-width limit."""
     width = int(value)
     if width != 0 and not 320 <= width <= 3840:
         raise argparse.ArgumentTypeError("Video width must be 0 (native) or 320-3840 pixels")
@@ -1161,6 +1212,7 @@ def video_width_arg(value):
 
 
 def argument_parser():
+    """Define shared bridge, receiver, detector and legacy flight CLI options."""
     parser = argparse.ArgumentParser(description="Emberwatch ANAFI bridge: video, telemetry, fire detection")
     parser.add_argument("--controller", choices=("direct", "skycontroller3"), default="direct",
                         help="SDK connection class; skycontroller3 requires a controller USB network link")
@@ -1209,6 +1261,7 @@ def argument_parser():
 
 
 def main():
+    """Parse bridge options, construct publishers/detectors and run the aircraft receiver."""
     args = argument_parser().parse_args()
 
     token = os.environ.get("INGEST_TOKEN")

@@ -20,10 +20,12 @@ from datetime import datetime, timezone
 
 
 def utc_now():
+    """Return an ISO UTC timestamp for a newly received observation."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def post_json(base, token, path, value):
+    """POST authenticated JSON evidence to the selected backend endpoint."""
     req = urllib.request.Request(base + path, data=json.dumps(value).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + token}, method="POST")
     with urllib.request.urlopen(req, timeout=5) as response:
@@ -31,6 +33,7 @@ def post_json(base, token, path, value):
 
 
 def post_jpeg(base, token, jpeg, captured_at):
+    """POST one authenticated JPEG with its capture timestamp."""
     req = urllib.request.Request(base + "/api/ingest/frame", data=jpeg,
         headers={"Content-Type": "image/jpeg", "Authorization": "Bearer " + token,
                  "X-Captured-At": captured_at}, method="POST")
@@ -39,12 +42,14 @@ def post_jpeg(base, token, jpeg, captured_at):
 
 
 def numeric(value, lower, upper):
+    """Convert an available numeric SDK value while preserving unknown values as null."""
     if isinstance(value, (int, float)) and math.isfinite(value) and lower <= value <= upper:
         return value
     return None
 
 
 def camera_fps(value):
+    """Validate the requested capture rate, with zero meaning unthrottled processing."""
     rate = float(value)
     if not math.isfinite(rate) or (rate != 0 and not .5 <= rate <= 60):
         raise argparse.ArgumentTypeError("camera FPS must be 0 (all available frames) or between 0.5 and 60")
@@ -52,6 +57,7 @@ def camera_fps(value):
 
 
 def camera_width(value):
+    """Validate native-width zero or a supported positive resize width."""
     width = int(value)
     if width != 0 and not 320 <= width <= 1920:
         raise argparse.ArgumentTypeError("camera width must be 0 (native) or 320-1920 pixels")
@@ -64,6 +70,7 @@ def session_stalled(last_frame, started, now, timeout=15):
 
 
 def prepare_image(frame, cv2, sdk, width=640):
+    """Convert the raw SDK frame to BGR and optionally resize without changing aspect ratio."""
     image = frame.as_ndarray()
     fmt = frame.format()
     if fmt == sdk.VDEF_I420:
@@ -79,6 +86,7 @@ def prepare_image(frame, cv2, sdk, width=640):
 
 
 def main():
+    """Run the observation-only SDK session with bounded decoding, publishing and cleanup."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ip", default="192.168.42.1")
     parser.add_argument("--controller", choices=["direct", "skycontroller3"], default="direct")
@@ -118,6 +126,7 @@ def main():
     progress = time.monotonic()
 
     def watchdog():
+        """Exit a stalled observation process so its supervisor can reconnect safely."""
         while not stop.wait(1):
             if time.monotonic() - progress > 90:
                 print("Observation SDK stalled; restarting reception.", flush=True)
@@ -126,12 +135,14 @@ def main():
     threading.Thread(target=watchdog, daemon=True).start()
 
     def read_state(message):
+        """Read SDK state with an empty mapping when a measurement is unavailable."""
         try:
             return controller.get_state(message)
         except Exception:
             return {}
 
     def raw_frame(frame):
+        """Retain a fresh SDK frame unless the single-frame queue is already full."""
         nonlocal last_frame
         if stop.is_set():
             return
@@ -143,6 +154,7 @@ def main():
             frame.unref()
 
     def release_queued_frames(_stream=None):
+        """Unreference queued SDK frames so stream flushing cannot wait on them."""
         # Pdraw flush/drain waits for retained frames to be released.
         while True:
             try:
@@ -152,6 +164,7 @@ def main():
             frame.unref()
 
     def snapshots():
+        """Encode/upload retained frames at the requested rate and always release each reference."""
         last_attempt = 0
         interval = 1 / args.camera_fps if args.camera_fps else 0
         while not stop.is_set():

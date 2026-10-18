@@ -68,30 +68,40 @@ const CLOSE_OUTCOMES = new Set(['found', 'not-a-person', 'duplicate', 'handed-of
 
 // ------------------------------------------------------------------ geometry
 
+/** Normalize an angle in degrees to the 0–360 range. */
 const wrap360 = (d) => ((d % 360) + 360) % 360;
+/** Return the shortest unsigned angular difference in degrees. */
 const angDiff = (a, b) => { const d = Math.abs(wrap360(a) - wrap360(b)); return d > 180 ? 360 - d : d; };
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+/** Convert a bearing into its nearest eight-point compass label. */
 export const compass = (deg) => COMPASS[Math.round(wrap360(deg) / 45) % 8];
 
+/** Convert latitude/longitude to east/north metres about the local reference. */
 export function toLocal(ref, lat, lon) {
   return [(lon - ref.lon) * M_PER_DEG * Math.cos(ref.lat * RAD), (lat - ref.lat) * M_PER_DEG];
 }
+/** Convert local east/north metres back to latitude/longitude. */
 export function toLatLon(ref, e, n) {
   return [ref.lat + n / M_PER_DEG, ref.lon + e / (M_PER_DEG * Math.cos(ref.lat * RAD))];
 }
 
+/** Return the determinant of a flattened 2×2 covariance matrix. */
 const det2 = (m) => m[0] * m[3] - m[1] * m[2];
+/** Add two flattened 2×2 matrices element by element. */
 const add2 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]];
+/** Invert a nonsingular 2×2 matrix, or return null for a degenerate estimate. */
 function inv2(m) {
   const d = det2(m);
   if (!(Math.abs(d) > 1e-12)) return null;
   return [m[3] / d, -m[1] / d, -m[2] / d, m[0] / d];
 }
+/** Measure squared Mahalanobis distance using the supplied 2×2 covariance. */
 function mahal2(dx, dy, cov) {
   const i = inv2(cov);
   if (!i) return Infinity;
   return dx * (i[0] * dx + i[1] * dy) + dy * (i[2] * dx + i[3] * dy);
 }
+/** Add isotropic uncertainty to a covariance's diagonal. */
 const iso = (cov, s) => [cov[0] + s, cov[1], cov[2], cov[3] + s];
 
 /** 95 % ellipse of a 2x2 ENU covariance [ee, en, ne, nn]. */
@@ -136,6 +146,7 @@ export function projectToImage({ alt, heading, pitch, hfov, vfov }, de, dn, terr
   return { u, v, range, az, dep, slant: Math.hypot(range, alt - terrain) };
 }
 
+/** Choose pose/pixel/terrain errors for GPS or indoor odometry observations. */
 function poseSigmas(obs, errors) {
   const indoor = obs.drone.position_source && obs.drone.position_source !== 'gps';
   return {
@@ -185,6 +196,7 @@ const SENSORS = new Set(['thermal', 'visible']);
 const FORBIDDEN_PROVENANCE = new Set(['sim', 'simulated', 'demo', 'test', 'mock', 'fake', 'synthetic']);
 export const MAX_CROP_BYTES = 300 * 1024;
 
+/** Validate an optional or required finite observation number against its bounds. */
 function num(value, name, { min = -Infinity, max = Infinity, required = false } = {}) {
   if (value === undefined || value === null) {
     if (required) throw new ApiError(400, `${name} is required`);
@@ -233,6 +245,7 @@ export function validatePersonObservation(body, nowMs) {
     if (crop.length > MAX_CROP_BYTES) throw new ApiError(413, 'crop exceeds 300 KB');
     if (crop.length < 3 || crop[0] !== 0xff || crop[1] !== 0xd8) throw new ApiError(400, 'crop must be a JPEG');
   }
+  /** Accept only short identifiers that can safely label stored observation evidence. */
   const idOk = (v) => typeof v === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(v);
   if (body.obs_id != null && !idOk(body.obs_id)) throw new ApiError(400, 'obs_id must be 1-64 characters [A-Za-z0-9._:-]');
   if (body.track_id != null && !idOk(body.track_id)) throw new ApiError(400, 'track_id must be 1-64 characters [A-Za-z0-9._:-]');
@@ -257,6 +270,7 @@ export function validatePersonObservation(body, nowMs) {
 
 // ---------------------------------------------------------------- the search
 
+/** Combine positional observations by inverse covariance while retaining a nonzero uncertainty floor. */
 function fuse(observations) {
   let info = [0, 0, 0, 0], ie = 0, inn = 0;
   for (const o of observations) {
@@ -280,6 +294,7 @@ function viewClusters(azimuths) {
   return { centres, span };
 }
 
+/** Test a local ground point against its projected camera-footprint polygon. */
 function pointInPolygon(x, y, poly) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -288,6 +303,7 @@ function pointInPolygon(x, y, poly) {
   }
   return inside;
 }
+/** Count the distinct viewing-direction bits in a coverage mask. */
 const popcount = (x) => { let c = 0; while (x) { c += x & 1; x >>>= 1; } return c; };
 
 export class PersonSearch {
@@ -315,6 +331,7 @@ export class PersonSearch {
     this.lastPose = null;
   }
 
+  /** Fix the local coordinate origin on the first positioned observation. */
   _ensureRef(lat, lon) { if (!this.ref) this.ref = { lat, lon }; }
 
   /** Add one person detection. Returns { lead, observation, new_lead, duplicate }. */
@@ -363,6 +380,7 @@ export class PersonSearch {
     return { lead: target, observation: record, new_lead: isNew, duplicate: false };
   }
 
+  /** Mark an already accepted observation as having an available evidence crop. */
   attachCrop(obsId) {
     const lead = this.leads.get(this.obsIndex.get(obsId));
     const o = lead?.observations.find((x) => x.id === obsId);
@@ -371,8 +389,10 @@ export class PersonSearch {
     return true;
   }
 
+  /** Return the capture time of a lead's newest observation, in milliseconds. */
   _lastSeenMs(lead) { return lead.observations.at(-1)?.at_ms ?? 0; }
 
+  /** Find an existing compatible lead using track identity and position uncertainty. */
   _associate(rec) {
     let best = null, bestD = CHI2_2D_99;
     for (const lead of this.leads.values()) {
@@ -389,6 +409,7 @@ export class PersonSearch {
     return best;
   }
 
+  /** Describe supported movement evidence without treating noise as motion. */
   _movement(lead) {
     const obs = lead.observations;
     const span = (obs.at(-1).at_ms - obs[0].at_ms) / 1000;
@@ -407,6 +428,7 @@ export class PersonSearch {
     return { status: 'stationary', span_s: Math.round(span), detail: `No movement larger than ${Math.round(bound)} m over ${fmtSpan(span)}` };
   }
 
+  /** Fuse a lead's recent observations into a ground location and uncertainty. */
   _estimate(lead) {
     const obs = lead.observations;
     if (obs.length === 0) return null;
@@ -460,8 +482,10 @@ export class PersonSearch {
     }
   }
 
+  /** Project camera corners onto local ground to estimate observable coverage. */
   _footprint(cam) {
     const maxRange = Math.min(MAX_RANGE_M, cam.alt * 8);
+    /** Intersect one image corner's camera ray with the modeled ground. */
     const corner = (u, v) => {
       const g = rayToGround({ ...cam, u, v });
       if (g && g.range <= maxRange) return [g.e, g.n];
@@ -474,6 +498,7 @@ export class PersonSearch {
     return [corner(0, 1), corner(1, 1), corner(1, 0), corner(0, 0)];
   }
 
+  /** Record a named responder's acknowledgement of an existing lead. */
   acknowledge(leadId, { by, note = '' }, atMs) {
     const lead = this.leads.get(leadId);
     if (!lead) throw new ApiError(404, 'no lead with that id');
@@ -482,6 +507,7 @@ export class PersonSearch {
     return lead;
   }
 
+  /** Close a lead with an explicit responder and permitted outcome. */
   close(leadId, { by, outcome, note = '' }, atMs) {
     const lead = this.leads.get(leadId);
     if (!lead) throw new ApiError(404, 'no lead with that id');
@@ -562,6 +588,7 @@ export class PersonSearch {
     };
   }
 
+  /** Build a lead's UI/API view with evidence, uncertainty, priority and next-look advice. */
   summarize(lead, nowMs, ctx = {}) {
     const obs = lead.observations;
     const fused = lead.fused;
@@ -658,6 +685,7 @@ export class PersonSearch {
     };
   }
 
+  /** Summarize observed cells and optional assigned-sector percentages. */
   coverage() {
     const cells = [];
     let well = 0, partial = 0;
@@ -689,6 +717,7 @@ export class PersonSearch {
     };
   }
 
+  /** Return all leads, counts and coverage at the supplied observation time/context. */
   snapshot(nowMs, ctx = {}) {
     const leads = [...this.leads.values()].filter((l) => l.fused).map((l) => this.summarize(l, nowMs, ctx))
       // Within a tier: whoever the fire reaches first, then nearest the fire, then most recent.
@@ -706,10 +735,12 @@ export class PersonSearch {
     };
   }
 
+  /** Serialize persistent search state without transient renderer objects. */
   toJSON() {
     return { v: 1, ref: this.ref, seq: this.seq, leads: [...this.leads.values()], cells: [...this.cells], cellsTruncated: this.cellsTruncated, lastPose: this.lastPose };
   }
 
+  /** Restore persisted search state using the current geometry configuration. */
   static fromJSON(data, opts) {
     const s = new PersonSearch(opts);
     if (!data || data.v !== 1) return s;
@@ -720,8 +751,11 @@ export class PersonSearch {
   }
 }
 
+/** Sort known fire-arrival times before locations outside the projected horizon. */
 const arrivalKey = (l) => l.fire_arrival?.minutes ?? 1e9;
+/** Convert a coverage fraction to a rounded percentage. */
 const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+/** Format a short evidence interval in seconds or minutes. */
 function fmtSpan(s) { return s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`; }
 
 /** Plain-language lines for the Gemini planner. Never claims a route or area is safe. */

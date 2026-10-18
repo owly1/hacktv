@@ -18,13 +18,18 @@ PAGE = r'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="w
 <section><h2>Live drone view</h2><p>Attach the sheet flat to a rigid board. Keep all squares visible; vary the board’s tilt, distance and position across the image.</p><p id="video-status" role="status">Connecting to continuous video…</p><img id="live" alt="Live view from the drone camera"></section>
 <section><h2>Last saved photo</h2><p>Coloured markers show detected corners. Photos without markers are saved too, for later review.</p><img id="attempt" alt="Last saved capture" hidden></section>
 <script>
+/** Find a capture-page element by its identifier. */
 const $=id=>document.getElementById(id); let busy=false;
+/** Reflect saved/detected counts, locked board settings and coverage guidance in the page. */
 function status(s){$('columns').value=s.columns;$('rows').value=s.rows;$('columns').disabled=$('rows').disabled=s.count>0;$('progress').textContent=`${s.count} / ${s.target} saved · corners found in ${s.detected}`;$('folder').textContent=`Saved locally: ${s.directory}`;$('capture').disabled=busy||s.count>=s.target;$('new-session').disabled=busy||s.count===0;$('coverage').textContent=s.coverage;if(s.message)$('result').textContent=s.message;}
 fetch('/status').then(r=>r.json()).then(status);
 let retry=null, wasFresh=null;
+/** Reopen the original MJPEG preview with a fresh URL after stream interruption. */
 function live(){clearTimeout(retry);$('live').src='/video?t='+Date.now();}
 $('live').onerror=()=>{clearTimeout(retry);retry=setTimeout(live,1000);};live();
+/** Poll backend video freshness/FPS and recover the preview when frames return. */
 async function videoStatus(){try{const r=await fetch('/video-status',{cache:'no-store'});if(!r.ok)throw Error();const s=await r.json();$('video-status').textContent=s.fresh?`Receiving ${s.fps.toFixed(1)} FPS · continuous video`:'Waiting for live drone video…';if(s.fresh&&wasFresh===false)live();wasFresh=!!s.fresh;}catch{$('video-status').textContent='Camera connection unavailable; retrying…';wasFresh=false;}finally{setTimeout(videoStatus,2000);}}videoStatus();
+/** Post a capture/new-set action and restore controls while displaying the actual result. */
 async function submit(path){let errorMessage=null;busy=true;$('capture').disabled=$('new-session').disabled=true;$('result').textContent=path==='/capture'?'Processing the photo… looking for checkerboard corners.':'Starting a separate photo folder; previous photos will be kept.';try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({columns:Number($('columns').value),rows:Number($('rows').value)})});const s=await r.json();if(!r.ok)throw Error(s.error);status(s);$('attempt').hidden=path!=='/capture';if(path==='/capture')$('attempt').src='/attempt.jpg?t='+Date.now();}catch(e){errorMessage=e.message;}finally{busy=false;try{const s=await(await fetch('/status')).json();status(s);}catch{errorMessage=errorMessage||'Capture server disconnected.';$('capture').disabled=false;}if(errorMessage)$('result').textContent=errorMessage;}}
 $('capture').onclick=()=>submit('/capture');$('new-session').onclick=()=>submit('/new-session');
 </script>'''
@@ -32,6 +37,7 @@ $('capture').onclick=()=>submit('/capture');$('new-session').onclick=()=>submit(
 
 class CaptureSession:
     def __init__(self, root, columns, rows, camera, resume=False, target=50):
+        """Create or restore a numbered photo set with consistent board dimensions and resolution."""
         board_pattern(columns, rows)
         if not isinstance(target,int) or not 15 <= target <= 200:
             raise ValueError('Photo target must be 15-200')
@@ -72,11 +78,13 @@ class CaptureSession:
         self.save_metadata()
 
     def save_metadata(self):
+        """Save board dimensions, target count and known image size for resuming capture."""
         value = {'columns':self.columns,'rows':self.rows,'target':self.target}
         if self.size: value['image_size'] = self.size
         (self.root/'session.json').write_text(json.dumps(value)+'\n')
 
     def status(self):
+        """Summarize saved/detected photos and board-position coverage for the browser."""
         if self.centers:
             xs, ys = zip(*self.centers)
             horizontal, vertical = (max(xs)-min(xs))*100, (max(ys)-min(ys))*100
@@ -92,6 +100,7 @@ class CaptureSession:
                     directory=str(self.root.resolve()), message=self.message, coverage=coverage)
 
     def new_session(self):
+        """Create a separate retake directory under a lock without deleting prior photos."""
         if not self.lock.acquire(blocking=False):
             raise ValueError('A photo is already being processed')
         try:
@@ -106,6 +115,7 @@ class CaptureSession:
             self.lock.release()
 
     def capture(self, columns, rows):
+        """Save one new native frame, detect its corners and update coverage under a lock."""
         if not self.lock.acquire(blocking=False):
             raise ValueError('A photo is already being processed')
         try:
@@ -153,11 +163,14 @@ class CaptureSession:
 
 
 def handler_for(session, stream=None, video_status=None):
+    """Bind a loopback-only HTTP handler to this capture session and camera stream."""
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
+            """Suppress routine HTTP access logging in the capture terminal."""
             pass
 
         def respond(self, code, data, kind='application/json'):
+            """Send the response body with its MIME type and cache policy."""
             if kind=='application/json': data=json.dumps(data).encode()
             self.send_response(code)
             self.send_header('Content-Type',kind)
@@ -169,6 +182,7 @@ def handler_for(session, stream=None, video_status=None):
             self.wfile.write(data)
 
         def local_request(self, write=False):
+            """Check that the request targets the intended local capture server."""
             host=self.headers.get('Host','')
             valid={f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}
             origin=self.headers.get('Origin')
@@ -176,6 +190,7 @@ def handler_for(session, stream=None, video_status=None):
                     and (not write or origin==f'http://{host}'))
 
         def do_GET(self):
+            """Serve the capture UI, state, previews or the original MJPEG stream."""
             if not self.local_request(): return self.respond(403,{'error':'Use the local capture page'})
             route=urlsplit(self.path).path
             try:
@@ -211,6 +226,7 @@ def handler_for(session, stream=None, video_status=None):
                 return self.respond(503,{'error':str(error) if isinstance(error,ValueError) else 'Camera unavailable; check the observation receiver'})
 
         def do_POST(self):
+            """Handle a local photo capture or a separate retake-session request."""
             if not self.local_request(write=True): return self.respond(403,{'error':'Capture must come from this local page'})
             if self.path not in ('/capture','/new-session'): return self.respond(404,{'error':'Not found'})
             try:
@@ -226,6 +242,7 @@ def handler_for(session, stream=None, video_status=None):
 
 
 def serve(args):
+    """Run the local browser capture server using the authenticated backend camera."""
     url=urlsplit(args.backend)
     if url.scheme!='http' or url.hostname not in ('localhost','127.0.0.1') or url.path not in ('','/'):
         raise ValueError('Use a local BOSCO backend URL')
@@ -234,8 +251,10 @@ def serve(args):
         token=json.load(response)['token']
     session=CaptureSession(args.directory,args.columns,args.rows,lambda:fetch_camera(base,token),resume=True,target=args.photos)
     def request(path):
+        """Build an authenticated request to the configured local backend."""
         return urlopen(Request(base+path,headers={'Authorization':'Bearer '+token}),timeout=5)
     def video_status():
+        """Read backend video freshness/rate for the browser's connection indicator."""
         with request('/api/status') as response:
             return json.load(response).get('video',{'fresh':False,'fps':0})
     server=ThreadingHTTPServer(('127.0.0.1',args.port),handler_for(session,lambda:request('/api/video'),video_status))

@@ -27,6 +27,7 @@ function fireArrivalAt(lat, lon) {
   if (!o || !modelledFire()) return undefined;
   return M.arrivalMinutes(o, [lat, lon], state.scenario, fireDetails());
 }
+/** Explain modeled arrival, outside-horizon or already-inside status without inventing certainty. */
 function arrivalText(min) {
   if (min === undefined) return '';
   if (min === 0) return 'Inside the projected fire area now';
@@ -55,12 +56,14 @@ function liveTrailClass(p) {
   trailCache.set(key, cls);
   return cls;
 }
+/** Convert stored positions into map points labeled by their camera/fire activity. */
 function liveTrail(path) { return path.map(p => [p.latitude, p.longitude, liveTrailClass(p)]); }
 
 /* Draw a trail as runs of one colour; adjacent runs share their joining point. */
 function drawTrail(layer, pts) {
   layer.clearLayers();
   let run = [];
+  /** Draw the current contiguous activity-colored trail run when it has enough points. */
   const flush = () => { if (run.length > 1) { const c = TRAIL[run.cls] || TRAIL.other; L.polyline(run, {color: c.color, weight: run.cls === 'other' ? 2 : 3.5, opacity: run.cls === 'other' ? .7 : .95, dashArray: run.cls === 'other' ? '4 5' : null, interactive: false}).addTo(layer); } };
   for (const [lat, lon, cls = 'other'] of pts) {
     if (run.length && run.cls !== cls) { flush(); const last = run.at(-1); run = [last]; }
@@ -78,11 +81,16 @@ function refreshFireTiming() {
   if (state.mode === 'live') renderDrone();
 }
 
+/** Convert coverage-grid east/north metres into latitude/longitude. */
 function peopleLL(ref, e, n) { return [ref.lat + n / 111320, ref.lon + e / (111320 * Math.cos(ref.lat * Math.PI / 180))]; }
+/** Format a sighting's age as seconds, minutes or hours. */
 function fmtAgo(s) { return s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago`; }
+/** Format a lead location consistently for display and copying. */
 function fmtCoord(l) { return `${l.latitude.toFixed(6)}, ${l.longitude.toFixed(6)}`; }
+/** Check whether the selected replay is a person-search scenario. */
 function peopleDemoActive() { return state.mode === 'demo' && state.demo.selected?.id === 'people'; }
 
+/** Create lead/coverage/mission layers and bind named-responder review controls. */
 function peopleInitMap() {
   for (const name of ['coverage', 'people', 'mission']) state.layers[name] = L.layerGroup().addTo(state.map);
   state.layers.coverage.setZIndex?.(0);
@@ -96,6 +104,7 @@ function peopleInitMap() {
 
 // ------------------------------------------------------------------ data
 
+/** Refresh live leads without letting a late response replace a newly selected replay. */
 async function pollPeople() {
   if (state.mode === 'demo') return;
   const snap = await getJson('/api/people');
@@ -103,6 +112,7 @@ async function pollPeople() {
   renderPeople(snap);
 }
 
+/** Initialize a fresh labeled search-replay clock and its UI state. */
 function startPeopleDemo() {
   peopleState.demo = {started: performance.now(), lastFetch: 0, inflight: false, t: 0};
   peopleState.listKey = ''; peopleState.covKey = ''; peopleState.seen.clear();
@@ -111,6 +121,7 @@ function startPeopleDemo() {
   $('telemetry-note').textContent = 'Seeded person-search simulation · no live aircraft';
   $('flight-progress').hidden = false;
 }
+/** Clear search-only layers, cached rendering keys and simulated lead state. */
 function stopPeopleDemo() {
   if (!peopleState.demo) return;
   peopleState.demo = null; peopleState.listKey = ''; peopleState.covKey = ''; peopleState.seen.clear();
@@ -119,6 +130,7 @@ function stopPeopleDemo() {
   renderPeople({leads: [], counts: {open: 0, possible_people: 0, unacknowledged: 0}, coverage: {cells: []}});
 }
 
+/** Fetch bounded search snapshots at the replay clock without applying another scenario's response. */
 function tickPeopleDemo(now) {
   const d = peopleState.demo;
   if (!d || !peopleDemoActive() || d.inflight || now - d.lastFetch < 1000) return;
@@ -132,6 +144,7 @@ function tickPeopleDemo(now) {
 
 // ------------------------------------------------------------- rendering
 
+/** Update lead metrics, cards, map coverage and mission context from one search snapshot. */
 function renderPeople(snap) {
   const prev = peopleState.snap; peopleState.snap = snap;
   const open = snap.leads.filter(l => !l.closed);
@@ -140,6 +153,7 @@ function renderPeople(snap) {
   const sec = snap.coverage?.sector;
   // With an assigned sector: the share of it observed. Without one: the ground area observed so far.
   const cov = snap.coverage, cellHa = (cov?.cell_m ?? 5) ** 2 / 10000;
+  /** Format observed coverage-cell counts as ground area in hectares. */
   const haText = (n) => { const ha = n * cellHa; return ha >= 10 ? `${Math.round(ha)} ha` : `${ha.toFixed(ha >= 1 ? 1 : 2)} ha`; };
   $('people-coverage-label').textContent = sec ? 'Sector observed' : 'Ground observed';
   $('people-coverage').textContent = sec ? `${Math.round(sec.well_pct + sec.partial_pct)}%` : cov?.cells?.length ? haText(cov.cells.length) : '—';
@@ -158,12 +172,14 @@ function renderPeople(snap) {
   renderLeadList(snap); renderPeopleMap(snap); renderMission(snap);
 }
 
+/** Render a compact indicator of the lead's distinct viewing directions. */
 function viewRose(lead) {
   // Mini compass: one spoke per direction the lead has been seen from.
   const spokes = lead.view_azimuths_deg.map(az => { const r = (az + 180) * Math.PI / 180; return `<line x1="20" y1="20" x2="${(20 + 15 * Math.sin(r)).toFixed(1)}" y2="${(20 - 15 * Math.cos(r)).toFixed(1)}"/>`; }).join('');
   return `<svg class="view-rose" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17"/><text x="20" y="7.5">N</text>${spokes}<circle class="hub" cx="20" cy="20" r="3"/></svg>`;
 }
 
+/** Render escaped lead evidence, uncertainty, priority and named responder actions. */
 function leadCard(l) {
   const st = LEAD_STATUS[l.status] || LEAD_STATUS['needs-another-view'];
   const mv = escapeHTML(l.movement.detail);
@@ -211,6 +227,7 @@ function withArrival(leads) {
   }).sort((a, b) => a.tier - b.tier || (a.arrival ?? 1e9) - (b.arrival ?? 1e9));
 }
 
+/** Refresh changed cards while preserving an in-progress outcome selection. */
 function renderLeadList(snap) {
   const leads = withArrival(snap.leads);
   const key = JSON.stringify(leads.map(l => [l.id, l.atFire, l.status, l.observations, l.acknowledged?.at, l.closed?.at, l.uncertainty.major_95_m, l.movement.status, l.missed_looks, l.next_look?.from, Math.floor(l.last_seen_age_s / 15), l.arrival]));
@@ -227,6 +244,7 @@ function renderLeadList(snap) {
   for (const img of list.querySelectorAll('img[data-crop]')) loadCrop(img);
 }
 
+/** Fetch an authenticated observation JPEG once and reuse its browser-local object URL. */
 async function loadCrop(img) {
   const id = img.dataset.crop;
   if (!peopleState.crops.has(id)) peopleState.crops.set(id, api(`/api/people/crop/${encodeURIComponent(id)}`).then(r => r.blob()).then(b => URL.createObjectURL(b)).catch(() => null));
@@ -234,6 +252,7 @@ async function loadCrop(img) {
   if (url) img.src = url; else img.remove();
 }
 
+/** Convert a lead's 95% major/minor axes and bearing into a geographic polygon. */
 function ellipsePoints(l) {
   const {major_95_m: a, minor_95_m: b, bearing_deg: brg} = l.uncertainty, pts = [];
   for (let i = 0; i < 48; i++) {
@@ -243,6 +262,7 @@ function ellipsePoints(l) {
   return pts;
 }
 
+/** Draw lead evidence, uncertainty, suggested views and the simulated aircraft when applicable. */
 function renderPeopleMap(snap) {
   const lp = state.layers.people, lm = state.layers.mission; lp.clearLayers(); lm.clearLayers();
   for (const l of snap.leads) {
@@ -287,6 +307,7 @@ function renderPeopleMap(snap) {
   }
 }
 
+/** Paint observed ground cells as one map image and describe assigned-sector coverage. */
 function renderCoverage(cov) {
   const layer = state.layers.coverage;
   const cells = cov?.cells || [];
@@ -318,6 +339,7 @@ function renderCoverage(cov) {
   L.imageOverlay(canvas.toDataURL(), [sw, ne], {className: 'coverage-overlay', interactive: false, opacity: 1}).addTo(layer);
 }
 
+/** Show live/search mission events and keep simulation-only camera/flight labels explicit. */
 function renderMission(snap) {
   const log = $('mission-log'), steps = $('loop-steps');
   const m = snap.mission;
@@ -354,6 +376,7 @@ function renderMission(snap) {
 
 // ------------------------------------------------------------- actions
 
+/** Frame the selected lead's uncertainty and bring its evidence card into view. */
 function focusLead(id) {
   const l = peopleState.snap?.leads.find(x => x.id === id); if (!l) return;
   state.map.fitBounds(L.latLngBounds(ellipsePoints(l)).pad(1.2), {maxZoom: 19});
@@ -361,6 +384,7 @@ function focusLead(id) {
   if (card) { card.scrollIntoView({behavior: 'smooth', block: 'nearest'}); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1200); }
 }
 
+/** Frame the assigned sector or open lead uncertainty areas when available. */
 function fitPeople() {
   const snap = peopleState.snap;
   if (snap?.coverage?.sector) { const [s, w, n, e] = snap.coverage.sector.bounds; state.map.fitBounds([[s, w], [n, e]], {padding: [20, 20]}); return true; }
@@ -369,6 +393,7 @@ function fitPeople() {
   return false;
 }
 
+/** Handle locate/copy or named acknowledgement/closure for the correct live/demo search. */
 async function onLeadAction(event) {
   const btn = event.target.closest('[data-action]'); if (!btn) return;
   const id = btn.dataset.id, l = peopleState.snap?.leads.find(x => x.id === id); if (!l) return;
@@ -392,6 +417,7 @@ async function onLeadAction(event) {
   } catch (e) { toast(e.message); btn.disabled = false; }
 }
 
+/** Format open rescue leads and their evidence/acknowledgement for the exported brief. */
 function peopleBrief() {
   const snap = peopleState.snap, open = snap?.leads.filter(l => !l.closed) || [];
   if (!open.length) return 'No open rescue leads.';

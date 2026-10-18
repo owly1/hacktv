@@ -15,6 +15,7 @@ from review_flights import review, preview, lines
 
 class RecordingTests(unittest.TestCase):
     def test_video_timestamps_events_report_and_mp4_round_trip(self):
+        """Verify video timestamps events report and mp4 round trip."""
         import cv2
         import numpy as np
         with tempfile.TemporaryDirectory() as root:
@@ -45,10 +46,12 @@ class RecordingTests(unittest.TestCase):
             self.assertTrue(stats['closed'])
 
     def test_frame_overload_does_not_block_or_discard_flight_events(self):
+        """Verify frame overload does not block or discard flight events."""
         with tempfile.TemporaryDirectory() as root:
             gate = threading.Event()
             original = FlightRecorder._write
             def delayed(recorder):
+                """Delay the fake recording writer to exercise bounded-queue overload."""
                 gate.wait(2)
                 original(recorder)
             with patch.object(FlightRecorder,'_write',delayed):
