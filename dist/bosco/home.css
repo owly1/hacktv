@@ -78,3 +78,6 @@
 @media (prefers-reduced-motion: reduce) {
   .home-contours path, .drone-chip video { animation: none; }
 }
+
+/* The demo and the live workspace have explicit entry points. */
+.live-entry { display: inline-block; margin-top: 20px; color: var(--muted); font-size: 14px; text-underline-offset: 4px; }

@@ -12,11 +12,16 @@ single-drone, floor-QR orbit-loop proposal. Existing QR workflows remain
 separate development tools; their one-metre orbit and proposed hotkeys do not
 define the fleet mission.
 
-Current `main` provides a primarily single-drone dashboard, live camera and
-telemetry ingest, fire/QR/person detection, illustrative spread, incident Q&A
-and historical replay. Isolated fleet streams, combined perimeter observations,
-a scrollable fleet camera area and coordinated search descents are planned
-work. This document specifies intended behavior, not implemented autonomy.
+Current `main` provides the connected BOSCO dark/light dashboard with live
+single-drone camera/telemetry ingest, fire/QR/person detection, illustrative
+spread and named rescue-lead review. Explicit Replay provides four animated
+drone cameras with synchronized telemetry, a scrollable fleet area, coordinated
+exterior search descents, historical cases, forest detection and person-search
+exercises. Home opens this same workspace; the fixture-only UI is removed.
+Legacy AI APIs remain available, but the dashboard makes no Gemini requests.
+Isolated live fleet streams, fusion of real perimeter observations and physical
+fleet coordination remain planned work. This specification describes the target
+beyond the verified replay capabilities, not implemented aircraft autonomy.
 Use the [existing workflow guides](README.md#choose-a-hardware-workflow) for
 current operation and [shared context](TEAM_AI_CONTEXT.md) for team work.
 

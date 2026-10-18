@@ -23,7 +23,9 @@ async function dashboard() {
     bindPopup() {return this;}, setLatLng() {return this;}, setLatLngs() {return this;}, setOpacity() {return this;}, on() {return this;}, bringToFront() {return this;},
   });
   const context = vm.createContext({
-    console, performance, URLSearchParams, AbortSignal,
+    console, performance, URL, URLSearchParams, AbortSignal,
+    location: {href: 'http://localhost/?demo', search: '?demo'},
+    history: {/** Keep browser navigation out of the isolated state tests. */ replaceState() {}},
     document: {getElementById: element, /* Return an empty node list for controls not needed by this fixture. */ querySelectorAll: () => []},
     L: {layerGroup: layer, polyline: layer, polygon: layer, marker: layer, /* Preserve icon options without constructing a real map icon. */ divIcon: value => value},
     window: {}, /* Suppress real timers in the isolated dashboard fixture. */ setTimeout: () => 0, /* Accept fake timer cleanup without scheduling browser work. */ clearTimeout() {},
@@ -65,6 +67,29 @@ test('replay animation and live connection no longer request or poll scene analy
   const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /id="analysis-panel"|id="analyze"|Gemini analysis/);
   assert.doesNotMatch(html, /questions-panel|response-panel|ask-input|generate-plan|Gemini/);
+});
+
+test('scenario links retain unrelated options and leaving replay removes stale replay parameters', async () => {
+  const {context, run} = await dashboard();
+  const urls = [];
+  context.location.href = 'http://localhost/?demo&case=old&demo-wind#map-panel';
+  context.history.replaceState = (_state, _title, url) => {
+    urls.push(new URL(url));
+    context.location.href = String(url);
+  };
+  run("selectDemo('forest-detection')");
+  assert.equal(urls.at(-1).searchParams.get('case'), 'forest-detection');
+  assert.ok(urls.at(-1).searchParams.has('demo'));
+  assert.ok(urls.at(-1).searchParams.has('demo-wind'));
+  assert.equal(urls.at(-1).hash, '#map-panel');
+  run("selectDemo('people')");
+  assert.equal(urls.at(-1).searchParams.get('case'), 'people');
+  run("state.mode = 'live'; state.liveDemo = false; syncWorkspaceUrl()");
+  assert.ok(!urls.at(-1).searchParams.has('demo'));
+  assert.ok(!urls.at(-1).searchParams.has('case'));
+  run('state.liveDemo = true; syncWorkspaceUrl()');
+  assert.ok(urls.at(-1).searchParams.has('live-demo'));
+  assert.ok(!urls.at(-1).searchParams.has('demo'));
 });
 
 test('fire-first camera interpolation shares the map pose and uses the short heading turn', async () => {

@@ -68,6 +68,32 @@ Reselecting the case resets the exercise. All camera footage is rendered replay.
 If another checkout already serves port 8787, the launcher reports that
 mismatch; use port 9000 or stop the old backend before relaunching.
 
+## Connected BOSCO interface
+
+The new dark/light BOSCO interface is the main dashboard, backed by the same
+live APIs and replay controllers. There is no separate fixture-only dashboard.
+
+| Open | What it shows |
+|---|---|
+| `http://127.0.0.1:8787/bosco/index.html` | New home, drone teardown, demo and live entry points |
+| `http://127.0.0.1:8787/?demo` | Historical four-drone fleet replay |
+| `http://127.0.0.1:8787/?demo&case=forest-detection` | Forest hold; press **Detected** to start the incident |
+| `http://127.0.0.1:8787/?demo&case=people` | Fire-first person-search replay at UTSC |
+| `http://127.0.0.1:8787/?demo&case=flight` | Flight-pattern replay |
+| `http://127.0.0.1:8787/` | Live camera, telemetry, detections and rescue leads |
+
+The **Replay case** selector switches between all historical and person-search
+cases. Selected cases stay in the URL for reloads and shared links; each reload
+starts a new replay session. **Exit replay** returns to live monitoring and
+clears the replay URL. The sun/moon button saves the dashboard theme locally.
+Existing `/bosco/dashboard.html` bookmarks forward to the same dashboard.
+`/home.html` forwards to the new home.
+
+After pulling `main`, restart the backend from this checkout and refresh the
+browser. If port 8787 belongs to another checkout, use
+`npm run demo -- --port 9012` and open `http://127.0.0.1:9012/?demo`.
+The launcher checks the served UI assets before reusing an existing server.
+
 ## Source map
 
 | Path | Responsibility |

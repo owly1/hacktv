@@ -82,6 +82,7 @@ function setLiveDemo(on) {
   $('map-pill').textContent = on ? 'Live demo' : 'Live';
   const url = new URL(location.href);
   url.searchParams.delete('demo');
+  url.searchParams.delete('case');
   if (on) url.searchParams.set('live-demo', ''); else url.searchParams.delete('live-demo');
   history.replaceState(null, '', url);
   state.incidentModelKey = null;
@@ -923,11 +924,25 @@ async function toggleDemo() {
   state.layers.fire.clearLayers(); state.droneMarker.setOpacity(0); state.layers.trail.clearLayers();
   state.layers.path.setLatLngs([]);
   for (const f of state.demo.fires) L.circleMarker([f.lat, f.lon], {radius: 6, color: '#d9480f', weight: 2, fillColor: '#d9480f', fillOpacity: .85}).addTo(state.layers.demo).bindTooltip(f.name).on('click', () => { sel.value = f.id; selectDemo(f.id); });
-  selectDemo(state.demo.fires[0].id); sel.value = state.demo.fires[0].id;
+  const requested = new URLSearchParams(location.search).get('case');
+  const initial = [...sel.options].some(option => option.value === requested) ? requested : state.demo.fires[0].id;
+  selectDemo(initial); sel.value = initial;
+}
+
+/** Keep reloads and shared links on the selected mode/case without starting a new page. */
+function syncWorkspaceUrl(caseId = null) {
+  const url = new URL(location.href);
+  for (const key of ['demo', 'case', 'live-demo']) url.searchParams.delete(key);
+  if (state.mode === 'demo') {
+    url.searchParams.set('demo', '');
+    if (caseId) url.searchParams.set('case', caseId);
+  } else if (state.liveDemo) url.searchParams.set('live-demo', '');
+  history.replaceState(null, '', url);
 }
 
 /** Reset incompatible replay state before starting a search, historical case or flight pattern. */
 function selectDemo(id) {
+  syncWorkspaceUrl(id);
   $('demo-detected').hidden = true;
   if ($('map-subtitle')) $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';
   if (state.demo.scout) state.demo.scout.elapsed = demoT();
@@ -1027,6 +1042,7 @@ function exitDemo() {
   $('fleet-controls').hidden = true; $('drone-heading').textContent = 'ANAFI-01'; $('camera').setAttribute('aria-label', 'Live ANAFI camera');
   stopPeopleDemo();
   state.mode = 'live'; state.demo.layer?.remove(); state.demo.layer = null; state.demo.marker = null; state.demo.pos = null; state.layers.demo.clearLayers(); state.map.closePopup();
+  syncWorkspaceUrl();
   setDemoVideo(null); setBasemap(state.basemapBeforeDemo ?? 'osm'); setFollow(false);
   $('demo-toggle').innerHTML = 'Replay <svg><use href="#i-play"/></svg>'; $('demo-fire').hidden = true;
   $('map-pill').textContent = state.liveDemo ? 'Live demo' : 'Live'; if ($('map-subtitle')) $('map-subtitle').textContent = 'Drone position, detected fire and projected spread';

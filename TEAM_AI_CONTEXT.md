@@ -32,11 +32,11 @@ put procedures in the linked guides and explain local behavior at its function.
 - Person sightings from all drones feed shared rescue leads with source evidence
   and uncertainty. The dashboard/Gemini remain observation and planning tools;
   real maneuvers require the separately enabled flight runtime.
-- [spec.md](spec.md) defines the target and acceptance criteria. Fleet stream
-  isolation, the scrollable UI, combined observations and coordinated perimeter
-  dives are planned work, not verified capabilities of current `main`. The older
-  replay scout can enter the rendered fire footprint; that legacy behavior does
-  not define the new perimeter-search requirement.
+- [spec.md](spec.md) defines the target and acceptance criteria. The scrollable
+  fleet UI, shared fictional leads and coordinated perimeter descents are
+  implemented for Replay. Live fleet stream isolation, combined real
+  observations and physical coordination remain planned work; the replay does
+  not establish real fleet flight capability.
 
 `fleet-demo-hardcode` implements the historical Replay portion: four simulated
 aircraft, scrolling POV previews, coordinated exterior descents and shared
@@ -61,6 +61,18 @@ analysis defaults off; authenticated legacy AI APIs remain for compatibility.
 Fire-first person-search replay now includes a 3D ANAFI-01 camera with matching
 map pose, heading, altitude, speed and power, sourced only from its simulated
 snapshot. Its thermal observations are fictional illustrations, not ANAFI hardware.
+
+The new BOSCO dark/light UI now runs the existing app/people/fleet controllers
+at `/`; it is the shared live and replay workspace. Home/teardown lives at
+`/bosco/index.html`; its primary action opens `/?demo`, and a separate action
+opens live monitoring. `/bosco/dashboard.html` forwards to `/`, retaining query
+parameters. `/home.html` forwards to the new home. Keep runtime IDs and API
+routes stable: `dist/bosco/dashboard.js` owns presentation only, never incident
+or review state. Theme tokens and connected overrides live in
+`dist/bosco/tokens.css` and `dashboard.css`. The fixture-only controller/data is
+removed. Replay case links use `?demo&case=<selector value>` (including
+`forest-detection`, `people`, and `flight`). Use the launch table in README;
+restart from the current checkout if localhost shows older assets.
 
 ## Branching for every teammate
 
