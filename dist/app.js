@@ -23,6 +23,8 @@ const state = {
   // created_at of the analysis whose derived wind last set scenario.wind, the
   // analysis the user manually overrode, and the estimate shown in the UI
   windAuto: null, windManual: null, windDerived: null,
+  // Per-drone FC wind samples -> BoscoFleet.windConsensus (one drone today)
+  windSamples: {},
   video: {lastAt: 0, decoding: false, times: []},
   demo: {fires: [], selected: null, started: 0, videos: null},
   map: null, layers: {}, tiles: {}, basemap: 'osm', follow: false, droneMarker: null, tilesOk: false, tileErrors: 0, centredOnDrone: false,
@@ -95,7 +97,7 @@ function renderDetectionDetails() {
   $('detection-conditions').textContent = [
     det.area_ha != null ? `${det.area_ha} ha${det.area_source ? ' (estimated)' : ''}` : 'Area estimated by model',
     det.intensity, det.fuel, det.spread_m_per_min != null ? `${det.spread_m_per_min} m/min` : null,
-    `${state.scenario.wind} km/h toward ${M.compass(state.scenario.direction)}`,
+    `${Math.round(state.scenario.wind)} km/h toward ${M.compass(state.scenario.direction)}`,
     `${state.scenario.temp} °C`, `${state.scenario.rh}% RH`,
   ].filter(Boolean).join(' · ');
   $('detection-location').textContent = loc?.simulated
@@ -147,7 +149,8 @@ function initMap() {
     tiles.on('tileerror', () => { state.tileErrors++; if (!state.tilesOk && state.tileErrors >= 4) { $('map-viewport').classList.add('tiles-offline'); renderMapChip(); } });
   }
   state.tiles.osm.addTo(map);
-  for (const name of ['spread', 'wind', 'fire', 'drone', 'demo']) state.layers[name] = L.layerGroup().addTo(map);
+  for (const name of ['fuel', 'spread', 'wind', 'fire', 'drone', 'demo', 'orbit']) state.layers[name] = L.layerGroup().addTo(map);
+  renderFuels();
   state.layers.path = L.polyline([], {color: '#3A372E', weight: 2, dashArray: '4 5', opacity: .75}).addTo(state.layers.drone);
   state.droneMarker = droneMarker([state.site.latitude, state.site.longitude]).setOpacity(0).addTo(state.layers.drone);
   L.control.scale({imperial: false, position: 'bottomright'}).addTo(map);
@@ -156,6 +159,20 @@ function initMap() {
   peopleInitMap();
   window.addEventListener('resize', () => map.invalidateSize());
   if (window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe($('map-viewport'));
+}
+
+/** Draw the approximate site land-cover map once: brakes (buildings, pavement)
+   in grey and faster fuel (ravine, woodlot) in green, both faint underlays
+   that explain why the projected zone pinches and widens. */
+function renderFuels() {
+  const zones = globalThis.BoscoFuels?.zones || [];
+  for (const z of zones) {
+    const brake = z.factor < 1;
+    L.polygon(z.polygon, {color: brake ? '#8C8679' : '#3f7d4f', weight: .8, dashArray: '3 4',
+      fillColor: brake ? '#8C8679' : '#3f7d4f', fillOpacity: brake ? .07 : .09})
+      .addTo(state.layers.fuel)
+      .bindTooltip(`${escapeHTML(z.name)} — ${brake ? 'slows' : 'accelerates'} projected spread · approximate site cover`);
+  }
 }
 
 /** Switch OSM/satellite layers and keep the control and attribution in sync. */
@@ -236,14 +253,31 @@ function origin() {
   const loc = fireLocation(); return loc ? [loc.latitude, loc.longitude] : null;
 }
 
+/* Minutes the live fire has already burned since first detection — the
+   contour is a continuous function of real elapsed time, not a frozen
+   snapshot of the first sighting. Size, wind, direction and fuels all feed
+   the same rings, so any change morphs the whole stack. */
+function fireAgeMin() {
+  const inc = state.mode === 'live' ? activeFire() : null;
+  const t0 = inc?.first_detected_at || inc?.latest?.detected_at;
+  const ms = t0 ? Date.now() - new Date(t0).getTime() : 0;
+  return Math.min(60, Math.max(0, ms / 60000));
+}
+/** Model minutes for the rendered rings: fire age + the timeline lookahead. */
+const spreadMinutes = () => fireAgeMin() + state.minute;
+/** Incident identity for forecast-trail scoping; empty string when no fire. */
+const incIdentity = () => activeFire()?.episode_id || '';
+
 /* Projected spread at the selected minute, drawn as layered intensity bands. */
 function renderSpread() {
-  const sc = state.scenario, t = state.minute;
+  const sc = state.scenario, t = spreadMinutes(), age = fireAgeMin();
   renderDetectionDetails();
-  $('time-label').textContent = `T + ${Math.round(t)} min`; $('timeline').value = t;
-  document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - t) < .5));
-  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '');
-  state.layers.spread.clearLayers(); state.layers.wind.clearLayers();
+  $('time-label').textContent = `T + ${Math.round(state.minute)} min`; $('timeline').value = state.minute;
+  document.querySelectorAll('[data-minute]').forEach(b => b.classList.toggle('selected', Math.abs(+b.dataset.minute - state.minute) < .5));
+  const consensus = globalThis.BoscoFleet?.windConsensus(Object.values(state.windSamples));
+  const fleetTag = consensus && consensus.samples > 1 ? ` · fleet ×${consensus.samples} ±${consensus.sigma_dir_deg}°` : '';
+  $('wind-value').textContent = Math.round(sc.wind); $('wind-context').textContent = `toward ${M.compass(sc.direction)} ${['↑','↗','→','↘','↓','↙','←','↖'][Math.round(sc.direction/45)%8]}` + (state.windDerived ? windSourceLabel(state.windDerived) : '') + fleetTag;
+  state.layers.spread.clearLayers(); state.layers.wind.clearLayers(); state.layers.orbit?.clearLayers();
   const o = origin();
   if (!o) { $('area-value').textContent = '—'; $('area-context').textContent = forestWaiting() ? 'no fire detected' : state.mode === 'demo' ? (demoCase() ? 'confirming detection…' : 'select a fire') : activeFire() ? 'fire detected · location unavailable' : 'no fire detected'; return; }
   /** Supply scaled fire-outline bands for the active spread-rendering branch. */
@@ -257,16 +291,49 @@ function renderSpread() {
     const details = fireDetails();
     ring = scale => M.footprint(o, t, sc, details, scale);
     outline = ring(1);
-    L.polygon(M.footprint(o, 0, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip('Fire now');
+    L.polygon(M.footprint(o, age, sc, details), {color: '#9e3026', weight: 1.4, dashArray: '4 4', fill: false}).addTo(state.layers.spread).bindTooltip(age > .1 ? `Fire now — burning for ~${Math.round(age)} min` : 'Fire now');
   }
-  for (const [scale, color, opacity] of SPREAD_BANDS) {
-    const poly = L.polygon(ring(scale), {stroke: scale === 1, color: '#ec9d33', weight: 1.2, dashArray: '5 4', fillColor: color, fillOpacity: opacity}).addTo(state.layers.spread);
-    if (scale === 1 && modelledFire()) poly.bindTooltip(`Projected head ≈${M.spreadRate(sc, fireDetails()).toFixed(0)} m/min toward ${M.compass(sc.direction)}`);
+  /* Forecast trail: a projection is only the forecast under the conditions
+     measured at that moment. When wind/direction shifts, the earlier outer
+     ring survives as a fading ghost — so the judge sees the +60 forecast from
+     15 min ago differ from the +45 computed under the veered wind. Buckets
+     keep the ticker-lerp from spamming ghosts on every tiny step. */
+  if (incIdentity() !== state.ghostEpisode) { state.ghosts = []; state.ghostEpisode = incIdentity(); state.prevSig = null; state.prevForecast = null; }
+  const sig = modelledFire() ? `${incIdentity()}|${Math.round(sc.wind / 4)}|${Math.round(sc.direction / 12)}` : null;
+  if (sig && state.prevForecast && sig !== state.prevSig) {
+    const ghosts = (state.ghosts || []).concat({pts: state.prevForecast, sig: state.prevSig});
+    state.ghosts = ghosts.slice(-4);
+  }
+  state.prevSig = sig; state.prevForecast = sig ? outline : null;
+  if (sig) (state.ghosts || []).forEach((g, i) => {
+    L.polygon(g.pts, {color: '#a8764a', weight: 1, dashArray: '2 6', fill: false, opacity: .18 + .1 * i})
+      .addTo(state.layers.spread).bindTooltip('Earlier forecast — superseded when conditions changed');
+  });
+  // Contours morph between states: a fire's outline is (roughly) an ellipse,
+  // so vertex-lerping the 72-point rings glides the zone instead of jumping.
+  const targets = SPREAD_BANDS.map(([scale, color, opacity]) => ({
+    scale, color, opacity, pts: ring(scale),
+    tooltip: scale === 1 && modelledFire() ? `Projected head ≈${M.spreadRate(sc, fireDetails()).toFixed(0)} m/min toward ${M.compass(sc.direction)}` : null,
+  }));
+  morphSpread(targets);
+  /* Standoff orbit track: the drone's contour follows the fire's perimeter,
+     sliding outward at the fire's own advance speed. Circumference scales
+     with fire size — a soccer-ball fire means tight orbits, a block-wide
+     fire means a long spaced-out track. */
+  const fleet = globalThis.BoscoFleet;
+  if (fleet && modelledFire()) {
+    const margin = 40;
+    const retreat = fleet.orbitSpeedMps(o, t, sc, fireDetails(), sc.direction, margin, M);
+    const orbitPts = fleet.offsetContour(outline, margin);
+    const poly = L.polyline(state.orbitCur || orbitPts, {color: '#2f7fd1', weight: 1.5, dashArray: '6 5', opacity: .85})
+      .addTo(state.layers.orbit)
+      .bindTooltip(`Drone orbit — ${margin} m standoff · retreats ≈${retreat ? retreat.toFixed(1) : '—'} m/s as the fire advances`);
+    morphTarget({poly, pts: orbitPts, key: 'orbitCur'});
   }
   if (demoCase()) L.polygon(demoOutline(demoCase(), 0), {color: '#a82f1d', weight: 2, fillColor: '#d9480f', fillOpacity: .3}).addTo(state.layers.spread).bindTooltip('Fire now · outer rings are predictions');
   const area = M.areaHa(outline);
   $('area-value').textContent = area >= 100 ? Math.round(area).toLocaleString() : area.toFixed(area < 1 ? 3 : 1);
-  $('area-context').textContent = t < .5 ? 'now' : `projected at +${Math.round(t)} min`;
+  $('area-context').textContent = state.minute < .5 ? (age > .1 ? `now · burning ~${Math.round(age)} min` : 'now') : `projected at +${Math.round(state.minute)} min`;
   const reach = !modelledFire() ? Math.sqrt(area * 10000 / Math.PI) * 1.3 : M.headDistance(t, sc, fireDetails());
   const windHead = M.destPoint(o[0], o[1], sc.direction, reach);
   L.polyline([M.destPoint(o[0], o[1], sc.direction + 180, reach * .25), windHead], {color: '#8C8679', weight: 1.6, dashArray: '2 6'}).addTo(state.layers.wind).bindTooltip(`Wind ${Math.round(sc.wind)} km/h toward ${M.compass(sc.direction)}`);
@@ -306,10 +373,41 @@ function fitToFire() {
 // ------------------------------------------------------------- telemetry
 
 /** Display measured drone values and mark missing or stale live telemetry clearly. */
+/* Collect each drone's FC wind vector (NED m/s) into the fleet sample set. */
+function updateWindSamples() {
+  const t = state.telemetry, extra = t?.extra || {};
+  const mps = Number(extra.fc_wind_speed_mps), deg = Number(extra.fc_wind_direction_deg);
+  if (!t || !Number.isFinite(mps)) return;
+  const id = t.drone_id || 'ANAFI-01', d = (Number.isFinite(deg) ? deg : 0)*Math.PI/180;
+  state.windSamples[id] = {drone_id: id, north: mps*Math.cos(d), east: mps*Math.sin(d),
+    alt_m: Number(t.altitude_m) || 10, captured_at: Date.parse(t.observed_at) || Date.now(), flight_state: t.state};
+}
+
+/* Air readings riding the same telemetry stream: humidity and temperature
+   drift feeds the scenario exactly like wind does, so a moist lull or a
+   hot dry gust reshapes the contour on the very next render. */
+function applyEnvSamples() {
+  const extra = state.telemetry?.extra || {};
+  const rh = Number(extra.rh_pct), temp = Number(extra.temp_c);
+  let changed = false;
+  if (Number.isFinite(rh)) { const v = Math.round(Math.min(100, Math.max(0, rh))); if (v !== state.scenario.rh) { state.scenario.rh = v; changed = true; } }
+  if (Number.isFinite(temp)) { const v = Math.round(temp * 10) / 10; if (v !== state.scenario.temp) { state.scenario.temp = v; changed = true; } }
+  if (changed && state.mode === 'live') { renderSpread(); refreshFireTiming(); }
+}
+
 function renderTelemetry() {
   if (state.mode === 'demo') return;
+  updateWindSamples();
+  applyEnvSamples();
   const t = state.telemetry;
   if (!t) { for (const id of ['altitude', 'ground-speed', 'power']) $(id).innerHTML = `— <small>${id === 'power' ? '%' : id === 'altitude' ? 'm' : 'm/s'}</small>`; $('flight-state').textContent = '—'; return; }
+  // FC wind arrives on every telemetry packet — feed it straight into the
+  // scenario (eased, altitude-normalized) instead of waiting on an analysis.
+  const ex = t.extra || {};
+  if (ex.fc_wind_speed_mps != null || ex.fc_wind_direction_deg != null) {
+    applyWindEstimate({created_at: t.observed_at, episode_id: null,
+      wind_estimate: {speed_mps: ex.fc_wind_speed_mps, direction_deg: ex.fc_wind_direction_deg, method: 'flight-controller'}});
+  }
   const age = Math.max(0, (Date.now() - Date.parse(t.observed_at)) / 1000), stale = age * 1000 > STALE_MS;
   $('altitude').innerHTML = `${escapeHTML(t.altitude_m ?? '—')} <small>m</small>`;
   $('ground-speed').innerHTML = `${escapeHTML(t.ground_speed_mps ?? '—')} <small>m/s</small>`;
@@ -465,12 +563,12 @@ function windSourceLabel(w) {
   return /flight-controller|flight controller/i.test(w?.method ?? '') ? ' · FC est.' : ' · derived est.';
 }
 
-/* When the latest analysis carries a wind estimate — the flight controller's
+/* When a telemetry packet carries a wind estimate — the flight controller's
    own onboard estimate when the drone streams one, else a value derived from
    stabilization telemetry — adopt it as the scenario's wind so the projected
    spread follows live evidence instead of the marker's fixed value. Each
-   analysis applies at most once; a manual Apply in the conditions dialog
-   overrides it until the next analysis arrives. */
+   packet applies at most once; a manual Apply in the conditions dialog
+   overrides it until the next packet arrives. */
 function applyWindEstimate(a) {
   const w = a?.wind_estimate;
   if (!w || state.mode === 'demo') return;
@@ -479,12 +577,17 @@ function applyWindEstimate(a) {
   if (activeFire()?.latest.source === 'qr-test') return;
   if (a.episode_id && a.episode_id !== activeFire()?.episode_id) return;
   if (a.created_at === state.windAuto || a.created_at === state.windManual) return;
-  const kmh = w.speed_mps != null ? Math.round(w.speed_mps * 3.6) : null;
+  // The flight-controller estimate is measured at flight altitude; wind grows
+  // with height, so scale it down to the 10 m reference the scenario uses.
+  const altScale = /flight.controller/i.test(w.method ?? '') ? M.altitudeWindScale(state.telemetry?.altitude_m ?? 10) : 1;
+  const kmh = w.speed_mps != null ? Math.round(w.speed_mps / altScale * 3.6) : null;
   const deg = w.direction_deg != null ? ((Math.round(w.direction_deg) % 360) + 360) % 360 : null;
   if (kmh === null && deg === null) return;
   const changed = (kmh !== null && kmh !== state.scenario.wind) || (deg !== null && deg !== state.scenario.direction);
-  if (kmh !== null) state.scenario.wind = kmh;
-  if (deg !== null) state.scenario.direction = deg;
+  /* The scenario eases toward the new evidence instead of snapping: a real
+     wind shift develops over seconds, and the ellipse should merge onto its
+     new path, not teleport there. */
+  if (kmh !== null || deg !== null) state.windEase = {wind: kmh ?? state.scenario.wind, direction: deg ?? state.scenario.direction};
   state.windAuto = a.created_at; state.windDerived = w;
   if (changed) {
     renderSpread(); refreshFireTiming();
@@ -500,7 +603,7 @@ function projection() {
   if (demoCase()) return demoProjection();
   const details = fireDetails();
   const loc = fireLocation();
-  return {minutes_ahead: Math.round(state.minute), area_ha: +M.areaHa(M.footprint(o, state.minute, state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(state.minute, state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1], position_source: loc?.position_source ?? null, simulated: loc?.simulated ?? state.mode === 'demo'}};
+  return {minutes_ahead: Math.round(spreadMinutes()), area_ha: +M.areaHa(M.footprint(o, spreadMinutes(), state.scenario, details)).toFixed(3), head_distance_m: Math.round(M.headDistance(spreadMinutes(), state.scenario, details)), spread_rate_m_per_min: +M.spreadRate(state.scenario, details).toFixed(1), toward_deg: state.scenario.direction, toward: M.compass(state.scenario.direction), origin: {latitude: o[0], longitude: o[1], position_source: loc?.position_source ?? null, simulated: loc?.simulated ?? state.mode === 'demo'}};
 }
 /* Fictional wind variation for a live-feel demo: only reachable with
    ?demo-wind in the URL, toggled from the conditions dialog, and labelled
@@ -1070,13 +1173,77 @@ async function connect() {
   if (state.status.site) { state.site = state.status.site; if (!state.telemetry) state.map.setView([state.site.latitude, state.site.longitude], 17); }
   every(1000, 'telemetry', pollTelemetry); every(1000, 'incident', pollIncident); every(2000, 'flight', pollFlight);
   every(2000, 'people', pollPeople); every(5000, 'status', pollStatus); setInterval(videoWatchdog, 1000);
+  // Explorer refresh: recompute the zone from the latest conditions every 30 s.
+  setInterval(renderSpread, 30000);
   streamVideo();
 }
 
-let lastFrame = 0, lastSpread = 0;
+let lastFrame = 0, lastSpread = 0, lastWind = 0, lastEaseSpread = 0;
+/** Animate the band rings/orbit from their last rendered positions to `targets`.
+   Vertex counts are fixed (72), so index-wise lat/lon lerp glides the shape. */
+const raf = globalThis.requestAnimationFrame ?? (cb => setTimeout(() => cb(performance.now()), 16));
+const caf = globalThis.cancelAnimationFrame ?? clearTimeout;
+let morphAnims = [];
+function morphTarget(t) {
+  const prev = state[t.key] || t.pts;
+  const t0 = performance.now(), DUR = 1400;
+  caf(t.raf);
+  const step = now => {
+    const k = Math.min(1, (now - t0) / DUR), e = k * k * (3 - 2 * k);
+    t.poly.setLatLngs(t.pts.map((p, j) => { const f = prev[j] || p; return [f[0] + (p[0] - f[0]) * e, f[1] + (p[1] - f[1]) * e]; }));
+    const lls = t.poly.getLatLngs(), flat = Array.isArray(lls[0]) ? lls[0] : lls; // polygon nests rings; polyline is flat
+    state[t.key] = flat.map(ll => [ll.lat, ll.lng]);
+    if (k < 1) t.raf = raf(step);
+  };
+  t.raf = raf(step);
+}
+function morphSpread(targets) {
+  caf(state.spreadRaf);
+  morphAnims = targets.map((t, i) => {
+    const poly = L.polygon(state.spreadCur?.[i] || t.pts, {stroke: t.scale === 1, color: '#ec9d33', weight: 1.2, dashArray: '5 4', fillColor: t.color, fillOpacity: t.opacity}).addTo(state.layers.spread);
+    if (t.tooltip) poly.bindTooltip(t.tooltip);
+    return {poly, pts: t.pts};
+  });
+  const from = state.spreadCur || targets.map(t => t.pts);
+  const t0 = performance.now(), DUR = 1400;
+  const step = now => {
+    const k = Math.min(1, (now - t0) / DUR), e = k * k * (3 - 2 * k);
+    morphAnims.forEach((t, i) => {
+      const f = from[i] || t.pts;
+      t.poly.setLatLngs(t.pts.map((p, j) => { const g = f[j] || p; return [g[0] + (p[0] - g[0]) * e, g[1] + (p[1] - g[1]) * e]; }));
+    });
+    state.spreadCur = morphAnims.map(t => t.poly.getLatLngs()[0].map(ll => [ll.lat, ll.lng]));
+    if (k < 1) state.spreadRaf = raf(step);
+  };
+  state.spreadRaf = raf(step);
+}
+
 /** Advance active spread/replay animations and schedule the next browser frame. */
 function animate(now) {
   const delta = Math.min(now - (lastFrame || now), 100); lastFrame = now;
+  // 100 ms wind ticker: the readout counts smoothly toward the scenario wind
+  // (FC landings, conditions, sweeps) instead of stepping to each new value.
+  if (now - lastWind >= 100) {
+    lastWind = now;
+    if (state.windShown == null) state.windShown = state.scenario.wind;
+    state.windShown += (state.scenario.wind - state.windShown) * .2;
+    const el = $('wind-value');
+    if (Math.abs(state.windShown - state.scenario.wind) < .05) state.windShown = state.scenario.wind;
+    if (el && el.textContent !== String(Math.round(state.windShown))) el.textContent = Math.round(state.windShown);
+  }
+  /* Scenario wind easing: new evidence sets a target; the wind and bearing
+     glide toward it over ~3 s (shortest arc for direction), re-rendering the
+     spread every ~250 ms so the old projected path merges into the new one. */
+  if (state.windEase) {
+    const k = Math.min(1, delta / 3000), sc = state.scenario, tgt = state.windEase;
+    sc.wind += (tgt.wind - sc.wind) * k;
+    const dd = ((tgt.direction - sc.direction + 540) % 360) - 180;
+    sc.direction = ((sc.direction + dd * k) % 360 + 360) % 360;
+    if (Math.abs(tgt.wind - sc.wind) < .2 && Math.abs(dd) < .5) {
+      sc.wind = tgt.wind; sc.direction = tgt.direction; state.windEase = null;
+    }
+    if (now - lastEaseSpread > 250) { lastEaseSpread = now; renderSpread(); }
+  }
   if (state.playing) { state.minute = (state.minute + delta * .002 * state.speed) % 60; if (now - lastSpread > 66) { lastSpread = now; renderSpread(); } }
   animateDemoFlight(now); animateDemoCase(now);
   tickPeopleDemo(now); renderPeopleCamera(now);
